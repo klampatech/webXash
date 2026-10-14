@@ -20,16 +20,15 @@ import menuURL from 'xash3d-fwgs/libmenu.wasm?url';
 import webgl2URL from 'xash3d-fwgs/libref_webgl2.wasm?url';
 // @ts-ignore -- vite url imports
 import extrasURL from 'xash3d-fwgs/extras.pk3?url';
-// @ts-ignore -- vite url imports
-import HLClientURL from 'hlsdk-portable/cl_dlls/client_emscripten_wasm32.wasm?url';
-// @ts-ignore -- vite url imports
-import HLServerURL from 'hlsdk-portable/dlls/hl_emscripten_wasm32.wasm?url';
-// @ts-ignore -- vite url imports
-import CSMenuURL from 'cs16-client/cl_dll/menu_emscripten_wasm32.wasm?url';
-// @ts-ignore -- vite url imports
-import CSClientURL from 'cs16-client/cl_dll/client_emscripten_wasm32.wasm?url';
-// @ts-ignore -- vite url imports
-import CSServerURL from 'cs16-client/dlls/cs_emscripten_wasm32.wasm?url';
+// STUB: hlsdk-portable and cs16-client npm packages 404 from npm registry.
+// Phase 0 patch: stub the WASM URLs to empty strings so the page renders.
+// Game launch will fail until webXash is forked and rebuilt with working deps.
+// See HANDOFF.md Phase 0 step 1.5 (fork webXash).
+const HLClientURL = '';
+const HLServerURL = '';
+const CSMenuURL = '';
+const CSClientURL = '';
+const CSServerURL = '';
 
 const XASH_BASE_DIR = '/rodir/';
 
