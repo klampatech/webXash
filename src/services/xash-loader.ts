@@ -25,11 +25,16 @@ import extrasURL from 'xash3d-fwgs/extras.pk3?url';
 // HL client.dll + hl.dll compiled to WASM via emscripten
 // Build recipe in /tmp/hlsdk-portable (FWGS/hlsdk-portable) with
 // emcmake. Output renamed from *.so → *.wasm for webXash's loader.
-const HLClientURL = '/cl_dlls/client_emscripten_wasm32.wasm';
-const HLServerURL = '/dlls/hl_emscripten_wasm32.wasm';
-const CSMenuURL = '';
-const CSClientURL = '';
-const CSServerURL = '';
+// Note: vite config has base: '/webXash/' so paths must include it.
+const HLClientURL = '/webXash/cl_dlls/client_emscripten_wasm32.wasm';
+const HLServerURL = '/webXash/dlls/hl_emscripten_wasm32.wasm';
+// CS/MP/opfor/bshift games aren't built — but the engine still tries
+// to fetch these via locateFile at startup. Point them all at hl.dll
+// so the engine gets valid WASM bytes (even though they're the wrong
+// game logic, the engine will only use them if you start a CS game).
+const CSMenuURL = HLServerURL;
+const CSClientURL = HLClientURL;
+const CSServerURL = HLServerURL;
 
 const XASH_BASE_DIR = '/rodir/';
 

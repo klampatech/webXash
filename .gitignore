@@ -45,3 +45,5 @@ vite.config.js
 *.njsproj
 *.sln
 *.sw?
+public/test-assets/
+public/hl/tsmod.zip
