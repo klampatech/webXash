@@ -1,29 +1,46 @@
 <template>
   <div class="window no-resize multiplayer-config" name="Multiplayer">
-    <div class="multiplayer-config__row">
-      <label for="multiplayer-role">Mode</label>
-      <select id="multiplayer-role" v-model="role">
-        <option value="host">Host</option>
-        <option value="guest">Join</option>
-      </select>
+    <div class="multiplayer-config__row multiplayer-config__enable">
+      <label class="multiplayer-config__checkbox">
+        <input
+          id="multiplayer-enable"
+          v-model="enabled"
+          type="checkbox"
+        />
+        <span>Enable multiplayer (WebRTC + signaling server)</span>
+      </label>
     </div>
-    <div class="multiplayer-config__row">
-      <label for="multiplayer-server">Signaling server</label>
-      <input
-        id="multiplayer-server"
-        v-model="server"
-        type="text"
-        placeholder="100.95.111.112:27016"
-      />
-    </div>
-    <div class="multiplayer-config__row" v-if="role === 'guest'">
-      <label for="multiplayer-room">Room ID</label>
-      <input id="multiplayer-room" v-model="room" type="text" placeholder="default" />
-    </div>
+
+    <template v-if="enabled">
+      <div class="multiplayer-config__row">
+        <label for="multiplayer-role">Mode</label>
+        <select id="multiplayer-role" v-model="role">
+          <option value="host">Host</option>
+          <option value="guest">Join</option>
+        </select>
+      </div>
+      <div class="multiplayer-config__row">
+        <label for="multiplayer-server">Signaling server</label>
+        <input
+          id="multiplayer-server"
+          v-model="server"
+          type="text"
+          placeholder="100.95.111.112:27016"
+        />
+      </div>
+      <div class="multiplayer-config__row" v-if="role === 'guest'">
+        <label for="multiplayer-room">Room ID</label>
+        <input id="multiplayer-room" v-model="room" type="text" placeholder="default" />
+      </div>
+    </template>
+
     <div class="multiplayer-config__row multiplayer-config__hint">
       <InfoIcon @click="openHelp" />
-      <span>
+      <span v-if="enabled">
         Host opens a room; both parties use the same signaling server &amp; room ID.
+      </span>
+      <span v-else>
+        Disabled by default. Tick the box to enable WebRTC peer-to-peer multiplayer.
       </span>
     </div>
   </div>
@@ -40,19 +57,26 @@ import InfoIcon from './InfoIcon.vue';
 
 const DEFAULT_SERVER = '100.95.111.112:27016';
 
+const enabled = ref(false);
 const role = ref<'host' | 'guest'>('host');
 const server = ref(DEFAULT_SERVER);
 const room = ref('default');
 
 const persist = () => {
-  (window as any).__multiplayerConfig = {
-    role: role.value,
-    server: server.value,
-    room: room.value,
-  };
+  // Only persist a config object when multiplayer is enabled —
+  // leaving it undefined tells XashLoader to use single-player.
+  if (enabled.value) {
+    (window as any).__multiplayerConfig = {
+      role: role.value,
+      server: server.value,
+      room: room.value,
+    };
+  } else {
+    delete (window as any).__multiplayerConfig;
+  }
 };
 
-watch([role, server, room], persist, { immediate: true });
+watch([enabled, role, server, room], persist, { immediate: true });
 
 const openHelp = () => {
   window.open(
@@ -88,6 +112,20 @@ const openHelp = () => {
   &__hint {
     font-size: 0.75rem;
     color: rgba(255, 255, 255, 0.6);
+  }
+
+  &__enable {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 0.5rem;
+    margin-bottom: 0.25rem;
+  }
+
+  &__checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    width: 100%;
   }
 }
 </style>

@@ -23,14 +23,14 @@ export interface MultiplayerConfig {
  *      server until the data channels are open.
  */
 export class Xash3DMultiplayer extends Xash3DWebRTC {
-  constructor(
-    opts: { multiplayerIP: string; onError?: () => void },
-    cfg: MultiplayerConfig,
-  ) {
+  constructor(opts: { multiplayerIP: string; onError?: () => void }) {
     super(opts);
-    // Re-stash cfg for use in connect() — the parent's multiplayerIP
-    // field is used to build the WebSocket URL.
-    this.multiplayerIP = cfg.server;
+    // multiplayerIP is also read from window.__multiplayerConfig
+    // in connect(). Keeping this here as a fallback.
+    const cfg = (window as any).__multiplayerConfig as MultiplayerConfig;
+    if (cfg?.server) {
+      this.multiplayerIP = cfg.server;
+    }
   }
 
   async connect(): Promise<void> {

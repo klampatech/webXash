@@ -184,17 +184,15 @@ class XashLoader {
     typeof Xash3D | typeof Xash3DWebRTC
   > {
     // XashMultiplayerIP.vue stores its config at window.__multiplayerConfig
-    // (server, role, room). server is a host:port that resolves to a
-    // WebSocket signaling server. When present, we route through
-    // Xash3DMultiplayer (a Xash3DWebRTC subclass); otherwise use
-    // vanilla Xash3D (single-player).
+    // (server, role, room) — and ONLY when the user has explicitly
+    // enabled the multiplayer checkbox. server is a host:port that
+    // resolves to a WebSocket signaling server. When present, we route
+    // through Xash3DMultiplayer (a Xash3DWebRTC subclass); otherwise
+    // use vanilla Xash3D (single-player).
     const cfg = (window as any).__multiplayerConfig;
     const server = cfg?.server;
     if (server && /\d/.test(server)) {
       const { Xash3DMultiplayer } = await import('../services/xash-multiplayer.ts');
-      // Return a thunk that builds the multiplayer engine — the
-      // caller (initXash) instantiates with the canvas/locateFile
-      // options from xash3d-fwgs.
       const Ctor = Xash3DMultiplayer as unknown as typeof Xash3D;
       return Ctor;
     } else {
