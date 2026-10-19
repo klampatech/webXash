@@ -139,6 +139,21 @@ export const GAME_SETTINGS = {
     },
     ...BASE_GAME_SETTINGS,
   },
+  TS: {
+    // The Specialists — mod lives in ts/ inside the tsmod.zip.
+    // gamedll in ts/liblist.gam points to dlls/hl.dll (no WASM
+    // port of ts_i386.so exists), so we get HL1 vanilla gameplay
+    // on TS maps. -console is intentionally left to BASE_GAME.
+    name: 'The Specialists',
+    launchArgs: ['-game', 'ts', '+map', 'ts_apartments'],
+    publicDir: 'hl/',
+    libraries: {
+      ...XASH_LIBS,
+      client: HLClientURL,
+      server: HLServerURL,
+    },
+    ...BASE_GAME_SETTINGS,
+  },
   CS: {
     name: 'Counter-Strike',
     launchArgs: ['-game', 'cstrike', '+_vgui_menus', '0'],

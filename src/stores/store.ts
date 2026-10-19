@@ -10,7 +10,7 @@ export const useXashStore = defineStore(
   () => {
     // State
     const xashCanvas = ref<HTMLCanvasElement>();
-    const selectedGameKey = ref<keyof typeof GAME_SETTINGS>('HL');
+    const selectedGameKey = ref<keyof typeof GAME_SETTINGS>('TS');
     const selectedZip = ref('');
     const selectedLocalFolder = ref('');
     const multiplayerIP = ref('');
