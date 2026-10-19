@@ -13,6 +13,9 @@ export const useXashStore = defineStore(
     const selectedGameKey = ref<keyof typeof GAME_SETTINGS>('TS');
     const selectedZip = ref('');
     const selectedLocalFolder = ref('');
+    // multiplayerIP is set by XashMultiplayerIP.vue before launch.
+    // XashLoader picks it up at game-init time and routes through
+    // Xash3DWebRTC (signaling server) when non-empty.
     const multiplayerIP = ref('');
     const saves = ref<Partial<SaveEntry>[]>();
     const loading = ref(false);
