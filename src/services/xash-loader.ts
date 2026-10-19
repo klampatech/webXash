@@ -38,20 +38,13 @@ const CSServerURL = HLServerURL;
 
 const XASH_BASE_DIR = '/rodir/';
 
+// xash3d.js already loads filesystem_stdio.wasm, libmenu.wasm,
+// hl.dll, and client.dll automatically (in that order) via
+// DEFAULT_FILESYSTEM_LIBRARY / DEFAULT_MENU_LIBRARY /
+// DEFAULT_SERVER_LIBRARY / DEFAULT_CLIENT_LIBRARY. Only add
+// libraries that are NOT in the engine's default list.
 const DYNAMIC_LIBRARIES = [
-  'filesystem_stdio.wasm',
   'libref_webgl2.wasm',
-  'cl_dlls/client_emscripten_wasm32.wasm',
-  // hl
-  'cl_dlls/menu_emscripten_wasm32.wasm',
-  'dlls/hl_emscripten_wasm32.wasm',
-  // bshift
-  'dlls/bshift_emscripten_wasm32.wasm',
-  // opfor
-  'dlls/opfor_emscripten_wasm32.wasm',
-  // cs
-  'dlls/cs_emscripten_wasm32.wasm',
-  'dlls/mp_emscripten_wasm32.wasm',
 ];
 
 export interface GameLoaderOptions {
