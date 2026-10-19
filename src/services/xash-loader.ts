@@ -210,11 +210,18 @@ class XashLoader {
 
     const store = useXashStore();
 
+    // CRITICAL: launchArgs must be set at top-level (not module.arguments)
+    // because xash3d-fwgs's runEm() does:
+    //   this.em = await Xash({ arguments: ['-ref', 'webgl2', ...opts.arguments],
+    //                          ...(opts.module ?? {}) })
+    // and the spread overrides our args with module.arguments, dropping
+    // the -ref webgl2 renderer flag. Putting them at top-level lets
+    // initRender() prepend the renderer arg.
     const xash = new Xash3D({
+      arguments: options.launchArgs,
       multiplayerIP: store.multiplayerIP,
       onError: XashLoader.removeReloadListener,
       module: {
-        arguments: options.launchArgs,
         locateFile: (path: string) => {
           console.log(path);
           switch (path) {
