@@ -210,6 +210,13 @@ class XashLoader {
 
     const store = useXashStore();
 
+    // Sanity print: confirms our argv gets through xash3d-fwgs to the
+    // engine. Visible in DevTools console right before the engine boots.
+    console.log(
+      '[xash-loader] launchArgs → engine:',
+      ['-ref', 'webgl2', ...options.launchArgs],
+    );
+
     // CRITICAL: launchArgs must be set at top-level (not module.arguments)
     // because xash3d-fwgs's runEm() does:
     //   this.em = await Xash({ arguments: ['-ref', 'webgl2', ...opts.arguments],
