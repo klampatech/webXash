@@ -23,11 +23,12 @@ export const useXashStore = defineStore(
     const maxLoadingAmount = ref(100);
     const showXashSettingUI = ref(true);
     // -- Launch options
-    // Default to TS game launchArgs + 4 bots so multiplayer feel
-    // works out-of-the-box. Bots are HL1 vanilla (WASM hl.dll has
-    // bot support but no TS-specific class logic). Override the
-    // field via the Advanced panel.
-    const launchOptions = ref('-game ts +map ts_apartments bot_quota 4');
+    // Default to TS game launchArgs + 2 bots. Note: xash.wasm has a
+    // hard 256MB heap cap (memory[0]: initial=4096 max=4096 pages)
+    // and bots each load the full TS asset set. bot_quota 4 was OOM'ing
+    // during map load. 2 fits comfortably. Override in the Advanced
+    // panel for solo (set to 0) or fuller (set to 8 — at your own risk).
+    const launchOptions = ref('-game ts +map ts_apartments bot_quota 2');
     const fullScreen = ref(false);
     const enableConsole = ref(true);
     const enableCheats = ref(false);
