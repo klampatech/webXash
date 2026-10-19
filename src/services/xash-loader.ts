@@ -22,10 +22,11 @@ import webgl2URL from 'xash3d-fwgs/libref_webgl2.wasm?url';
 import extrasURL from 'xash3d-fwgs/extras.pk3?url';
 // STUB: hlsdk-portable and cs16-client npm packages 404 from npm registry.
 // Phase 0 patch: stub the WASM URLs to empty strings so the page renders.
-// Game launch will fail until webXash is forked and rebuilt with working deps.
-// See HANDOFF.md Phase 0 step 1.5 (fork webXash).
-const HLClientURL = '';
-const HLServerURL = '';
+// HL client.dll + hl.dll compiled to WASM via emscripten
+// Build recipe in /tmp/hlsdk-portable (FWGS/hlsdk-portable) with
+// emcmake. Output renamed from *.so → *.wasm for webXash's loader.
+const HLClientURL = '/cl_dlls/client_emscripten_wasm32.wasm';
+const HLServerURL = '/dlls/hl_emscripten_wasm32.wasm';
 const CSMenuURL = '';
 const CSClientURL = '';
 const CSServerURL = '';

@@ -11,6 +11,11 @@ const zipList = [
     name: "Day One (78M)",
     packageName: "dayone.zip",
   },
+  {
+    name: "The Specialists (578M)",
+    packageName: "tsmod.zip",
+    launchArgs: "-game ts",
+  },
 ];
 
 export default zipList;

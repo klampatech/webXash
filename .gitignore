@@ -25,6 +25,12 @@ public/hlsdk-portable
 public/xash3d-fwgs
 public/hl/valve
 
+# Built WASM HL client/server DLLs (D.7.1) — emscripten output of
+# FWGS/hlsdk-portable. These need to ship with the repo for the
+# engine to actually launch any game.
+!public/cl_dlls/client_emscripten_wasm32.wasm
+!public/dlls/hl_emscripten_wasm32.wasm
+
 # misc
 vite.config.d.ts
 vite.config.js
