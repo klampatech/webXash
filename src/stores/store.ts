@@ -23,7 +23,10 @@ export const useXashStore = defineStore(
     const maxLoadingAmount = ref(100);
     const showXashSettingUI = ref(true);
     // -- Launch options
-    const launchOptions = ref('');
+    // Default to the TS game launchArgs so they survive the (currently
+    // broken) _buildLaunchArgs spread of selectedGame.launchArgs.
+    // The user can still override the field via the Advanced panel.
+    const launchOptions = ref('-game ts +map ts_apartments');
     const fullScreen = ref(false);
     const enableConsole = ref(true);
     const enableCheats = ref(false);
