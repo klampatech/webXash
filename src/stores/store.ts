@@ -23,10 +23,11 @@ export const useXashStore = defineStore(
     const maxLoadingAmount = ref(100);
     const showXashSettingUI = ref(true);
     // -- Launch options
-    // Default to the TS game launchArgs so they survive the (currently
-    // broken) _buildLaunchArgs spread of selectedGame.launchArgs.
-    // The user can still override the field via the Advanced panel.
-    const launchOptions = ref('-game ts +map ts_apartments');
+    // Default to TS game launchArgs + 4 bots so multiplayer feel
+    // works out-of-the-box. Bots are HL1 vanilla (WASM hl.dll has
+    // bot support but no TS-specific class logic). Override the
+    // field via the Advanced panel.
+    const launchOptions = ref('-game ts +map ts_apartments bot_quota 4');
     const fullScreen = ref(false);
     const enableConsole = ref(true);
     const enableCheats = ref(false);
