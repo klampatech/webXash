@@ -6,12 +6,14 @@
     class="emscripten"
     oncontextmenu="event.preventDefault()"
   ></canvas>
+  <TSHud />
 </template>
 
 <script setup lang="ts">
   import { storeToRefs } from 'pinia';
   import { useXashStore } from '/@/stores/store.ts';
   import { onMounted, ref } from 'vue';
+  import TSHud from '/@/components/TSHud.vue';
 
   // Dependencies
 

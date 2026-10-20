@@ -34,6 +34,30 @@ export const useXashStore = defineStore(
     // them, then `+map ts_apartments` cleanly captures the map name.
     // Override in the Advanced panel.
     const launchOptions = ref('bot_quota 2 -game ts +map ts_apartments');
+
+    // -- TS-specific launcher config (D.7.26 — JS-side parity layer)
+    // TS-specific cvars that the engine reads from the launcher's argv
+    // before server.cfg, allowing the user to override defaults set in
+    // ts/server.cfg (slowmatch=1, roundtime=180, mp_teamlist="...").
+    //
+    // The launcher splices these into launchOptions when -game ts is
+    // active, BEFORE +map, so the engine sees them at engine startup.
+    const tsConfig = ref({
+      // Round duration in seconds. Default in ts/server.cfg is 180.
+      roundtime: 180,
+      // 1 = slow-motion death sequences (TS signature feature).
+      // 0 = full-death normal speed.
+      slowmatch: 1,
+      // Per-team model list (pipe-separated).
+      teammodels: 'seal;merc|gordon;laurence|agent|hitman;castor',
+      // Round timer / cash HUD overlay visibility (DOM layer).
+      hudOverlay: true,
+      // 1 = Last-Man-Standing game mode (only player alive wins).
+      lastmanstanding: 0,
+      // Spectator chat / killfeed rendered in launcher overlay.
+      killfeedOverlay: true,
+    });
+
     const fullScreen = ref(false);
     const enableConsole = ref(true);
     const enableCheats = ref(false);
@@ -66,9 +90,39 @@ export const useXashStore = defineStore(
     };
 
     // Computed
-
     const selectedGame = computed(() => {
       return GAME_SETTINGS[selectedGameKey.value];
+    });
+
+    // D.7.26: TS-spliced launch args. When -game ts is active, splice
+    // the user's tsConfig cvars BEFORE +map so they reach the engine's
+    // argv parser and don't displace the map name (D.7.18 quirk).
+    const effectiveLaunchOptions = computed((): string => {
+      const base = launchOptions.value ?? '';
+      if (!tsConfig.value) return base;
+      // Only splice for TS game
+      const isTS = /-game\s+ts\b/.test(base);
+      if (!isTS) return base;
+      const cvars: string[] = [];
+      if (tsConfig.value.roundtime) {
+        cvars.push(`+roundtime ${tsConfig.value.roundtime}`);
+      }
+      if (tsConfig.value.slowmatch !== undefined) {
+        cvars.push(`+slowmatch ${tsConfig.value.slowmatch}`);
+      }
+      if (tsConfig.value.lastmanstanding) {
+        cvars.push(`+lastmanstanding ${tsConfig.value.lastmanstanding}`);
+      }
+      if (tsConfig.value.teammodels) {
+        cvars.push(`+mp_teammodels "${tsConfig.value.teammodels}"`);
+      }
+      if (cvars.length === 0) return base;
+      // Splice before +map if present
+      const idx = base.indexOf('+map');
+      if (idx >= 0) {
+        return `${base.slice(0, idx)} ${cvars.join(' ')} ${base.slice(idx)}`.trim();
+      }
+      return `${base} ${cvars.join(' ')}`.trim();
     });
 
     const customGameArg = computed((): string => {
@@ -107,6 +161,8 @@ export const useXashStore = defineStore(
       maxLoadingAmount,
       showXashSettingUI,
       launchOptions,
+      effectiveLaunchOptions,
+      tsConfig,
       fullScreen,
       enableConsole,
       enableCheats,

@@ -31,16 +31,115 @@
         </label>
       </div>
       <input v-model="launchOptions" class="xash-launch-options" type="text" />
+
+      <!-- D.7.26 TS-specific cvars panel -->
+      <!-- Shown only when selectedGameKey is "TS" so the launcher adapts -->
+      <div v-if="selectedGameKey === 'TS'" class="ts-opts">
+        <h3>THE SPECIALISTS — Game Options</h3>
+        <div class="ts-opts__grid">
+          <label>
+            <span class="opt-label">Round time</span>
+            <input
+              v-model.number="tsConfig.roundtime"
+              class="opt-num"
+              type="number"
+              min="60"
+              max="900"
+              step="30"
+            />
+            <span class="opt-unit">sec</span>
+          </label>
+          <label>
+            <span class="opt-label">Slow-match</span>
+            <input
+              id="ts-slowmatch"
+              v-model.number="tsConfig.slowmatch"
+              type="checkbox"
+              :true-value="1"
+              :false-value="0"
+            />
+            <span class="opt-help">Slow-mo deaths</span>
+          </label>
+          <label>
+            <span class="opt-label">Last man standing</span>
+            <input
+              id="ts-lms"
+              v-model.number="tsConfig.lastmanstanding"
+              type="checkbox"
+              :true-value="1"
+              :false-value="0"
+            />
+          </label>
+          <label>
+            <span class="opt-label">HUD overlay</span>
+            <input
+              id="ts-hud"
+              v-model="tsConfig.hudOverlay"
+              type="checkbox"
+            />
+            <span class="opt-help">Cash / class / buy</span>
+          </label>
+          <label>
+            <span class="opt-label">Killfeed overlay</span>
+            <input
+              id="ts-kf"
+              v-model="tsConfig.killfeedOverlay"
+              type="checkbox"
+            />
+          </label>
+          <label class="ts-opts__models">
+            <span class="opt-label">Per-team models</span>
+            <input
+              v-model="tsConfig.teammodels"
+              class="opt-text"
+              type="text"
+            />
+            <span class="opt-help">(pipe-separated)</span>
+          </label>
+        </div>
+
+        <div class="ts-opts__launch">
+          <span class="opt-label">Effective launch args:</span>
+          <code class="ts-opts__preview">{{ effectiveArgs }}</code>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-  import { useXashStore } from '/@/stores/store';
+  import { computed } from 'vue';
   import { storeToRefs } from 'pinia';
+  import { useXashStore } from '/@/stores/store';
 
   const store = useXashStore();
-  const { launchOptions, fullScreen, enableConsole, enableCheats } = storeToRefs(store);
+  const {
+    launchOptions,
+    fullScreen,
+    enableConsole,
+    enableCheats,
+    selectedGameKey,
+    tsConfig,
+  } = storeToRefs(store);
+
+  // Build the effective launch string by splicing TS cvars into the base
+  // options. The cvar splice happens BEFORE +map so the engine's argv
+  // parser doesn't consume the map name (D.7.18 quirk).
+  const effectiveArgs = computed(() => {
+    const base = launchOptions.value ?? '';
+    const tsCvars: string[] = [];
+    if (tsConfig.value?.roundtime) tsCvars.push(`+roundtime ${tsConfig.value.roundtime}`);
+    if (tsConfig.value?.slowmatch !== undefined) tsCvars.push(`+slowmatch ${tsConfig.value.slowmatch}`);
+    if (tsConfig.value?.lastmanstanding) tsCvars.push(`+lastmanstanding ${tsConfig.value.lastmanstanding}`);
+    if (tsConfig.value?.teammodels) tsCvars.push(`+mp_teammodels "${tsConfig.value.teammodels}"`);
+    if (tsCvars.length === 0) return base;
+    // Splice before +map if present
+    const idx = base.indexOf('+map');
+    if (idx >= 0) {
+      return `${base.slice(0, idx)} ${tsCvars.join(' ')} ${base.slice(idx)}`.trim();
+    }
+    return `${base} ${tsCvars.join(' ')}`.trim();
+  });
 </script>
 
 <style scoped lang="scss">
@@ -56,5 +155,79 @@
     label {
       cursor: pointer;
     }
+  }
+
+  /* TS-specific config block — D.7.26 parity layer */
+  .ts-opts {
+    margin-top: 16px;
+    padding: 14px;
+    background: linear-gradient(180deg, rgba(60,40,0,0.4), rgba(20,10,0,0.6));
+    border: 1px solid rgba(190,140,40,0.55);
+    border-radius: 4px;
+
+    h3 {
+      margin: 0 0 12px 0;
+      font-size: 12px;
+      letter-spacing: 2px;
+      color: #ffd76e;
+      border-bottom: 1px solid rgba(190,140,40,0.3);
+      padding-bottom: 6px;
+    }
+  }
+
+  .ts-opts__grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 14px;
+  }
+
+  .ts-opts__grid label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: #f4e3b0;
+  }
+  .ts-opts__models {
+    grid-column: 1 / -1;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 4px;
+  }
+
+  .opt-label {
+    color: rgba(255,215,110,0.7);
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+    min-width: 110px;
+  }
+  .opt-num { width: 60px; }
+  .opt-text { width: 100%; padding: 2px 4px; font-family: monospace; }
+  .opt-unit {
+    color: rgba(255,215,110,0.5);
+    font-size: 10px;
+  }
+  .opt-help {
+    color: rgba(255,215,110,0.45);
+    font-size: 10px;
+    font-style: italic;
+  }
+
+  .ts-opts__launch {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(190,140,40,0.25);
+  }
+  .ts-opts__preview {
+    display: block;
+    margin-top: 4px;
+    padding: 6px 8px;
+    background: rgba(0,0,0,0.5);
+    border: 1px solid rgba(190,140,40,0.2);
+    color: #ffd76e;
+    font-family: monospace;
+    font-size: 11px;
+    word-break: break-all;
+    user-select: all;
   }
 </style>
