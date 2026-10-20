@@ -71,7 +71,54 @@ if (typeof window !== 'undefined' && !(window as any).__xashAlertShimmed) {
 // state into the overlay (cash, timer, killfeed, weapon). The
 // underlying browser console.log is preserved so Playwright
 // smokes still capture the lines.
+//
+// D.7.32 — noise filter. At boot the engine execs a dozen .cfg
+// files that reference ~200 cvars from decades of GoldSrc
+// evolution. The GL2/ref_gl backend dropped most of them
+// (s_max_distance, r_mmx, gl_ztrick, cl_laser, ati_npatch, …),
+// and the TS-specific ones (roundtime, slowmatch, mp_teammodels)
+// are missing because our server DLL is vanilla HL1, not a TS
+// port. None of it is actionable and it buries the lines that
+// matter in ~250 lines of noise at every launch.
+//
+// So: collapse the repeats into a one-line summary per command,
+// and mark TS-cvar rejections distinctly so the real WASM-rebuild
+// gap stays visible instead of drowning.
+//
+const _noiseCounts = new Map<string, number>();
+
+function isNoiseCommand(line: string): { cmd: string } | null {
+  // "Warning: Unknown command "foo"" / "Unknown command: foo"
+  const m = line.match(/Unknown command:?\s*"?([^"\s]+)"?/);
+  return m ? { cmd: m[1] } : null;
+}
+
+/** TS cvars that fail purely because our server DLL is HL1, not TS. */
+const TS_ONLY_CVARS = new Set([
+  'roundtime', 'slowmatch', 'lastmanstanding',
+  'mp_teammodels', 'mp_teamlist', 'mp_roundtime',
+  'mp_firemode', 'mp_weaponban', 'mp_cashlimit', 'mp_limitteams',
+  'mp_teammenu', 'mp_autoteambalance', 'mp_limitteams',
+]);
+
 function emitXashLog(prefix: 'stdout' | 'stderr', log: string) {
+  const noise = isNoiseCommand(log);
+  if (noise) {
+    const { cmd } = noise;
+    _noiseCounts.set(cmd, (_noiseCounts.get(cmd) ?? 0) + 1);
+    // Suppress the raw line; the summary lands at engine shutdown
+    // or when someone explicitly asks via ?xashnoise=1.
+    if (!new URLSearchParams(window.location.search).has('xashnoise')) {
+      // Still dispatch to the event bus: live-state.ts counts TS cvar
+      // rejections for the HUD's MISSING row.
+      try {
+        window.dispatchEvent(
+          new CustomEvent(`xash:${prefix}`, { detail: { line: log } })
+        );
+      } catch (_) { /* ignore */ }
+      return;
+    }
+  }
   console.log(`[xash-${prefix}] ${log}`);
   try {
     window.dispatchEvent(
@@ -81,6 +128,46 @@ function emitXashLog(prefix: 'stdout' | 'stderr', log: string) {
     /* modern browsers only — no IE shim */
   }
 }
+
+/** Dump the suppressed-command summary. Called on engine shutdown. */
+function flushNoiseSummary() {
+  if (_noiseCounts.size === 0) return;
+  const ts = [..._noiseCounts.keys()].filter((c) => TS_ONLY_CVARS.has(c));
+  const legacy = [..._noiseCounts.entries()]
+    .filter(([c]) => !TS_ONLY_CVARS.has(c))
+    .sort((a, b) => b[1] - a[1]);
+  const total = [..._noiseCounts.values()].reduce((a, b) => a + b, 0);
+  console.log(
+    `[xash-noise] suppressed ${total} "Unknown command" lines ` +
+      `across ${_noiseCounts.size} cvars.`
+  );
+  if (ts.length) {
+    console.log(
+      `[xash-noise] ${ts.length} TS-only cvars (need a TS server DLL, ` +
+        `not vanilla HL1): ${ts.join(', ')}`
+    );
+  }
+  console.log(
+    `[xash-noise] ${legacy.length} legacy GoldSrc cvars (dropped by the ` +
+      `GL2/ref_gl renderer backend): ${legacy
+        .slice(0, 12)
+        .map(([c, n]) => `${c}×${n}`)
+        .join(', ')}${legacy.length > 12 ? ', …' : ''}`
+  );
+  _noiseCounts.clear();
+}
+window.addEventListener('beforeunload', flushNoiseSummary);
+// Also flush once the engine reports the game has started, so the
+// summary lands in the console during a normal session. The engine
+// prints "Game started" as its last boot step; we listen for that on
+// the same stdout bus emitXashLog already publishes to.
+window.addEventListener('xash:stdout', (e) => {
+  const d = (e as CustomEvent).detail as { line?: string };
+  if (d?.line?.includes('Game started')) {
+    // Give the remaining .cfg execs a beat to land first.
+    window.setTimeout(flushNoiseSummary, 3000);
+  }
+});
 // CS/MP/opfor/bshift games aren't built — but the engine still tries
 // to fetch these via locateFile at startup. Point them all at hl.dll
 // so the engine gets valid WASM bytes (even though they're the wrong
