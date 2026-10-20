@@ -155,29 +155,31 @@ export function startLiveState(): () => void {
   // is deliberately slow — one cvar every 4s, ~20s for a full cycle.
   // The cvars we read (hostmap, mp_teamlist, name) are all stable
   // boot-time values, so freshness costs nothing. The fast path is
-  // the boot burst below, so the strip fills immediately rather than
-  // waiting 4s for the first tick.
-  // Rolling poll — one cvar every 4s. These are all stable boot-time
-  // values, so freshness costs nothing; the cadence is deliberately
-  // gentle to avoid flooding the engine console with read lines.
-  let idx = 0;
-  probeTimer = window.setInterval(() => {
-    const key = PROBE_CVARS[idx % PROBE_CVARS.length];
-    idx++;
-    XashLoader.exec(key);
-  }, 4000);
-
-  // D.7.28c: delayed boot burst. Issuing probes too early (when the
-  // engine is still post-boot but pre-ready-for-commands) has the
-  // engine silently swallow them — verified with a trace: 4 of 5
-  // burst probes came back, hostmap was the lost one. Delaying 5s
-  // gives the engine time to be ready. The rolling poll above
-  // catches up on anything that still slips through.
+  // D.7.28d: rolling poll only. The earlier "boot burst" was an
+  // experiment — the engine silently swallowed probes issued during
+  // its post-boot pre-ready window. Verified by [LS-trace] that
+  // showed 4 of 5 burst probes come back, with hostmap (the first
+  // one) being the lost one. The 4s rolling poll is enough: all
+  // 5 cvars get probed within ~20s, the engine isn't pressured,
+  // and the strip fills in steadily.
+  //
+  // exec() is a no-op until the engine bridge is live (XashLoader.
+  // setLiveInstance fires from xash-loader.ts after init()), so
+  // poll calls before then are safely ignored. The first 1-2 cvar
+  // reads in the poll cycle might silently miss too, but they
+  // retry automatically as the cycle continues.
+  //
+  // Start the first probe at t+6s (slightly after the engine
+  // typically boots) and continue every 4s thereafter.
+  let probeIdx = 0;
   window.setTimeout(() => {
-    PROBE_CVARS.forEach((key, i) => {
-      window.setTimeout(() => XashLoader.exec(key), i * 300);
-    });
-  }, 5000);
+    XashLoader.exec(PROBE_CVARS[probeIdx % PROBE_CVARS.length]);
+    probeIdx++;
+  }, 6000);
+  probeTimer = window.setInterval(() => {
+    XashLoader.exec(PROBE_CVARS[probeIdx % PROBE_CVARS.length]);
+    probeIdx++;
+  }, 4000);
 
   // TS-cvar probes removed (D.7.28c): those probes only ever
   // returned "Unknown command: <name>" — net negative value, plus

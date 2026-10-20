@@ -103,6 +103,12 @@
       </div>
     </div>
 
+    <!-- D.7.29 engine-error toast — replaces the engine's modal alert() -->
+    <div v-if="engineAlert" class="ts-hud__alert" data-engine-alert>
+      <span class="alert-tag">ENGINE</span>
+      <span class="alert-msg">{{ engineAlert }}</span>
+    </div>
+
     <!-- Slow-mo flash when round timer hits zero (placeholder for visual interest) -->
     <div v-if="slowmoFlash" class="ts-hud__slowmo-flash" />
   </div>
@@ -223,6 +229,12 @@ function handleKey(e: KeyboardEvent) {
 onMounted(() => {
   window.addEventListener('keydown', handleKey)
 
+  // D.7.29 — engine alerts are shimmed out of alert() by xash-loader.ts
+  // and re-emitted as 'xash:alert'. Show them as a non-modal toast so
+  // the engine's rAF loop is never suspended (which killed the
+  // keyboard).
+  window.addEventListener('xash:alert', handleEngineAlert)
+
   // Subscribe to live state updates, then start the engine probe.
   // exec() no-ops if the engine bridge isn't up yet, so the boot
   // burst is retried on the first poll tick.
@@ -258,9 +270,19 @@ const playerName = ref('')
 const hostFramerate = ref('')
 const missingSpawnEntities = ref<string[]>([])
 const hasEngineGap = ref(false)
+// D.7.29 — last engine alert, shown as a non-blocking toast.
+const engineAlert = ref('')
+
+function handleEngineAlert(e: Event) {
+  const d = (e as CustomEvent).detail as { message?: string }
+  if (d?.message) engineAlert.value = d.message.split('\n')[0].slice(0, 120)
+  // Auto-clear after 12s so it doesn't linger.
+  window.setTimeout(() => { engineAlert.value = '' }, 12000)
+}
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKey)
+  window.removeEventListener('xash:alert', handleEngineAlert)
   if (interval) window.clearInterval(interval)
   if (stopLiveState) stopLiveState()
   if (liveUnsub) liveUnsub()
@@ -508,6 +530,41 @@ onUnmounted(() => {
   letter-spacing: 1px;
   color: rgba(255,215,110,0.5);
   text-align: center;
+}
+
+/* D.7.29 engine-error toast */
+.ts-hud__alert {
+  position: absolute;
+  top: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 70%;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  background: rgba(120,20,0,0.88);
+  border: 1px solid rgba(255,110,60,0.75);
+  border-left: 4px solid #ff6b3a;
+  padding: 7px 14px;
+  font-size: 11px;
+  font-family: monospace;
+  animation: alertIn 0.25s ease-out;
+  pointer-events: none;
+}
+.alert-tag {
+  color: #ff8c5a;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.alert-msg {
+  color: #ffd9c9;
+  word-break: break-word;
+}
+@keyframes alertIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
 /* D.7.28 live-state strip */

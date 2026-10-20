@@ -28,6 +28,43 @@ import extrasURL from 'xash3d-fwgs/extras.pk3?url';
 // Note: vite config has base: '/webXash/' so paths must include it.
 const HLClientURL = '/webXash/cl_dlls/client_emscripten_wasm32.wasm';
 const HLServerURL = '/webXash/dlls/hl_emscripten_wasm32.wasm';
+
+// D.7.29 — Neutralise the engine's modal `alert()`.
+//
+// The Xash WASM build calls `alert()` from C when
+// `COM_MemAlloc`'s command-slot pool runs dry:
+//     _Mem_Alloc: pool == NULL (alloc at ../engine/common/cmd.c:638)
+//
+// A modal alert fired from inside a WebAssembly frame does two
+// harmful things:
+//   1. It blocks the JS main thread until the user clicks OK, which
+//      suspends Emscripten's rAF-driven engine loop mid-frame.
+//   2. On dismiss, SDL2's Emscripten keyboard queue is left in a
+//      broken state — mouse look keeps working (polled via
+//      requestAnimationFrame) but every keypress is dropped.
+//
+// Observed in real Chrome (Vivaldi): after dismissing the alert the
+// game renders and mouselook responds, but W/A/S/D, Escape, and the
+// console are all dead.
+//
+// We verified the alert is pre-existing (reproduces on a pristine
+// D.7.27 baseline with zero launcher-side changes), so the fix
+// belongs here: route engine alerts to the console instead of a
+// modal. Non-blocking, so the engine loop never suspends.
+if (typeof window !== 'undefined' && !(window as any).__xashAlertShimmed) {
+  (window as any).__xashAlertShimmed = true;
+  const nativeAlert = window.alert.bind(window);
+  window.alert = (message?: any) => {
+    const text = String(message ?? '');
+    console.error('[xash-alert]', text);
+    // Surface it in-app rather than modally — emit an event so any
+    // overlay (TSHud) can render it as a toast without blocking.
+    window.dispatchEvent(
+      new CustomEvent('xash:alert', { detail: { message: text } })
+    );
+    void nativeAlert;
+  };
+}
 // Bridge engine-side print/printErr to a window event bus — D.7.27
 // stdout sniffer. The launcher HUD overlay subscribes to
 // 'xash:stdout' and pattern-matches known lines to feed live
