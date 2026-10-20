@@ -119,6 +119,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useXashStore } from '/@/stores/store.ts'
 import { startLiveState, onLiveState } from '/@/services/live-state.ts'
+import { startKeyboardBridge } from '/@/services/keyboard-bridge.ts'
 import { onBeforeMount } from 'vue'
 
 const store = useXashStore()
@@ -248,6 +249,15 @@ function handleKey(e: KeyboardEvent) {
 onMounted(() => {
   window.addEventListener('keydown', handleKey)
 
+  // D.7.31 — keyboard→command bridge. The engine's SDL2 keydown
+  // listener is registered on `window` but never fires, so we inject
+  // the equivalent engine commands instead (+forward on W down,
+  // -forward on W up, etc). Skip when ?nohud=1 is set, so the
+  // isolation test still tells us whether the HUD is implicated.
+  if (!(new URLSearchParams(window.location.search).get('nohud') === '1')) {
+    stopKeyboardBridge = startKeyboardBridge();
+  }
+
   // D.7.29 — engine alerts are shimmed out of alert() by xash-loader.ts
   // and re-emitted as 'xash:alert'. Show them as a non-modal toast so
   // the engine's rAF loop is never suspended (which killed the
@@ -281,6 +291,7 @@ onMounted(() => {
 let interval: number | null = null
 let stopLiveState: (() => void) | null = null
 let liveUnsub: (() => void) | null = null
+let stopKeyboardBridge: (() => void) | null = null
 
 // D.7.28 — reactively driven live state mirror
 const mapName = ref('(loading...)')
@@ -305,6 +316,7 @@ onUnmounted(() => {
   if (interval) window.clearInterval(interval)
   if (stopLiveState) stopLiveState()
   if (liveUnsub) liveUnsub()
+  if (stopKeyboardBridge) stopKeyboardBridge()
 })
 
 </script>
