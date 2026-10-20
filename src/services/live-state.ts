@@ -56,10 +56,12 @@ const PROBE_CVARS = [
   'name',
 ] as const;
 
-type ProbeKey = (typeof PROBE_CVARS)[number];
 
 /** TS-specific cvars we probe once to document the gap. */
-const TS_CVAR_PROBES = ['roundtime', 'slowmatch', 'lastmanstanding', 'mp_teammodels'];
+// TS cvar probes removed in D.7.28c — these only ever produced
+// 'Unknown command' responses (vanilla HL1 server DLL doesn't
+// register them). Kept here as a comment for future reference.
+// const TS_CVAR_PROBES = ['roundtime', 'slowmatch', 'lastmanstanding', 'mp_teammodels'];
 
 const state: LiveState = {
   mapName: '',
@@ -74,13 +76,6 @@ const state: LiveState = {
 
 const listeners = new Set<(s: LiveState) => void>();
 let probeTimer: number | null = null;
-let tsProbeTimer: number | null = null;
-let tsProbeIdx = 0;
-let tsProbeDone = false;
-/** cvar name we just asked for, so we know what to parse next. */
-let awaiting: ProbeKey | null = null;
-/** TS cvar name we're expecting an "Unknown command" for. */
-let awaitingTs: string | null = null;
 let unwatch: Array<() => void> = [];
 
 function notify() {
@@ -99,25 +94,29 @@ function onEngineLine(rawLine: string) {
   const cvarMatch = line.match(/^"([^"]+)"\s+is\s+"([^"]*)"/);
   if (cvarMatch) {
     const [, name, value] = cvarMatch;
-    if (name === awaiting) {
-      awaiting = null;
-      if (name === 'hostmap') state.mapName = value;
-      else if (name === 'mp_teamlist') state.teamList = value;
-      else if (name === 'host_framerate') state.hostFramerate = value;
-      else if (name === 'sv_cheats') state.svCheats = value;
-      else if (name === 'name') state.playerName = value;
-      notify();
-      return;
-    }
+    // D.7.28c: drop the `awaiting` guard. The burst issues all 5
+    // probes synchronously, so `awaiting` ends up set to the LAST
+    // cvar and the earlier responses get filtered out as mismatches.
+    // Match by name directly.
+    if (name === 'hostmap') state.mapName = value;
+    else if (name === 'mp_teamlist') state.teamList = value;
+    else if (name === 'host_framerate') state.hostFramerate = value;
+    else if (name === 'sv_cheats') state.svCheats = value;
+    else if (name === 'name') state.playerName = value;
+    notify();
+    return;
   }
 
   state.recentLines.push(line);
   if (state.recentLines.length > 60) state.recentLines.shift();
 
   // --- TS cvar rejection: `Unknown command: roundtime`
+  // Even though we no longer PROBE TS cvars at boot (D.7.28c), the
+  // engine may still print Unknown-command lines when the user types
+  // TS commands in the console drawer. Capture them passively so the
+  // HUD's MISSING row stays informative.
   const unknownMatch = line.match(/^Unknown command:\s*"?([^"\s]+)"?/);
-  if (unknownMatch && unknownMatch[1] === awaitingTs) {
-    awaitingTs = null;
+  if (unknownMatch) {
     const cvar = unknownMatch[1];
     if (!state.missingTsCvars.includes(cvar)) {
       state.missingTsCvars.push(cvar);
@@ -146,42 +145,51 @@ export function startLiveState(): () => void {
   window.addEventListener('xash:stdout', onOut);
   window.addEventListener('xash:stderr', onOut);
 
-  // Poll the readable cvars on a rolling schedule — one cvar every
-  // 700ms so we cover the full set roughly every 3.5s without
-  // spamming the engine console.
+  // D.7.28c: the "_Mem_Alloc: pool == NULL" alert at
+  // engine/common/cmd.c:638 is PRE-EXISTING, not caused by this
+  // bridge. Verified by stashing live-state.ts entirely and
+  // reproducing the identical dialog on a pristine D.7.27 baseline
+  // (zero cvar probes, zero argv changes). It fires either way.
+  //
+  // Polling is kept because the strip needs to fill, but the cadence
+  // is deliberately slow — one cvar every 4s, ~20s for a full cycle.
+  // The cvars we read (hostmap, mp_teamlist, name) are all stable
+  // boot-time values, so freshness costs nothing. The fast path is
+  // the boot burst below, so the strip fills immediately rather than
+  // waiting 4s for the first tick.
+  // Rolling poll — one cvar every 4s. These are all stable boot-time
+  // values, so freshness costs nothing; the cadence is deliberately
+  // gentle to avoid flooding the engine console with read lines.
   let idx = 0;
   probeTimer = window.setInterval(() => {
     const key = PROBE_CVARS[idx % PROBE_CVARS.length];
     idx++;
-    awaiting = key;
-    // Bare cvar name — that IS the read command in Xash3D.
     XashLoader.exec(key);
-  }, 900);
+  }, 4000);
 
-  // Probe the TS cvars once (they'll be rejected — that's the point).
-  // We capture that rejection as documentation of what's missing.
-  if (!tsProbeDone) {
-    tsProbeTimer = window.setInterval(() => {
-      if (tsProbeIdx >= TS_CVAR_PROBES.length) {
-        if (tsProbeTimer) window.clearInterval(tsProbeTimer);
-        tsProbeTimer = null;
-        tsProbeDone = true;
-        return;
-      }
-      const cvar = TS_CVAR_PROBES[tsProbeIdx++];
-      awaitingTs = cvar;
-      XashLoader.exec(cvar);
-    }, 400);
-  }
+  // D.7.28c: delayed boot burst. Issuing probes too early (when the
+  // engine is still post-boot but pre-ready-for-commands) has the
+  // engine silently swallow them — verified with a trace: 4 of 5
+  // burst probes came back, hostmap was the lost one. Delaying 5s
+  // gives the engine time to be ready. The rolling poll above
+  // catches up on anything that still slips through.
+  window.setTimeout(() => {
+    PROBE_CVARS.forEach((key, i) => {
+      window.setTimeout(() => XashLoader.exec(key), i * 300);
+    });
+  }, 5000);
+
+  // TS-cvar probes removed (D.7.28c): those probes only ever
+  // returned "Unknown command: <name>" — net negative value, plus
+  // they pile onto the cmd-pool. The HUD strip now reports
+  // TS cvars as "engine rejected at startup" via the boot-log
+  // capture, no live probing needed.
 
   return stopLiveState;
 }
 
 export function stopLiveState() {
-  if (probeTimer) window.clearInterval(probeTimer);
-  if (tsProbeTimer) window.clearInterval(tsProbeTimer);
-  probeTimer = null;
-  tsProbeTimer = null;
+  if (probeTimer) { window.clearInterval(probeTimer); probeTimer = null; }
   for (const fn of unwatch) fn();
   unwatch = [];
 }

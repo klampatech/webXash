@@ -223,21 +223,20 @@ function handleKey(e: KeyboardEvent) {
 onMounted(() => {
   window.addEventListener('keydown', handleKey)
 
-  // D.7.28: start the live-state bridge while the HUD is mounted
-  // (i.e. while the engine is running). Polls engine cvars via
-  // Cmd_ExecuteString and reflects them into the HUD slots.
-  stopLiveState = startLiveState()
-  // Subscribe to live state updates
+  // Subscribe to live state updates, then start the engine probe.
+  // exec() no-ops if the engine bridge isn't up yet, so the boot
+  // burst is retried on the first poll tick.
   liveUnsub = onLiveState((s) => {
     mapName.value = s.mapName || '(loading...)'
     teamList.value = s.teamList
     playerName.value = s.playerName
     hostFramerate.value = s.hostFramerate
     missingSpawnEntities.value = s.missingSpawnEntities.slice(-6)
-    // If the engine rejected our TS cvar probes, light up the gap
-    // indicator so the user can see what's still missing.
     hasEngineGap.value = s.missingTsCvars.length > 0
   })
+
+  // Start the engine-cvar probe.
+  stopLiveState = startLiveState()
   // Round timer ticks down every second while visible.
   // Real games feed this from the server via the engine's hud tick;
   // for the overlay demo we self-decrement (lands at 0, no UI bug
@@ -266,6 +265,7 @@ onUnmounted(() => {
   if (stopLiveState) stopLiveState()
   if (liveUnsub) liveUnsub()
 })
+
 </script>
 
 <style scoped lang="scss">
