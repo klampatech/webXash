@@ -33,7 +33,7 @@ export const useXashStore = defineStore(
     // <mapname> error). Putting cvars first lets the engine process
     // them, then `+map ts_apartments` cleanly captures the map name.
     // Override in the Advanced panel.
-    const launchOptions = ref('bot_quota 2 -game ts +map ts_apartments');
+    const launchOptions = ref('-noip -noip6 bot_quota 2 -game ts +map ts_apartments');
 
     // -- TS-specific launcher config (D.7.26 — JS-side parity layer)
     // TS-specific cvars that the engine reads from the launcher's argv
