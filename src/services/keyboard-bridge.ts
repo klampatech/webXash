@@ -63,6 +63,45 @@ const KEY_TO_CMD: Record<string, string> = {
  * which is harmless for movement (the command is what the key is bound
  * to anyway).
  */
+// Mouse buttons we want to bridge through Cmd_ExecuteString.
+const MOUSE_BUTTON_TO_CMD: Record<string, string> = {
+  '0': 'attack',     // left: fire
+  '2': 'attack2',    // right: alt-fire / firemode
+};
+
+/** If non-null, install the mouse bridge at the next possible moment. */
+let mouseListener: ((e: MouseEvent) => void) | null = null;
+
+function attachMouseBridge(canvas: HTMLCanvasElement) {
+  if (mouseListener) return;
+  const held = new Set<number>();
+  const handler = (e: MouseEvent) => {
+    const cmd = MOUSE_BUTTON_TO_CMD[String(e.button)];
+    if (!cmd) return;
+    e.preventDefault();
+    if (e.type === 'mousedown') {
+      if (held.has(e.button)) return;
+      held.add(e.button);
+      XashLoader.exec(`+${cmd}`);
+    } else {
+      if (!held.has(e.button)) return;
+      held.delete(e.button);
+      XashLoader.exec(`-${cmd}`);
+    }
+  };
+  // attach to the canvas — same place mouse look is firing
+  canvas.addEventListener('mousedown', handler);
+  canvas.addEventListener('mouseup', handler);
+  // Release on context menu (right-click without releasing fires it in some setups)
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  mouseListener = handler;
+}
+
+export function tryAttachMouseBridge() {
+  const c = document.getElementById('canvas') as HTMLCanvasElement | null;
+  if (c) attachMouseBridge(c);
+}
+
 export function startKeyboardBridge(): () => void {
   const held = new Set<string>();
 

@@ -119,7 +119,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useXashStore } from '/@/stores/store.ts'
 import { startLiveState, onLiveState } from '/@/services/live-state.ts'
-import { startKeyboardBridge } from '/@/services/keyboard-bridge.ts'
+import { startKeyboardBridge, tryAttachMouseBridge } from '/@/services/keyboard-bridge.ts'
 import { onBeforeMount } from 'vue'
 
 const store = useXashStore()
@@ -251,6 +251,10 @@ onMounted(() => {
   // isolation test still tells us whether the HUD is implicated.
   if (!(new URLSearchParams(window.location.search).get('nohud') === '1')) {
     stopKeyboardBridge = startKeyboardBridge();
+    // Mouse buttons ride a different SDL path than the keyboard, but
+    // mouse LOOK already works — so bridge clicks through the same
+    // command channel we use for keys.
+    tryAttachMouseBridge();
   }
 
   // D.7.29 — engine alerts are shimmed out of alert() by xash-loader.ts
