@@ -143,7 +143,14 @@ export const GAME_SETTINGS = {
     // The Specialists — mod lives in ts/ inside the tsmod.zip.
     // gamedll in ts/liblist.gam points to dlls/hl.dll (no WASM
     // port of ts_i386.so exists), so we get HL1 vanilla gameplay
-    // on TS maps. -console is intentionally left to BASE_GAME.
+    // on TS maps.
+    //
+    // D.7.26: with the launcher HUD overlay rendering cash/timer/
+    // killfeed/buy-menu, the engine's console (-console arg) would
+    // compete with that overlay for top-left screen real estate.
+    // Default to console OFF for the TS game so the HUD has clean
+    // visuals; users can re-enable in the Advanced panel if they
+    // need raw engine console.
     name: 'The Specialists',
     launchArgs: ['-game', 'ts', '+map', 'ts_apartments'],
     publicDir: 'hl/',
@@ -153,6 +160,10 @@ export const GAME_SETTINGS = {
       server: HLServerURL,
     },
     ...BASE_GAME_SETTINGS,
+    // Override AFTER spread (D.7.26 — TS HUD renders cleaner
+    // without the engine's console drawer overlaying the cash
+    // panel).
+    enableConsole: false,
   },
   CS: {
     name: 'Counter-Strike',
