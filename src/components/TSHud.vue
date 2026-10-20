@@ -37,6 +37,26 @@
       </div>
     </div>
 
+    <!-- D.7.28 live-state strip — real engine values, bottom-left -->
+    <div class="ts-hud__livestate" data-livestate>
+      <div class="ls-row">
+        <span class="ls-key">MAP</span>
+        <span class="ls-val">{{ mapName }}</span>
+      </div>
+      <div class="ls-row">
+        <span class="ls-key">TEAMS</span>
+        <span class="ls-val ls-val--dim">{{ teamList || '—' }}</span>
+      </div>
+      <div class="ls-row">
+        <span class="ls-key">NAME</span>
+        <span class="ls-val">{{ playerName || '—' }}</span>
+      </div>
+      <div v-if="missingSpawnEntities.length" class="ls-row ls-row--warn">
+        <span class="ls-key">MISSING</span>
+        <span class="ls-val ls-val--warn">{{ missingSpawnEntities.join(', ') }}</span>
+      </div>
+    </div>
+
     <!-- Buy menu overlay -->
     <div v-if="showBuyMenu" class="ts-hud__buy-menu" data-buy-menu>
       <div class="buy-menu__panel">
@@ -92,6 +112,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useXashStore } from '/@/stores/store.ts'
+import { startLiveState, onLiveState } from '/@/services/live-state.ts'
 
 const store = useXashStore()
 const { tsConfig, showXashSettingUI } = storeToRefs(store)
@@ -201,6 +222,22 @@ function handleKey(e: KeyboardEvent) {
 
 onMounted(() => {
   window.addEventListener('keydown', handleKey)
+
+  // D.7.28: start the live-state bridge while the HUD is mounted
+  // (i.e. while the engine is running). Polls engine cvars via
+  // Cmd_ExecuteString and reflects them into the HUD slots.
+  stopLiveState = startLiveState()
+  // Subscribe to live state updates
+  liveUnsub = onLiveState((s) => {
+    mapName.value = s.mapName || '(loading...)'
+    teamList.value = s.teamList
+    playerName.value = s.playerName
+    hostFramerate.value = s.hostFramerate
+    missingSpawnEntities.value = s.missingSpawnEntities.slice(-6)
+    // If the engine rejected our TS cvar probes, light up the gap
+    // indicator so the user can see what's still missing.
+    hasEngineGap.value = s.missingTsCvars.length > 0
+  })
   // Round timer ticks down every second while visible.
   // Real games feed this from the server via the engine's hud tick;
   // for the overlay demo we self-decrement (lands at 0, no UI bug
@@ -212,10 +249,22 @@ onMounted(() => {
 })
 
 let interval: number | null = null
+let stopLiveState: (() => void) | null = null
+let liveUnsub: (() => void) | null = null
+
+// D.7.28 — reactively driven live state mirror
+const mapName = ref('(loading...)')
+const teamList = ref('')
+const playerName = ref('')
+const hostFramerate = ref('')
+const missingSpawnEntities = ref<string[]>([])
+const hasEngineGap = ref(false)
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKey)
   if (interval) window.clearInterval(interval)
+  if (stopLiveState) stopLiveState()
+  if (liveUnsub) liveUnsub()
 })
 </script>
 
@@ -459,6 +508,39 @@ onUnmounted(() => {
   letter-spacing: 1px;
   color: rgba(255,215,110,0.5);
   text-align: center;
+}
+
+/* D.7.28 live-state strip */
+.ts-hud__livestate {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  transform: translateY(-50%);
+  background: rgba(0,0,0,0.55);
+  border: 1px solid rgba(190,140,40,0.35);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 260px;
+  font-size: 10px;
+}
+.ls-row { display: flex; gap: 8px; align-items: baseline; }
+.ls-key {
+  color: rgba(255,215,110,0.5);
+  letter-spacing: 1.5px;
+  min-width: 46px;
+  flex-shrink: 0;
+}
+.ls-val {
+  color: #ffd76e;
+  font-family: monospace;
+  word-break: break-all;
+}
+.ls-val--dim { color: rgba(255,215,110,0.45); }
+.ls-row--warn .ls-val--warn {
+  color: #ff8c5a;
+  font-size: 9px;
 }
 
 /* Killfeed */

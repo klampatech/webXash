@@ -28,6 +28,22 @@ import extrasURL from 'xash3d-fwgs/extras.pk3?url';
 // Note: vite config has base: '/webXash/' so paths must include it.
 const HLClientURL = '/webXash/cl_dlls/client_emscripten_wasm32.wasm';
 const HLServerURL = '/webXash/dlls/hl_emscripten_wasm32.wasm';
+// Bridge engine-side print/printErr to a window event bus — D.7.27
+// stdout sniffer. The launcher HUD overlay subscribes to
+// 'xash:stdout' and pattern-matches known lines to feed live
+// state into the overlay (cash, timer, killfeed, weapon). The
+// underlying browser console.log is preserved so Playwright
+// smokes still capture the lines.
+function emitXashLog(prefix: 'stdout' | 'stderr', log: string) {
+  console.log(`[xash-${prefix}] ${log}`);
+  try {
+    window.dispatchEvent(
+      new CustomEvent(`xash:${prefix}`, { detail: { line: log } })
+    );
+  } catch (_) {
+    /* modern browsers only — no IE shim */
+  }
+}
 // CS/MP/opfor/bshift games aren't built — but the engine still tries
 // to fetch these via locateFile at startup. Point them all at hl.dll
 // so the engine gets valid WASM bytes (even though they're the wrong
@@ -191,6 +207,27 @@ const onBeforeUnload = (event: Event) => {
 };
 
 class XashLoader {
+  // D.7.28 live-state bridge. The running Xash3D instance exposes a
+  // public `Cmd_ExecuteString(cmd)` that runs an engine console
+  // command. That is our channel for reading real game state out of
+  // the running WASM without touching the server DLL — we don't need
+  // new server code, just the engine's own cvar reader.
+  private static liveInstance: Xash3D | Xash3DWebRTC | null = null;
+
+  /** Register the running engine so callers can issue console commands. */
+  public static setLiveInstance(inst: Xash3D | Xash3DWebRTC | null) {
+    XashLoader.liveInstance = inst;
+  }
+
+  /** Run an engine console command (no-op if not booted). */
+  public static exec(cmd: string) {
+    try {
+      XashLoader.liveInstance?.Cmd_ExecuteString(cmd);
+    } catch (e) {
+      console.warn('[xash-exec] failed:', cmd, e);
+    }
+  }
+
   private async _getXashInstance(): Promise<
     typeof Xash3D | typeof Xash3DWebRTC
   > {
@@ -241,8 +278,8 @@ class XashLoader {
         //   signal for whether the server DLL accepted TS commands
         // - "game rules: <class>" / "CTSGameRules" → confirms our
         //   patched InstallGameRules factory returned our subclass
-        print: (log: string) => console.log(`[xash-stdout] ${log}`),
-        printErr: (log: string) => console.log(`[xash-stderr] ${log}`),
+        print: (log: string) => emitXashLog('stdout', log),
+        printErr: (log: string) => emitXashLog('stderr', log),
         locateFile: (path: string) => {
           console.log(path);
           switch (path) {
@@ -282,6 +319,12 @@ class XashLoader {
     });
 
     await xash.init();
+    // D.7.28 — publish the live engine so the HUD overlay can issue
+    // console commands (cvar reads) against the running WASM.
+    XashLoader.setLiveInstance(xash as Xash3D | Xash3DWebRTC);
+    // Also expose it on window so Playwright probes and devtools can
+    // poke the engine console directly while iterating.
+    (window as any).__xash = xash;
     return xash;
   }
 
@@ -646,6 +689,16 @@ class XashLoader {
   public static onExit() {
     this.removeReloadListener();
     window.location.reload();
+  }
+
+  // Instance-level delegates so consumers that already hold the
+  // default-exported XashLoader singleton can reach the static
+  // live-state bridge without importing the class.
+  public exec(cmd: string) {
+    XashLoader.exec(cmd);
+  }
+  public setLiveInstance(inst: Xash3D | Xash3DWebRTC | null) {
+    XashLoader.setLiveInstance(inst);
   }
 }
 
