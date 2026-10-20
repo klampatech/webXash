@@ -222,6 +222,16 @@ class XashLoader {
       multiplayerIP: store.multiplayerIP,
       onError: XashLoader.removeReloadListener,
       module: {
+        // Forward engine stdout/stderr to browser console so headless
+        // smokes (Playwright) can capture engine-side events:
+        // - "Loading DLL dlls/hl_emscripten_wasm32.wasm" → confirms
+        //   our TS server WASM is the one being dlopened
+        // - "Unknown command: buy" / "Got command \"buy\"" → D.7.18 P1
+        //   signal for whether the server DLL accepted TS commands
+        // - "game rules: <class>" / "CTSGameRules" → confirms our
+        //   patched InstallGameRules factory returned our subclass
+        print: (log: string) => console.log(`[xash-stdout] ${log}`),
+        printErr: (log: string) => console.log(`[xash-stderr] ${log}`),
         locateFile: (path: string) => {
           console.log(path);
           switch (path) {

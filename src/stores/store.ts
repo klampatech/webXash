@@ -28,7 +28,12 @@ export const useXashStore = defineStore(
     // initial=4096 max=4096 → initial=4096 max=32768), so 4 bots
     // fits comfortably. Override in the Advanced panel for solo
     // (0) or fuller counts (8+ at your own risk).
-    const launchOptions = ref('-game ts +map ts_apartments bot_quota 4');
+    // D.7.18: reorder fixes an engine argv-parser quirk where cvar
+    // values after `+map <name>` consume the map name (Usage: map
+    // <mapname> error). Putting cvars first lets the engine process
+    // them, then `+map ts_apartments` cleanly captures the map name.
+    // Override in the Advanced panel.
+    const launchOptions = ref('bot_quota 2 -game ts +map ts_apartments');
     const fullScreen = ref(false);
     const enableConsole = ref(true);
     const enableCheats = ref(false);
