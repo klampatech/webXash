@@ -712,6 +712,27 @@ class XashLoader {
     if (options.selectedLocalFolder) {
       args.push('-game');
       args.push(options.selectedLocalFolder);
+
+      // D.7.34 — `-game ts` sets the engine's primary search path to
+      // `ts/` ONLY. That drops `valve/` from the search path, and
+      // `valve/` is where the engine's shared UI resources live:
+      //
+      //   Localize_AddToDict( resource/mainui_english.txt )   → engine menu strings
+      //   UI_ApplyCustomColors: colors.lst not found          → menu colours
+      //   resource/*.res                                   → menu layout
+      //
+      // The TS mod was built as a plain GoldSrc mod that *inherited*
+      // Valve's resource dir, so its own cfg references those files.
+      // Without the valve fallback we lose localized strings and
+      // menu theming — not fatal for gameplay, but it's a real
+      // regression versus running the mod under Steam HL1.
+      //
+      // `-basedir` keeps the engine's own resources reachable while
+      // leaving `ts/` as the highest-priority search path, so TS
+      // assets still win any collision (e.g. ts/specialists.wad vs
+      // valve/halflife.wad).
+      args.push('-basedir');
+      args.push('valve');
     }
 
     return args;
