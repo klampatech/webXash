@@ -23,12 +23,12 @@ export const useXashStore = defineStore(
     const maxLoadingAmount = ref(100);
     const showXashSettingUI = ref(true);
     // -- Launch options
-    // Default to TS game launchArgs + 2 bots. Note: xash.wasm has a
-    // hard 256MB heap cap (memory[0]: initial=4096 max=4096 pages)
-    // and bots each load the full TS asset set. bot_quota 4 was OOM'ing
-    // during map load. 2 fits comfortably. Override in the Advanced
-    // panel for solo (set to 0) or fuller (set to 8 — at your own risk).
-    const launchOptions = ref('-game ts +map ts_apartments bot_quota 2');
+    // Default to TS game launchArgs + 4 bots. xash.wasm heap cap was
+    // raised from 256MB → 2GB (D.7.13, wasm memory section patched
+    // initial=4096 max=4096 → initial=4096 max=32768), so 4 bots
+    // fits comfortably. Override in the Advanced panel for solo
+    // (0) or fuller counts (8+ at your own risk).
+    const launchOptions = ref('-game ts +map ts_apartments bot_quota 4');
     const fullScreen = ref(false);
     const enableConsole = ref(true);
     const enableCheats = ref(false);
