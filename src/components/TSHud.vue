@@ -230,6 +230,11 @@ const showKillfeed = computed(() =>
 
 // === Keyboard handler — toggle buy menu ===
 function handleKey(e: KeyboardEvent) {
+  // D.7.30 — diagnostic trace. Remove once keyboard issue is solved.
+  // Logs every keydown that bubbles to window — including the
+  // activeElement and target so we can see whether the engine
+  // ever sees a keypress.
+  console.log('[KEY]', e.key, '| active=', document.activeElement?.tagName, '#', document.activeElement?.id || '', '| target=', (e.target as HTMLElement)?.tagName)
   if (e.key === 'b' || e.key === 'B') {
     showBuyMenu.value = !showBuyMenu.value
   } else if (e.key === 'Escape' && showBuyMenu.value) {
