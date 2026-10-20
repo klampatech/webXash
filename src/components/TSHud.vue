@@ -2,7 +2,7 @@
   <div v-if="visible && hudEnabled" class="ts-hud" data-tshud>
     <!-- Top bar: cash (left), round timer + slowmo (center), round count (right) -->
     <div class="ts-hud__top">
-      <div class="ts-hud__cash">
+      <div class="ts-hud__cash" :class="{ 'ts-hud__cash--flash': cashFlash }">
         <span class="cash-amount">${{ cash.toLocaleString() }}</span>
         <span class="cash-label">CASH</span>
       </div>
@@ -77,7 +77,9 @@
             v-for="item in currentCategoryItems"
             :key="item.id"
             class="buy-item"
+            :class="{ 'buy-item--owned': ownedWeapons.includes(item.name) }"
             :disabled="item.price > cash"
+            @click="purchaseItem(item)"
           >
             <span class="buy-item__name">{{ item.name }}</span>
             <span class="buy-item__price">${{ item.price }}</span>
@@ -119,7 +121,8 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useXashStore } from '/@/stores/store.ts'
 import { startLiveState, onLiveState } from '/@/services/live-state.ts'
-import { startKeyboardBridge, tryAttachMouseBridge } from '/@/services/keyboard-bridge.ts'
+import { startKeyboardBridge, tryAttachMouseBridge, setBridgeSuspended } from '/@/services/keyboard-bridge.ts'
+import XashLoader from '/@/services/xash-loader'
 import { onBeforeMount } from 'vue'
 
 const store = useXashStore()
@@ -168,44 +171,102 @@ const killfeed = ref<KillfeedEntry[]>([
 // Pulled from TS decomp tools/decompile/output/*.ts, simplified. Real
 // prices are stored in ts/purchase.txt or computed by server DLL — we
 // can't know real prices without the WASM rebuild, so display placeholders.
+// D.7.35 — each buy item now carries the engine command that actually
+// grants it. The TS `buy` command doesn't exist without ts.dll, so we
+// spend the cash in our own JS state and then issue the closest real
+// HL1 equivalent via Cmd_ExecuteString. That makes the buy menu a
+// working armory instead of decoration: buy a weapon, it appears in
+// your hands and in slot<N>.
+//
+// `give` requires sv_cheats 1; TSGameRules.enabledCheats() is
+// equivalent, so we enable it once at match start and leave it on.
 const buyCategories = [
   {
     key: 0,
     label: 'PISTOLS',
     items: [
-      { id: 'pistol_beretta', name: 'Beretta', price: 200 },
-      { id: 'pistol_deserteagle', name: 'Desert Eagle', price: 650 },
-      { id: 'pistol_anaconda', name: 'Anaconda', price: 850 },
+      { id: 'pistol_beretta', name: 'Beretta', price: 200, give: 'weapon_9mmhandgun' },
+      { id: 'pistol_deserteagle', name: 'Desert Eagle', price: 650, give: 'weapon_357' },
+      { id: 'pistol_anaconda', name: 'Anaconda', price: 850, give: 'weapon_357' },
     ],
   },
   {
     key: 1,
     label: 'SMGS',
     items: [
-      { id: 'smg_uzi', name: 'Uzi', price: 700 },
-      { id: 'smg_mp5', name: 'MP5', price: 1500 },
-      { id: 'smg_p90', name: 'P90', price: 2350 },
+      { id: 'smg_uzi', name: 'Uzi', price: 700, give: 'weapon_9mmhandgun' },
+      { id: 'smg_mp5', name: 'MP5', price: 1500, give: 'weapon_9mmAR' },
+      { id: 'smg_p90', name: 'P90', price: 2350, give: 'weapon_9mmAR' },
     ],
   },
   {
     key: 2,
     label: 'RIFLES',
     items: [
-      { id: 'rifle_ak47', name: 'AK-47', price: 2500 },
-      { id: 'rifle_m4', name: 'M4', price: 3100 },
-      { id: 'rifle_sniper', name: 'M82 Sniper', price: 4000 },
+      { id: 'rifle_ak47', name: 'AK-47', price: 2500, give: 'weapon_ak47' },
+      { id: 'rifle_m4', name: 'M4', price: 3100, give: 'weapon_m4' },
+      { id: 'rifle_sniper', name: 'M82 Sniper', price: 4000, give: 'weapon_m4' },
     ],
   },
   {
     key: 3,
     label: 'EQUIPMENT',
     items: [
-      { id: 'eq_flashbang', name: 'Flashbang', price: 100 },
-      { id: 'eq_grenade', name: 'HE Grenade', price: 250 },
-      { id: 'eq_armor', name: 'Body Armor', price: 650 },
+      { id: 'eq_flashbang', name: 'Flashbang', price: 100, give: 'flashlight' },
+      { id: 'eq_grenade', name: 'HE Grenade', price: 250, give: 'weapon_grenade' },
+      { id: 'eq_armor', name: 'Body Armor', price: 650, give: 'item_armor' },
     ],
   },
 ]
+
+/**
+ * D.7.36 — release pointer lock while the buy menu is open, take it
+ * back on close.
+ *
+ * While the canvas holds pointer lock, the cursor is captured: real
+ * mouse events go to the canvas no matter what DOM element is under
+ * the (frozen, invisible) cursor position. So the buy menu's buttons
+ * are literally unclickable — `elementFromPoint` reports the button,
+ * but the browser delivers the click to the canvas. Verified:
+ * `document.pointerLockElement === canvas` while the menu is open.
+ *
+ * So opening the menu must exit the lock, and closing it must
+ * re-acquire (which browsers only allow from a user gesture, hence
+ * the close is done straight off the B/ESC keypress).
+ */
+function syncPointerLock() {
+  const canvas = document.getElementById('canvas') as HTMLCanvasElement | null
+  if (!canvas) return
+  if (showBuyMenu.value) {
+    if (document.pointerLockElement === canvas) document.exitPointerLock()
+  } else if (document.pointerLockElement !== canvas) {
+    // Best-effort; a rejection here just means the user has to click
+    // the canvas again, which is the normal flow anyway.
+    canvas.requestPointerLock?.().catch(() => {})
+  }
+}
+
+/** Enable the cheat channel the `give` command requires. */
+function enableCheatChannel() {
+  XashLoader.exec('set sv_cheats 1')
+}
+
+/** Purchase an item: deduct cash in JS state, then grant via engine. */
+function purchaseItem(item: { id: string; name: string; price: number; give?: string }) {
+  if (!item.give) return
+  if (cash.value < item.price) {
+    // Not enough cash — flash the counter.
+    cashFlash.value = true
+    window.setTimeout(() => { cashFlash.value = false }, 400)
+    return
+  }
+  cash.value -= item.price
+  enableCheatChannel()
+  XashLoader.exec(`give ${item.give}`)
+  if (item.id === 'eq_flashbang') XashLoader.exec('impulse 104')
+  // Add to the owned-weapon strip so the player can see what they bought.
+  ownedWeapons.value = [...new Set([...ownedWeapons.value, item.name])]
+}
 
 const currentCategoryItems = computed(() => buyCategories[activeCategory.value]?.items || [])
 
@@ -233,8 +294,14 @@ const showKillfeed = computed(() =>
 function handleKey(e: KeyboardEvent) {
   if (e.key === 'b' || e.key === 'B') {
     showBuyMenu.value = !showBuyMenu.value
+    // D.7.36 — while the menu is open it owns the keyboard; otherwise
+    // "2" would both switch category and send +slot2 to the engine.
+    setBridgeSuspended(showBuyMenu.value)
+    syncPointerLock()
   } else if (e.key === 'Escape' && showBuyMenu.value) {
     showBuyMenu.value = false
+    setBridgeSuspended(false)
+    syncPointerLock()
   } else if (showBuyMenu.value && e.key >= '1' && e.key <= '9') {
     const idx = parseInt(e.key) - 1
     if (idx < buyCategories.length) activeCategory.value = idx
@@ -250,6 +317,9 @@ onMounted(() => {
   // -forward on W up, etc). Skip when ?nohud=1 is set, so the
   // isolation test still tells us whether the HUD is implicated.
   if (!(new URLSearchParams(window.location.search).get('nohud') === '1')) {
+    // `give` is gated behind sv_cheats, and TS's own rules enable it
+    // anyway (TSGameRules.enabledCheats). Turn it on at match start.
+    enableCheatChannel();
     stopKeyboardBridge = startKeyboardBridge();
     // Mouse buttons ride a different SDL path than the keyboard, but
     // mouse LOOK already works — so bridge clicks through the same
@@ -298,6 +368,10 @@ const teamList = ref('')
 const playerName = ref('')
 const hostFramerate = ref('')
 const missingSpawnEntities = ref<string[]>([])
+// D.7.35 — real purchases: track what the player has bought so the
+// menu can mark it, and flash the counter when they can't afford it.
+const ownedWeapons = ref<string[]>([])
+const cashFlash = ref(false)
 const hasEngineGap = ref(false)
 // D.7.29 — last engine alert, shown as a non-blocking toast.
 const engineAlert = ref('')
@@ -316,6 +390,7 @@ onUnmounted(() => {
   if (stopLiveState) stopLiveState()
   if (liveUnsub) liveUnsub()
   if (stopKeyboardBridge) stopKeyboardBridge()
+  setBridgeSuspended(false)
 })
 
 </script>
@@ -496,7 +571,12 @@ onUnmounted(() => {
   justify-content: center;
   pointer-events: auto;
 }
+/* D.7.36 — `.ts-hud` sets `pointer-events: none` so engine clicks
+   reach the canvas. That value INHERITS into children, so every
+   interactive part of the buy menu has to opt back in explicitly or
+   clicks fall straight through to the game. */
 .buy-menu__panel {
+  pointer-events: auto;
   background: linear-gradient(180deg, #2a1a00 0%, #160b00 100%);
   border: 2px solid rgba(190,140,40,0.8);
   padding: 24px 32px;
@@ -513,6 +593,7 @@ onUnmounted(() => {
   padding-bottom: 8px;
 }
 .buy-menu__categories {
+  pointer-events: auto;
   display: flex;
   gap: 6px;
   margin-bottom: 12px;
@@ -538,6 +619,7 @@ onUnmounted(() => {
   margin-bottom: 14px;
 }
 .buy-item {
+  pointer-events: auto;
   display: flex;
   justify-content: space-between;
   padding: 8px 12px;
@@ -560,6 +642,23 @@ onUnmounted(() => {
   letter-spacing: 1px;
   color: rgba(255,215,110,0.5);
   text-align: center;
+}
+
+/* D.7.35 — purchased item marker + insufficient-funds flash */
+.buy-item--owned {
+  border-color: rgba(120, 220, 140, 0.7) !important;
+  background: rgba(30, 70, 45, 0.55) !important;
+}
+.buy-item--owned .buy-item__name::after {
+  content: ' ✓';
+  color: #7fdc9a;
+}
+.ts-hud__cash--flash {
+  animation: cashDenied 0.4s ease-out;
+}
+@keyframes cashDenied {
+  0%, 100% { background: rgba(10,10,14,0.72); }
+  50% { background: rgba(190, 40, 40, 0.85); }
 }
 
 /* D.7.29 engine-error toast */

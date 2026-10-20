@@ -72,6 +72,23 @@ const MOUSE_BUTTON_TO_CMD: Record<string, string> = {
 /** If non-null, install the mouse bridge at the next possible moment. */
 let mouseListener: ((e: MouseEvent) => void) | null = null;
 
+// D.7.36 — while a DOM modal owns the keyboard (the buy menu), the
+// bridge must stay quiet. Otherwise pressing "2" to switch category
+// also sends `+slot2` to the engine and switches your weapon.
+let bridgeSuspended = false;
+
+export function setBridgeSuspended(v: boolean) {
+  bridgeSuspended = v;
+  if (v) {
+    // Release anything currently held so nothing sticks.
+    for (const code of Array.from(heldKeys)) {
+      const cmd = KEY_TO_CMD[code];
+      if (cmd) XashLoader.exec(`-${cmd}`);
+    }
+    heldKeys.clear();
+  }
+}
+
 function attachMouseBridge(canvas: HTMLCanvasElement) {
   if (mouseListener) return;
   const held = new Set<number>();
@@ -102,11 +119,13 @@ export function tryAttachMouseBridge() {
   if (c) attachMouseBridge(c);
 }
 
+/** Keys currently mapped-to-engine-command and held down. */
+const heldKeys = new Set<string>();
+
 export function startKeyboardBridge(): () => void {
-  const held = new Set<string>();
 
   const onKeyDown = (e: KeyboardEvent) => {
-    if (e.repeat) return;
+    if (bridgeSuspended || e.repeat) return;
     // Don't hijack keys while the user is typing in a form field.
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
@@ -114,27 +133,28 @@ export function startKeyboardBridge(): () => void {
     }
     const cmd = KEY_TO_CMD[e.code];
     if (!cmd) return;
-    if (held.has(e.code)) return;
-    held.add(e.code);
+    if (heldKeys.has(e.code)) return;
+    heldKeys.add(e.code);
     XashLoader.exec(`+${cmd}`);
   };
 
   const onKeyUp = (e: KeyboardEvent) => {
+    if (bridgeSuspended) return;
     const cmd = KEY_TO_CMD[e.code];
     if (!cmd) return;
-    if (!held.has(e.code)) return;
-    held.delete(e.code);
+    if (!heldKeys.has(e.code)) return;
+    heldKeys.delete(e.code);
     XashLoader.exec(`-${cmd}`);
   };
 
   // Releasing focus while a key is held would strand the engine in a
   // "still moving" state. Release everything on blur.
   const onBlur = () => {
-    for (const code of held) {
+    for (const code of heldKeys) {
       const cmd = KEY_TO_CMD[code];
       if (cmd) XashLoader.exec(`-${cmd}`);
     }
-    held.clear();
+    heldKeys.clear();
   };
 
   window.addEventListener('keydown', onKeyDown);
