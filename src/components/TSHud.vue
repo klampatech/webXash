@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="ts-hud" data-tshud>
+  <div v-if="visible && hudEnabled" class="ts-hud" data-tshud>
     <!-- Top bar: cash (left), round timer + slowmo (center), round count (right) -->
     <div class="ts-hud__top">
       <div class="ts-hud__cash">
@@ -119,9 +119,23 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useXashStore } from '/@/stores/store.ts'
 import { startLiveState, onLiveState } from '/@/services/live-state.ts'
+import { onBeforeMount } from 'vue'
 
 const store = useXashStore()
 const { tsConfig, showXashSettingUI } = storeToRefs(store)
+
+// D.7.30 — diagnostic isolation switch. ?nohud=1 in the URL
+// prevents the overlay from mounting entirely, so we can prove
+// whether the HUD overlay is intercepting keyboard events (vs.
+// the engine itself being keyboard-dead for an unrelated reason).
+// Read once, before mounting — no runtime toggle.
+const hudEnabled = ref(true)
+onBeforeMount(() => {
+  try {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('nohud') === '1') hudEnabled.value = false
+  } catch (_) { /* no window.location in non-DOM contexts */ }
+})
 
 // === Reactive state — fed by the engine via stdout intercept ===
 const cash = ref(850)
