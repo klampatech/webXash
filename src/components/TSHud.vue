@@ -376,8 +376,6 @@ onMounted(() => {
   const NAMES_A = ['Lombardi', 'Winters', 'Mason', 'Orgasmov', 'Vargas', 'Dietrich', 'Park']
   const NAMES_B = ['Maverick', 'Goose', 'Iceman', 'Jester', 'Merlin', 'Viper', 'Cougar']
   let demoTick = 0
-  let cashBoostTimer: number | null = null
-  let killfeedTimer: number | null = null
   function rand<T>(a: T[]): T { return a[Math.floor(Math.random() * a.length)] }
   function flashCash(amount: number) {
     cash.value = Math.max(0, Math.min(9999, cash.value + amount))
@@ -385,7 +383,7 @@ onMounted(() => {
   // Cash fluctuates by $100 (kill bounty) every ~5 s; the engine
   // would normally deliver this via pfnServerPrint("+1 SEAL\n") or
   // a hud-text message.
-  cashBoostTimer = window.setInterval(() => {
+  _cashBoostTimer = window.setInterval(() => {
     flashCash(Math.random() < 0.6 ? 150 : -50)
     demoTick++
     if (demoTick % 8 === 0) {
@@ -403,7 +401,7 @@ onMounted(() => {
     }
   }, 5000)
   // Killfeed appends every ~9 s: red vs blue kill.
-  killfeedTimer = window.setInterval(() => {
+  _killfeedTimer = window.setInterval(() => {
     const team: 'red' | 'blue' = Math.random() < 0.5 ? 'red' : 'blue'
     const nextId = (killfeed.value[killfeed.value.length - 1]?.id ?? 0) + 1
     killfeed.value = [
@@ -414,17 +412,15 @@ onMounted(() => {
     const idx = team === 'red' ? 0 : 1
     teams.value[idx].score++
   }, 9000)
-  ;(window as unknown as { __tshud_demo?: unknown }).__tshud_demo = { flashCash, NAMES_A, NAMES_B }
 })
-// Cleanup demo timers in onUnmounted
-const _demoCashBoost: number | null = null
-let _cashBoostTimer: number | null = null
-let _killfeedTimer: number | null = null
 
 let interval: number | null = null
 let stopLiveState: (() => void) | null = null
 let liveUnsub: (() => void) | null = null
 let stopKeyboardBridge: (() => void) | null = null
+// D.7.55 — demo-mode timer handles
+let _cashBoostTimer: number | null = null
+let _killfeedTimer: number | null = null
 
 // D.7.28 — reactively driven live state mirror
 const mapName = ref('(loading...)')
