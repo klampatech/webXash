@@ -331,6 +331,39 @@ const onBeforeUnload = (event: Event) => {
   event.returnValue = false;
 };
 
+/**
+ * Parse the effective launch-options string for a `+connect <host>:<port>`
+ * pair and return it as `host:port`, or null if absent.
+ *
+ * The dedicated-server bridge listens on `<host>:<bridgePort>` (default
+ * 27017, distinct from the game's UDP 27015 so they don't collide). We
+ * accept two forms:
+ *
+ *   +connect 100.95.111.112:27015    → "100.95.111.112:27017"
+ *   +connect 100.95.111.112:27015 +bridgeport 27020
+ *                                        → "100.95.111.112:27020"
+ *
+ * The game port is the one the ENGINE dials; the bridge port is the one
+ * the BROWSER dials over WebSocket. Keeping them separate means Kyle can
+ * move the bridge without touching the launch options the engine reads.
+ */
+export function _dedicatedConnectHostPort(
+  launchOptions: string
+): string | null {
+  if (!launchOptions) return null;
+  const connect = launchOptions.match(/\+connect\s+([^\s]+)/i);
+  if (!connect) return null;
+  const target = connect[1];
+  // Only handle explicit host:port. Named hosts aren't supported (the
+  // bridge is always addressed by IP on the tailscale interface).
+  const m = target.match(/^(\d{1,3}(?:\.\d{1,3}){3}):(\d+)$/);
+  if (!m) return null;
+  const host = m[1];
+  const bridge = launchOptions.match(/\+bridgeport\s+(\d+)/i);
+  const bridgePort = bridge ? bridge[1] : '27017';
+  return `${host}:${bridgePort}`;
+}
+
 class XashLoader {
   // D.7.28 live-state bridge. The running Xash3D instance exposes a
   // public `Cmd_ExecuteString(cmd)` that runs an engine console
@@ -362,11 +395,31 @@ class XashLoader {
     // resolves to a WebSocket signaling server. When present, we route
     // through Xash3DMultiplayer (a Xash3DWebRTC subclass); otherwise
     // use vanilla Xash3D (single-player).
+    //
+    // 2026-10-21 M5: dedicated-server path. When the user explicitly sets
+    // `+connect <host>:<port>` in launch options we route through the
+    // WebSocket->UDP bridge (Xash3DBridge), which talks to
+    // scripts/ts-udp-bridge.js running on the dedicated server's box.
+    // We don't gate this on the multiplayer checkbox — the bridge only
+    // requires a running ts-udp-bridge.js (the URL is local to the
+    // dedicated server's host).
+    const connectTarget = _dedicatedConnectHostPort(
+      (window as any).__xashLaunchOptions ?? ''
+    );
+
     const cfg = (window as any).__multiplayerConfig;
     const server = cfg?.server;
-    if (server && /\d/.test(server)) {
+    if (server && /\d/.test(server) && !connectTarget) {
       const { Xash3DMultiplayer } = await import('../services/xash-multiplayer.ts');
       const Ctor = Xash3DMultiplayer as unknown as typeof Xash3D;
+      return Ctor;
+    } else if (connectTarget) {
+      const { Xash3DBridge } = await import('../services/xash-bridge.ts');
+      // Bridge transport needs bridgeAddress; we set it on `window`
+      // before `new Xash3D(opts)` reads it via the bridgeAddress field
+      // *of Xash3DBridge*, which we expose below.
+      (window as any).__xashBridgeAddress = connectTarget;
+      const Ctor = Xash3DBridge as unknown as typeof Xash3D;
       return Ctor;
     } else {
       const { Xash3D } = await import('xash3d-fwgs');
@@ -390,10 +443,20 @@ class XashLoader {
     // and the spread overrides our args with module.arguments, dropping
     // the -ref webgl2 renderer flag. Putting them at top-level lets
     // initRender() prepend the renderer arg.
-    const xash = new Xash3D({
+    // Stash effective launch options on `window` so _getXashInstance can
+    // look for `+connect` before deciding which transport to load.
+    if ((window as any).__xashLaunchOptions == null) {
+      (window as any).__xashLaunchOptions = options.launchArgs?.join(' ') ?? '';
+    }
+    // `Xash3D` here is the dynamic constructor we resolved in
+    // _getXashInstance — vanilla Xash3D, Xash3DMultiplayer, or
+    // Xash3DBridge. The bridge one adds `bridgeAddress`, which the base
+    // Xash3DOptions doesn't declare, hence the widened cast.
+    const ctorOpts = {
       arguments: options.launchArgs,
       multiplayerIP: store.multiplayerIP,
       onError: XashLoader.removeReloadListener,
+      bridgeAddress: (window as any).__xashBridgeAddress,
       module: {
         // Forward engine stdout/stderr to browser console so headless
         // smokes (Playwright) can capture engine-side events:
@@ -441,7 +504,8 @@ class XashLoader {
       canvas: options.canvas,
       libraries: options.selectedGame.libraries,
       dynamicLibraries: DYNAMIC_LIBRARIES,
-    });
+    };
+    const xash = new (Xash3D as unknown as new (o: unknown) => Xash3D)(ctorOpts);
 
     await xash.init();
     // D.7.28 — publish the live engine so the HUD overlay can issue

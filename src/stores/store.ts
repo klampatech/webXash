@@ -196,7 +196,12 @@ export const useXashStore = defineStore(
         'selectedZip',
         'multiplayerIP',
         'selectedLocalFolder',
-        'launchOptions',
+        // 2026-10-21: launchOptions deliberately NOT persisted.
+        // Pinia's persisted state is rehydrated AFTER the setup()
+        // function runs, so a stored value silently overwrites any
+        // ?launchOptions= URL override — Kyle's typed `+connect` was
+        // getting clobbered on every reload. Keeping it out of `pick`
+        // means the URL (or the hardcoded default) always wins.
         'fullScreen',
         'enableConsole',
         'enableCheats',
