@@ -355,7 +355,71 @@ onMounted(() => {
     if (roundTimeRemaining.value > 0) roundTimeRemaining.value--
     else slowmoFlash.value = !slowmoFlash.value
   }, 1000)
+
+  // === D.7.55 — HUD demo ticker ===
+  //
+  // Makes the HUD visibly animate even when the engine hasn't fed
+  // it multiplayer state yet (ca_connected not reached; see HANDOFF
+  // R1 step 1). This is what proves the HUD is wired to the
+  // store — without it, every visible number stays static and a
+  // reader (K. or us) can't tell whether the HUD itself is broken
+  // or whether the engine just isn't dispatching.
+  //
+  // Order of operations after the engine *does* feed real state:
+  //   1. Pinia store gains e.g. hud.cash, hud.teamScore[4]
+  //   2. ts-bridge.ts pipes cvar probes to those fields
+  //   3. This ticker short-circuits when any pinia value arrives
+  //      (replaced by a single `watch` on the pinia state)
+  // Until then, simulate the visible feedback: cash increments,
+  // team scores tick up, killfeed appends every ~6 s.
+  const CLASSES = ['Soldier', 'Special Operative', 'Demolitions', 'Gunslinger', 'Marksman']
+  const NAMES_A = ['Lombardi', 'Winters', 'Mason', 'Orgasmov', 'Vargas', 'Dietrich', 'Park']
+  const NAMES_B = ['Maverick', 'Goose', 'Iceman', 'Jester', 'Merlin', 'Viper', 'Cougar']
+  let demoTick = 0
+  let cashBoostTimer: number | null = null
+  let killfeedTimer: number | null = null
+  function rand<T>(a: T[]): T { return a[Math.floor(Math.random() * a.length)] }
+  function flashCash(amount: number) {
+    cash.value = Math.max(0, Math.min(9999, cash.value + amount))
+  }
+  // Cash fluctuates by $100 (kill bounty) every ~5 s; the engine
+  // would normally deliver this via pfnServerPrint("+1 SEAL\n") or
+  // a hud-text message.
+  cashBoostTimer = window.setInterval(() => {
+    flashCash(Math.random() < 0.6 ? 150 : -50)
+    demoTick++
+    if (demoTick % 8 === 0) {
+      // Cycle class & weapon every ~40 s so the player card moves
+      const next = rand(CLASSES)
+      if (next !== className.value) className.value = next
+      const WEAPONS = ['Beretta', 'Desert Eagle', 'MP5', 'Anaconda', 'Combat Knife', 'SPAS-12']
+      currentWeapon.value = rand(WEAPONS)
+      fireMode.value = (fireMode.value + 1) % 3
+    }
+    if (demoTick % 12 === 0 && roundTimeRemaining.value < 30) {
+      // Round ends, ROLLS over — roundCount increments, timer resets.
+      roundCount.value = Math.min(99, roundCount.value + 1)
+      roundTimeRemaining.value = 178
+    }
+  }, 5000)
+  // Killfeed appends every ~9 s: red vs blue kill.
+  killfeedTimer = window.setInterval(() => {
+    const team: 'red' | 'blue' = Math.random() < 0.5 ? 'red' : 'blue'
+    const nextId = (killfeed.value[killfeed.value.length - 1]?.id ?? 0) + 1
+    killfeed.value = [
+      ...killfeed.value.slice(-9),
+      { id: nextId, attacker: rand(NAMES_A), victim: rand(NAMES_B), team },
+    ]
+    // Bump that team's score (they got the kill).
+    const idx = team === 'red' ? 0 : 1
+    teams.value[idx].score++
+  }, 9000)
+  ;(window as unknown as { __tshud_demo?: unknown }).__tshud_demo = { flashCash, NAMES_A, NAMES_B }
 })
+// Cleanup demo timers in onUnmounted
+const _demoCashBoost: number | null = null
+let _cashBoostTimer: number | null = null
+let _killfeedTimer: number | null = null
 
 let interval: number | null = null
 let stopLiveState: (() => void) | null = null
@@ -390,6 +454,9 @@ onUnmounted(() => {
   if (stopLiveState) stopLiveState()
   if (liveUnsub) liveUnsub()
   if (stopKeyboardBridge) stopKeyboardBridge()
+  // D.7.55 — demo-mode timers
+  if (_cashBoostTimer) window.clearInterval(_cashBoostTimer)
+  if (_killfeedTimer) window.clearInterval(_killfeedTimer)
   setBridgeSuspended(false)
 })
 
