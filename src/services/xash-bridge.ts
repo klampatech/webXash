@@ -20,7 +20,12 @@
 // flushed; we just forward raw datagrams both ways and let the engine
 // handle its own handshake protocol.
 
-import { type Net, type Packet, Xash3D, type Xash3DOptions } from 'xash3d-fwgs';
+import {
+  type Packet,
+  Xash3D,
+  type Xash3DOptions,
+  Net as NetImpl,
+} from 'xash3d-fwgs';
 
 export interface Xash3DBridgeOptions extends Xash3DOptions {
   /**
@@ -41,22 +46,38 @@ const FAKE_SOURCE_PORT = 8080;
 export class Xash3DBridge extends Xash3D {
   private ws?: WebSocket;
   private readonly bridgeAddress: string;
-  // `net` is inherited from xash3d-fwgs's Xash3D base class but the
-  // visible type is `EmNet` (the interface, no `incoming` field). We
-  // re-declare with the concrete `Net` shape just like xash-webrtc.ts
-  // does so we can call `this.net.incoming.enqueue(...)` later.
-  declare public net: Net;
+  // Concrete `Net` instance. CRITICAL: this must be ASSIGNED, not merely
+  // declared. xash3d-fwgs's generated WASM glue calls
+  // `Module.net.sendto(...)` / `Module.net.recvfrom(...)` with a `?? -1`
+  // fallback, so when `this.net` is undefined every socket call the
+  // engine makes silently returns -1 and NOTHING is ever sent. The base
+  // Xash3D class passes `this.net` into the Emscripten module as `net:`
+  // (see xash3d.js runEm), so we must build the Net in our constructor,
+  // keyed to ourselves as the SendtoSender.
+  declare public net: InstanceType<typeof NetImpl>;
 
   constructor(opts: Xash3DBridgeOptions) {
     super(opts);
     this.bridgeAddress = opts.bridgeAddress ?? '';
+    // `NetImpl` needs a SendtoSender — this class provides `sendto()`.
+    // hostname/hostID feed `gethostname()`, which the engine uses for
+    // the server browser list; the bridge conventions mirror WebRTC.
+    this.net = new NetImpl(this, { hostname: 'tsbridge', hostID: 1 });
   }
 
   async init() {
-    // Resolve both the engine WASM init and our WebSocket bind in
-    // parallel — both are needed before the engine can fire its first
-    // UDP datagram.
-    await Promise.all([super.init(), this._connect()]);
+    // The engine's `runEm()` reads `this.net` synchronously and hands
+    // it to Emscripten's `Module.net` — so we MUST already have `net`
+    // constructed (the constructor did that) before `super.init()`.
+    //
+    // The WebSocket layer however can be opening in parallel — the
+    // engine tolerates that (it queues outgoing packets and the bridge
+    // is up before the first connect-challenge fires). Don't block init
+    // on it; fire-and-forget with explicit rejection handling.
+    this._connect().catch((err) => {
+      console.error('[bridge] connect rejected:', err.message);
+    });
+    await super.init();
   }
 
   private _connect(): Promise<void> {
