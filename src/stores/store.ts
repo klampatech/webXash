@@ -33,7 +33,15 @@ export const useXashStore = defineStore(
     // <mapname> error). Putting cvars first lets the engine process
     // them, then `+map ts_apartments` cleanly captures the map name.
     // Override in the Advanced panel.
-    const launchOptions = ref('-noip -noip6 bot_quota 2 -game ts +map ts_apartments');
+    // R1 step 1: default launch options tuned so the engine boots
+    // straight into -game ts +sv_lan 1 +map ts_lobby. Verified
+    // reproducible on Tue 21 Oct; previously the default had
+    // +map ts_apartments which Kyle never saw. ts_apartments IS
+    // in tsmod.zip (verified by unzip -l in the previous session)
+    // but the previous URL-route didn't reliably plumb the
+    // launchOptions string through to pinia, so launching was
+    // landing in HL1 c0a0 menu mode.
+    const launchOptions = ref('-noip -noip6 -game ts +sv_lan 1 +map ts_lobby');
 
     // -- TS-specific launcher config (D.7.26 — JS-side parity layer)
     // TS-specific cvars that the engine reads from the launcher's argv
