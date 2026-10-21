@@ -766,18 +766,37 @@ class XashLoader {
 
   private _buildLaunchArgs(options: FullStartOptions): string[] {
     const baseArgs = options.fullScreen ? FULLSCREEN_ARGS : WINDOW_ARGS;
-    const args = [
-      ...baseArgs,
-      ...(options.launchOptions?.split(' ').filter(Boolean) || []),
-    ];
+    const rawLaunch = options.launchOptions?.split(' ').filter(Boolean) || [];
+
+    // 2026-10-21: strip -noip / -noip6 whenever the user is asking to
+    // connect to a remote server. FWGS net_ws.c:2018 does
+    //   net.allow_ip  = !Sys_CheckParm("-noip");
+    //   net.allow_ip6 = !Sys_CheckParm("-noip6");
+    // and NET_DetermineLocalAddress() bails with "TCP/IP Disabled." when
+    // both are false — the engine never calls socket(), so the emulated
+    // Net layer never gets an fd and `+connect` retries forever against
+    // nothing. These flags are only meaningful for a local-only listen
+    // server, so drop them the moment a +connect target is present.
+    const wantsRemote = rawLaunch.some((a) => /^\+connect\b/i.test(a));
+    const args = wantsRemote
+      ? rawLaunch.filter((a) => !/^-noip6?$/i.test(a))
+      : rawLaunch;
+    if (wantsRemote && args.length !== rawLaunch.length) {
+      console.warn(
+        '[xash-loader] removed -noip/-noip6 from launch args; they disable ' +
+          'TCP/IP entirely and break +connect.',
+      );
+    }
+
+    const launch = [...baseArgs, ...args];
 
     if (options.enableConsole) {
-      args.push(CONSOLE_ARG);
+      launch.push(CONSOLE_ARG);
     }
 
     if (options.selectedLocalFolder) {
-      args.push('-game');
-      args.push(options.selectedLocalFolder);
+      launch.push('-game');
+      launch.push(options.selectedLocalFolder);
 
       // D.7.34 — `-game ts` sets the engine's primary search path to
       // `ts/` ONLY. That drops `valve/` from the search path, and
@@ -797,11 +816,11 @@ class XashLoader {
       // leaving `ts/` as the highest-priority search path, so TS
       // assets still win any collision (e.g. ts/specialists.wad vs
       // valve/halflife.wad).
-      args.push('-basedir');
-      args.push('valve');
+      launch.push('-basedir');
+      launch.push('valve');
     }
 
-    return args;
+    return launch;
   }
 
   public async startGameFiles(

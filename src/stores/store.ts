@@ -46,7 +46,13 @@ export const useXashStore = defineStore(
       // default so a remote-connect URL actually connects instead of
       // falling back to the in-browser listen server.
       new URLSearchParams(window.location.search).get('launchOptions')
-        ?? '-noip -noip6 -game ts +sv_lan 1 +map ts_lobby'
+        // CRITICAL: do NOT pass -noip or -noip6 to the engine. Those
+        // flags gate net.allow_ip = !Sys_CheckParm("-noip"); with
+        // them set, the engine prints "TCP/IP Disabled." and skips
+        // socket() entirely — so +connect has no socket to sendto on.
+        // (They were useful for the original shim/local-listen path,
+        // and the persistence bug kept them in place across sessions.)
+        ?? '-game ts +connect 127.0.0.1:27015 +maxplayers 8'
     );
 
     // -- TS-specific launcher config (D.7.26 — JS-side parity layer)
