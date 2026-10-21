@@ -201,6 +201,16 @@ class BridgeNet extends NetImpl {
 export class Xash3DBridge extends Xash3D {
   private ws?: WebSocket;
   private readonly bridgeAddress: string;
+  // Throttle the [bridge-send] per-packet log once we've confirmed
+  // bidirectional traffic. Keep emitting forever — but only when the
+  // stream *changes*: first 20 packets, then anything that's a new
+  // size, then collapse to one log per ~500 ms. With netchan traffic
+  // this is what was drowning Kyle's console during M5 bring-up.
+  private static readonly PER_PACKET_LOG_LIMIT = 20;
+  private static readonly PER_PACKET_LOG_INTERVAL_MS = 500;
+  private sentLogged = 0;
+  private lastSentLogAt = 0;
+  private lastSentSize = -1;
   // Concrete `Net` instance. CRITICAL: this must be ASSIGNED, not merely
   // declared. xash3d-fwgs's generated WASM glue calls
   // `Module.net.sendto(...)` / `Module.net.recvfrom(...)` with a `?? -1`
@@ -335,17 +345,26 @@ export class Xash3DBridge extends Xash3D {
     const copy = new ArrayBuffer(data.byteLength);
     new Int8Array(copy).set(data);
     ws.send(new Int8Array(copy));
-    // Cheap enough to keep on permanently during M5 bring-up — the send
-    // rate on a dedicated-server connection is a few packets/sec.
-    // 8-byte hex dump mirrors the bridge's `--debug` log so the two
-    // ends can be eyeballed side-by-side.
+    // Throttled: log the first N packets in full, then collapse to one
+    // line per interval once the stream is steady. 8-byte hex mirrors
+    // the bridge's `--debug` log so the two ends read the same.
+    const now = performance.now();
+    const size = data.byteLength;
+    const worthLogging =
+      this.sentLogged < Xash3DBridge.PER_PACKET_LOG_LIMIT ||
+      size !== this.lastSentSize ||
+      now - this.lastSentLogAt > Xash3DBridge.PER_PACKET_LOG_INTERVAL_MS;
+    if (!worthLogging) return;
+    this.sentLogged++;
+    this.lastSentLogAt = now;
+    this.lastSentSize = size;
     const first8 = new Uint8Array(copy, 0, Math.min(8, data.byteLength));
     let hex = '';
     for (let i = 0; i < first8.length; i++) {
       hex += first8[i].toString(16).padStart(2, '0');
     }
     console.log(
-      `[bridge-send] ${data.byteLength}B →`,
+      `[bridge-send] ${size}B →`,
       `${packet.ip.join('.')}:${packet.port}`,
       `head=${hex}`
     );

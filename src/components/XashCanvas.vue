@@ -55,6 +55,17 @@
         // Rejection just means the next click will do it.
       })
     }
+    // Single line on every canvas pointer-down. Distinguishes
+    // "click never reached the canvas DOM" from "click reached the
+    // canvas but the engine dropped it" in one round. Cheap enough
+    // to keep on permanently — keeps the console legible because it
+    // only fires on a real press.
+    console.log(
+      '[bridge-input] canvas pointerdown activeEl=',
+      document.activeElement?.id ?? document.activeElement?.tagName ?? null,
+      'lock=',
+      document.pointerLockElement?.id ?? 'free'
+    )
   }
 
   // Hooks
