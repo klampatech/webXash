@@ -404,6 +404,9 @@ class XashLoader {
     // requires a running ts-udp-bridge.js (the URL is local to the
     // dedicated server's host).
     const connectTarget = _dedicatedConnectHostPort(launchOptions ?? '');
+    const connectPeer = launchOptions?.match(
+      /\+connect\s+(\d{1,3}(?:\.\d{1,3}){3}:\d+)/
+    )?.[1];
 
     const cfg = (window as any).__multiplayerConfig;
     const server = cfg?.server;
@@ -413,10 +416,17 @@ class XashLoader {
       return Ctor;
     } else if (connectTarget) {
       const { Xash3DBridge } = await import('../services/xash-bridge.ts');
-      // Bridge transport needs bridgeAddress; we set it on `window`
-      // before `new Xash3D(opts)` reads it via the bridgeAddress field
-      // *of Xash3DBridge*, which we expose below.
+      // Bridge transport needs two addresses:
+      //   bridgeAddress  — host:port the BROWSER opens a WebSocket to
+      //                    (defaults to <gamehost>:27017, overridable
+      //                    via +bridgeport)
+      //   serverAddress  — host:port the dedicated server is actually
+      //                    on, attributed as the source of every inbound
+      //                    packet. Must match what `+connect <ip>:<port>`
+      //                    named; cls.serveradr gets compared against it
+      //                    to decide whether to accept each reply.
       (window as any).__xashBridgeAddress = connectTarget;
+      (window as any).__xashServerAddress = connectPeer ?? null;
       const Ctor = Xash3DBridge as unknown as typeof Xash3D;
       return Ctor;
     } else {
@@ -451,6 +461,7 @@ class XashLoader {
       multiplayerIP: store.multiplayerIP,
       onError: XashLoader.removeReloadListener,
       bridgeAddress: (window as any).__xashBridgeAddress,
+      serverAddress: (window as any).__xashServerAddress,
       module: {
         // Forward engine stdout/stderr to browser console so headless
         // smokes (Playwright) can capture engine-side events:

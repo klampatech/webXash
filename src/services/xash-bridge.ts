@@ -33,15 +33,54 @@ export interface Xash3DBridgeOptions extends Xash3DOptions {
    *     WebSocket-binary on `/ws`. See scripts/ts-udp-bridge.js.
    */
   bridgeAddress?: string;
+  /**
+   * The dedicated server's real `ip:port` as named in `+connect`.
+   * Attributed as the source address on every inbound packet — see
+   * parseIpPort()'s doc comment for why a loopback placeholder does
+   * not work here. Optional only so single-player construction stays
+   * type-compatible with the base class; a bridge with no server
+   * address is useless.
+   */
+  serverAddress?: string;
 }
 
 /**
- * GoldSrc engine's source address the bridge makes packets appear to come
- * from. We mirror the WebRTC transport's convention so the WASM engine
- * treats both transports identically.
+ * Source address attributed to packets coming BACK from the dedicated
+ * server through the bridge.
+ *
+ * CRITICAL — this must be the **real game server's** address: exactly
+ * what `+connect <ip>:<port>` named. It must NOT be a loopback
+ * placeholder. The engine's client-side packet filter is
+ *
+ *   cl_main.c: CL_IsFromConnectingServer( netadr_t from )
+ *     return NET_IsLocalAddress( from )          // NA_LOOPBACK only
+ *         || NET_CompareAdr( cls.serveradr, from );  // exact ip:port
+ *
+ * and it gates every single inbound connectionless packet on that
+ * (CL_HandleTestPacket, CL_ParseServerPacket, the S2C_CHALLENGE
+ * handler, …). `cls.serveradr` is whatever `+connect` resolved to.
+ * Tag replies `127.0.0.1:8080` and every one of them is silently
+ * dropped: the engine keeps retransmitting its challenge, the server
+ * keeps answering, and the browser console shows only
+ * `Connecting to <ip> (retry #N)` forever with no other symptom.
+ *
+ * `NET_SockadrToNetadr` never maps 127.0.0.1 to NA_LOOPBACK (it keys
+ * off address *family* only), so the `NET_IsLocalAddress` escape hatch
+ * does not fire for a spoofed 127.0.0.1 sockaddr either. There is no
+ * placeholder that works — it has to be the real peer.
+ *
+ * The WebRTC transport gets away with `127.0.0.1:8080` because its
+ * remote peer is genuinely a loopback peer-to-peer client. A
+ * dedicated server is not.
  */
-const FAKE_SOURCE_IP: [number, number, number, number] = [127, 0, 0, 1];
-const FAKE_SOURCE_PORT = 8080;
+function parseIpPort(addr: string): { ip: [number, number, number, number]; port: number } | null {
+  const m = addr.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3}):(\d+)$/);
+  if (!m) return null;
+  return {
+    ip: [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])],
+    port: Number(m[5]),
+  };
+}
 
 /**
  * The `Net` class shipped in xash3d-fwgs implements `socket`, `bind`,
@@ -70,6 +109,8 @@ const FAKE_SOURCE_PORT = 8080;
 class BridgeNet extends NetImpl {
   /** fd -> last peer address, for getsockname + diagnostics. */
   private peers = new Map<number, { ip: number[]; port: number }>();
+  /** Count of recvfrom pulls — wrap-around so logs stay finite. */
+  private recvLogged = 0;
 
   override socket(family: number, type: number, protocol: number): number {
     console.log(`[bridge-net] socket(${family}, ${type}, ${protocol})`);
@@ -83,7 +124,7 @@ class BridgeNet extends NetImpl {
    * Returning 0 (success) is therefore correct and is what unblocks
    * the engine's connect path.
    */
-  connect(fd: number, sockaddrPtr: number, socklenPtr: number): number {
+  connect(fd: number, sockaddrPtr: number, _socklenPtr: number): number {
     if (this.em && sockaddrPtr) {
       const [ip, port] = this.readSockaddrFast(sockaddrPtr);
       this.peers.set(fd, { ip, port });
@@ -107,6 +148,35 @@ class BridgeNet extends NetImpl {
     socklenPtr: number
   ): number {
     return this.sendtoBatch(fd, bufsPtr, lensPtr, count, flags, sockaddrPtr, socklenPtr);
+  }
+
+  /**
+   * Log whether the engine is actually draining `incoming`. `recvfrom`
+   * is the ONLY way an inbound datagram reaches the game — if this
+   * returns -1 with an empty buffer forever while the bridge reports
+   * `packetsToClient > 0`, packets are being enqueued but the engine
+   * never polls, which is a different failure than the engine
+   * discarding them after a successful read (address mismatch).
+   */
+  override recvfrom(
+    fd: number,
+    bufPtr: number,
+    bufLen: number,
+    flags: number,
+    sockaddrPtr: number,
+    socklenPtr: number
+  ): number {
+    const n = super.recvfrom(fd, bufPtr, bufLen, flags, sockaddrPtr, socklenPtr);
+    if (this.recvLogged < 60) {
+      this.recvLogged++;
+      if (n >= 0) {
+        const head = new Uint8Array(this.em!.HEAPU8.buffer, bufPtr, Math.min(8, n));
+        let hex = '';
+        for (let i = 0; i < head.length; i++) hex += head[i].toString(16).padStart(2, '0');
+        console.log(`[bridge-recv] GOT ${n}B head=${hex}`);
+      }
+    }
+    return n;
   }
 
   override getsockname(
@@ -141,13 +211,38 @@ export class Xash3DBridge extends Xash3D {
   // keyed to ourselves as the SendtoSender.
   declare public net: BridgeNet;
 
+  /**
+   * Real server address (from `+connect <ip>:<port>`) attributed to
+   * inbound packets. Resolved in the constructor from `serverAddress`;
+   * falls back to the bridge host if not supplied, which is a best
+   * guess (when the bridge IS on the server host, the bridge IP and
+   * game IP are usually the same). See parseIpPort()'s doc comment
+   * for why this needs to be the real peer, not a loopback stub.
+   */
+  private readonly serverAddress: { ip: [number, number, number, number]; port: number };
+
   constructor(opts: Xash3DBridgeOptions) {
     super(opts);
     this.bridgeAddress = opts.bridgeAddress ?? '';
+    const serverAddr =
+      opts.serverAddress ?? this.bridgeAddress.split('/')[0];
+    const parsed = parseIpPort(serverAddr);
+    if (!parsed) {
+      throw new Error(
+        `Xash3DBridge: serverAddress required (got "${serverAddr}"); ` +
+          'pass the same `+connect <ip>:<port>` value, e.g. ' +
+          '"100.95.111.112:27015".'
+      );
+    }
+    this.serverAddress = parsed;
     // `NetImpl` needs a SendtoSender — this class provides `sendto()`.
     // hostname/hostID feed `gethostname()`, which the engine uses for
     // the server browser list; the bridge conventions mirror WebRTC.
     this.net = new BridgeNet(this, { hostname: 'tsbridge', hostID: 1 });
+    console.log(
+      `[bridge] server=${serverAddr} bridge=${this.bridgeAddress} ` +
+        `— inbound packets attributed to ${this.serverAddress.ip.join('.')}:${this.serverAddress.port}`
+    );
   }
 
   async init() {
@@ -207,8 +302,8 @@ export class Xash3DBridge extends Xash3D {
           return;
         }
         const packet: Packet = {
-          ip: FAKE_SOURCE_IP,
-          port: FAKE_SOURCE_PORT,
+          ip: this.serverAddress.ip,
+          port: this.serverAddress.port,
           data: arr,
         };
         this.net.incoming.enqueue(packet);
