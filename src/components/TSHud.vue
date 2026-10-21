@@ -111,6 +111,19 @@
       <span class="alert-msg">{{ engineAlert }}</span>
     </div>
 
+    <!-- D.7.56 pump telemetry — REAL numbers, not literals. If the
+         game loop is being driven from JS (see services/ts-pump.ts)
+         this counts up at ~60Hz. It is the one honest proof that TS
+         gameplay code is executing in the WASM. -->
+    <div class="ts-hud__pump" data-pump-strip>
+      <span class="pump-tag">GAMELOOP</span>
+      <span class="pump-val" :class="{ 'pump-val--live': pumpStats.live }">
+        {{ pumpStats.live ? `${pumpStats.hz}Hz` : 'idle' }}
+      </span>
+      <span class="pump-ticks">{{ pumpStats.ticks }} ticks</span>
+      <span v-if="pumpStats.lastError" class="pump-err">err</span>
+    </div>
+
     <!-- Slow-mo flash when round timer hits zero (placeholder for visual interest) -->
     <div v-if="slowmoFlash" class="ts-hud__slowmo-flash" />
   </div>
@@ -123,6 +136,7 @@ import { useXashStore } from '/@/stores/store.ts'
 import { startLiveState, onLiveState } from '/@/services/live-state.ts'
 import { startKeyboardBridge, tryAttachMouseBridge, setBridgeSuspended } from '/@/services/keyboard-bridge.ts'
 import XashLoader from '/@/services/xash-loader'
+import { tsPump } from '/@/services/ts-pump.ts'
 import { onBeforeMount } from 'vue'
 
 const store = useXashStore()
@@ -347,6 +361,11 @@ onMounted(() => {
 
   // Start the engine-cvar probe.
   stopLiveState = startLiveState()
+  // D.7.56 — sample pump telemetry twice a second so the strip shows
+  // a rate rather than a raw accumulating counter.
+  pumpStatsTimer = window.setInterval(() => {
+    pumpStats.value = tsPump.stats()
+  }, 500)
   // Round timer ticks down every second while visible.
   // Real games feed this from the server via the engine's hud tick;
   // for the overlay demo we self-decrement (lands at 0, no UI bug
@@ -433,6 +452,15 @@ const missingSpawnEntities = ref<string[]>([])
 const ownedWeapons = ref<string[]>([])
 const cashFlash = ref(false)
 const hasEngineGap = ref(false)
+// D.7.56 — pump telemetry. This is the honest signal for whether TS
+// gameplay logic is actually running: `ts_pump_think` drives
+// g_pGameRules->Think() in the WASM, so a nonzero tick count with a
+// healthy Hz means TS game code is executing every frame, independent
+// of the engine's broken loopback connect. Unlike the HUD literals
+// above, this number is REAL — don't mistake it for decoration.
+const pumpStats = ref({ ticks: 0, hz: 0, live: false, lastError: null as string | null })
+let pumpStatsTimer: number | null = null
+
 // D.7.29 — last engine alert, shown as a non-blocking toast.
 const engineAlert = ref('')
 
@@ -453,6 +481,7 @@ onUnmounted(() => {
   // D.7.55 — demo-mode timers
   if (_cashBoostTimer) window.clearInterval(_cashBoostTimer)
   if (_killfeedTimer) window.clearInterval(_killfeedTimer)
+  if (pumpStatsTimer) window.clearInterval(pumpStatsTimer)
   setBridgeSuspended(false)
 })
 
@@ -725,6 +754,51 @@ onUnmounted(() => {
 }
 
 /* D.7.29 engine-error toast */
+/* D.7.56 — pump telemetry strip. Bottom-left, deliberately tiny and
+   dim: it's diagnostic furniture, not game chrome. The bright green
+   live state is the only thing that should catch your eye — it means
+   TS gameplay code in the WASM is actually being ticked. */
+.ts-hud__pump {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 9px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(244, 227, 176, 0.18);
+  border-radius: 3px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  opacity: 0.65;
+}
+
+.pump-tag {
+  color: rgba(244, 227, 176, 0.55);
+  font-weight: 700;
+}
+
+.pump-val {
+  color: rgba(244, 227, 176, 0.8);
+  font-variant-numeric: tabular-nums;
+}
+
+.pump-val--live {
+  color: #6ee06e;
+  font-weight: 700;
+}
+
+.pump-ticks {
+  color: rgba(244, 227, 176, 0.4);
+  font-variant-numeric: tabular-nums;
+}
+
+.pump-err {
+  color: #ff6b6b;
+  font-weight: 700;
+}
+
 .ts-hud__alert {
   position: absolute;
   top: 74px;

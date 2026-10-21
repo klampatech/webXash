@@ -5,6 +5,7 @@ import type { ConsoleCallback, Enumify } from '/@/types.ts';
 import { unzipSync } from 'fflate';
 import { getZip } from '/@/utils/zip-helpers';
 import SaveManager from '/@/services/save-manager.ts';
+import { tsPump } from '/@/services/ts-pump.ts';
 import { useXashStore } from '/@/stores/store.ts';
 import { delay } from '/@/utils/helpers.ts';
 import { DEFAULT_GAME_DIR } from '/@/services/save-manager.ts';
@@ -566,6 +567,13 @@ class XashLoader {
 
     await this.writeExtras(xash, extrasBuffer);
     xash.main();
+    // D.7.56 — start the TS game-loop pump. The engine's loopback
+    // connect never completes in webXash, so its server frame loop
+    // never dispatches g_pGameRules->Think(). The pump issues
+    // `ts_pump_think` over the console-command bridge instead, so TS
+    // gameplay logic runs at ~60Hz. See services/ts-pump.ts for the
+    // full why (this is a deliberate engine workaround, not a hack).
+    tsPump.start(xash);
     return xash;
   }
 
