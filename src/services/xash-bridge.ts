@@ -242,10 +242,17 @@ export class Xash3DBridge extends Xash3D {
     ws.send(new Int8Array(copy));
     // Cheap enough to keep on permanently during M5 bring-up — the send
     // rate on a dedicated-server connection is a few packets/sec.
+    // 8-byte hex dump mirrors the bridge's `--debug` log so the two
+    // ends can be eyeballed side-by-side.
+    const first8 = new Uint8Array(copy, 0, Math.min(8, data.byteLength));
+    let hex = '';
+    for (let i = 0; i < first8.length; i++) {
+      hex += first8[i].toString(16).padStart(2, '0');
+    }
     console.log(
       `[bridge-send] ${data.byteLength}B →`,
       `${packet.ip.join('.')}:${packet.port}`,
-      `head=${data.subarray(0, 6).reduce((a, b) => (a << 8) | (b & 0xff), 0) >>> 0}`
+      `head=${hex}`
     );
   }
 }
