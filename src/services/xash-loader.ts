@@ -386,9 +386,9 @@ class XashLoader {
     }
   }
 
-  private async _getXashInstance(): Promise<
-    typeof Xash3D | typeof Xash3DWebRTC
-  > {
+  private async _getXashInstance(
+    launchOptions: string | null
+  ): Promise<typeof Xash3D | typeof Xash3DWebRTC> {
     // XashMultiplayerIP.vue stores its config at window.__multiplayerConfig
     // (server, role, room) — and ONLY when the user has explicitly
     // enabled the multiplayer checkbox. server is a host:port that
@@ -403,9 +403,7 @@ class XashLoader {
     // We don't gate this on the multiplayer checkbox — the bridge only
     // requires a running ts-udp-bridge.js (the URL is local to the
     // dedicated server's host).
-    const connectTarget = _dedicatedConnectHostPort(
-      (window as any).__xashLaunchOptions ?? ''
-    );
+    const connectTarget = _dedicatedConnectHostPort(launchOptions ?? '');
 
     const cfg = (window as any).__multiplayerConfig;
     const server = cfg?.server;
@@ -428,7 +426,8 @@ class XashLoader {
   }
 
   public async initXash(options: GameLoaderOptions): Promise<Xash3D> {
-    const Xash3D = await this._getXashInstance();
+    const launchOptsStr = options.launchArgs?.join(' ') ?? '';
+    const Xash3D = await this._getXashInstance(launchOptsStr);
 
     if (!Xash3D) {
       throw new Error('No Xash found.');
@@ -443,11 +442,6 @@ class XashLoader {
     // and the spread overrides our args with module.arguments, dropping
     // the -ref webgl2 renderer flag. Putting them at top-level lets
     // initRender() prepend the renderer arg.
-    // Stash effective launch options on `window` so _getXashInstance can
-    // look for `+connect` before deciding which transport to load.
-    if ((window as any).__xashLaunchOptions == null) {
-      (window as any).__xashLaunchOptions = options.launchArgs?.join(' ') ?? '';
-    }
     // `Xash3D` here is the dynamic constructor we resolved in
     // _getXashInstance — vanilla Xash3D, Xash3DMultiplayer, or
     // Xash3DBridge. The bridge one adds `bridgeAddress`, which the base
