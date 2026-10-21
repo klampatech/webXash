@@ -4,6 +4,8 @@
     ref="xashCanvasElement"
     id="canvas"
     class="emscripten"
+    tabindex="0"
+    @pointerdown="engageInput"
     oncontextmenu="event.preventDefault()"
   ></canvas>
   <TSHud />
@@ -23,6 +25,37 @@
   // Data
 
   const xashCanvasElement = ref<HTMLCanvasElement>();
+
+  /**
+   * Focus the canvas and grab pointer lock on first press.
+   *
+   * Both are required for engine input and neither happens on their own:
+   *
+   *  - Without `tabindex` the canvas is not focusable, so
+   *    `document.activeElement` stays `<body>` and keyboard events never
+   *    reach the WASM module. The player can't press W/A/S/D.
+   *
+   *  - Pointer lock has to be requested from inside a user gesture.
+   *    Browsers reject it from a timer or a promise chain, and xash's
+   *    engine calls `emscripten_request_pointerlock` from C, which is
+   *    never a gesture context. Doing it here — on the DOM pointerdown
+   *    — is the only place it reliably succeeds. Without lock the
+   *    engine gets absolute mouse coordinates instead of relative
+   *    deltas, so look-aim is unusable.
+   *
+   * Buy-menu open/close still re-balances lock in TSHud's
+   * `syncPointerLock()`; this just establishes the baseline.
+   */
+  function engageInput() {
+    const canvas = xashCanvasElement.value
+    if (!canvas) return
+    canvas.focus()
+    if (document.pointerLockElement !== canvas) {
+      canvas.requestPointerLock?.().catch(() => {
+        // Rejection just means the next click will do it.
+      })
+    }
+  }
 
   // Hooks
 
