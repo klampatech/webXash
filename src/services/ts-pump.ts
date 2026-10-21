@@ -104,7 +104,20 @@ export class TSPump {
       }
     }, TICK_MS);
 
+    // Place the local camera onto an info_player_deathmatch once the
+    // map is loaded. Without this, the engine's default observer
+    // anchors to worldspawn origin (0,0,0) which in ts_lobby is
+    // inside the geometry — Kyle reported this as "spawned in the
+    // floor" on 2026-10-21. ts_place_camera picks the spawn closest
+    // to map centre, so we end up in the lobby proper rather than
+    // in some corner spawn. Retry delays match the spawn retries
+    // because the edict list isn't populated until SV_Spawn finishes.
     if (this.spawnEnabled) this.scheduleSpawnRetries();
+    for (const delay of [3500, 6000, 9000, 12000]) {
+      window.setTimeout(() => {
+        try { this.xash?.Cmd_ExecuteString('ts_place_camera'); } catch {}
+      }, delay);
+    }
   }
 
   private scheduleSpawnRetries(): void {

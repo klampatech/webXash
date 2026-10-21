@@ -1,5 +1,11 @@
 <template>
   <div v-if="visible && hudEnabled" class="ts-hud" data-tshud>
+    <!-- D.7.57 — DEMO banner. cash / killfeed / weapon / class /
+         fire-mode / team-scores are JS-animated placeholders until
+         the engine bridge actually feeds them. Hard to mistake the
+         simulation for real state when it tells you it's a simulation. -->
+    <div class="ts-hud__demo-banner" role="note">DEMO — values shown below are simulated, not engine-fed</div>
+
     <!-- Top bar: cash (left), round timer + slowmo (center), round count (right) -->
     <div class="ts-hud__top">
       <div class="ts-hud__cash" :class="{ 'ts-hud__cash--flash': cashFlash }">
@@ -797,6 +803,31 @@ onUnmounted(() => {
 .pump-err {
   color: #ff6b6b;
   font-weight: 700;
+}
+
+/* D.7.57 — DEMO banner. Loud on purpose: everything it covers is a
+   JS placeholder, and on 2026-10-21 both Kyle and I read the
+   simulated killfeed/team-scores as evidence that bots were running.
+   They weren't — the names come from a hardcoded array in the demo
+   ticker. The fix for that confusion is to say so on screen rather
+   than to rely on remembering which field is real. */
+.ts-hud__demo-banner {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 2px 10px;
+  background: rgba(180, 60, 0, 0.85);
+  border: 1px solid rgba(255, 190, 120, 0.5);
+  border-radius: 2px;
+  color: #ffe0c0;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .ts-hud__alert {
