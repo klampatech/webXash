@@ -43,6 +43,91 @@ export interface Xash3DBridgeOptions extends Xash3DOptions {
 const FAKE_SOURCE_IP: [number, number, number, number] = [127, 0, 0, 1];
 const FAKE_SOURCE_PORT = 8080;
 
+/**
+ * The `Net` class shipped in xash3d-fwgs implements `socket`, `bind`,
+ * `closesocket`, `sendto`, `sendtoBatch`, `recvfrom`, `getaddrinfo`,
+ * `gethostbyname`, `gethostname`, `getsockname` — but NOT `connect`,
+ * and it exposes the batch send under camelCase (`sendtoBatch`).
+ *
+ * The generated WASM glue imports BOTH:
+ *
+ *   emscripten_net_connect: (fd, sa, sl) => Module.net?.connect?.(...) ?? -1
+ *   emscripten_net_sendto_batch: (…) => Module.net?.sendto_batch?.(...) ?? -1
+ *
+ * GoldSrc's `NET_OpenIP`/`NET_Connect` calls `connect(2)` on its UDP
+ * socket before the first `sendto`. Because `Module.net.connect` is
+ * undefined, that returns -1 and the engine treats the socket as
+ * unusable — it retries forever and never reaches the `sendto` path.
+ * Same for `sendto_batch` (snake_case) which the glue asks for but
+ * `Net` spells `sendtoBatch`.
+ *
+ * Both are patched on below. `connect` is a no-op success for UDP —
+ * an unconnected UDP socket is valid, and every `sendto` carries its
+ * own destination sockaddr, which the bridge already ignores (it has a
+ * single fixed upstream). We only need to record the peer for logging
+ * and for `getsockname`.
+ */
+class BridgeNet extends NetImpl {
+  /** fd -> last peer address, for getsockname + diagnostics. */
+  private peers = new Map<number, { ip: number[]; port: number }>();
+
+  override socket(family: number, type: number, protocol: number): number {
+    console.log(`[bridge-net] socket(${family}, ${type}, ${protocol})`);
+    return super.socket(family, type, protocol);
+  }
+
+  /**
+   * POSIX `connect(2)`. For a datagram socket this is legal without a
+   * peer and the kernel just filters sends to the connected address —
+   * which is precisely what our single-upstream bridge already does.
+   * Returning 0 (success) is therefore correct and is what unblocks
+   * the engine's connect path.
+   */
+  connect(fd: number, sockaddrPtr: number, socklenPtr: number): number {
+    if (this.em && sockaddrPtr) {
+      const [ip, port] = this.readSockaddrFast(sockaddrPtr);
+      this.peers.set(fd, { ip, port });
+      console.log(
+        `[bridge-net] connect(fd=${fd}) -> ${ip.join('.')}:${port} (accepted)`
+      );
+    } else {
+      console.log(`[bridge-net] connect(fd=${fd}) (accepted)`);
+    }
+    return 0;
+  }
+
+  /** snake_case alias the WASM glue actually calls. */
+  sendto_batch(
+    fd: number,
+    bufsPtr: number,
+    lensPtr: number,
+    count: number,
+    flags: number,
+    sockaddrPtr: number,
+    socklenPtr: number
+  ): number {
+    return this.sendtoBatch(fd, bufsPtr, lensPtr, count, flags, sockaddrPtr, socklenPtr);
+  }
+
+  override getsockname(
+    fd: number,
+    sockaddrPtr: number,
+    socklenPtr: number
+  ): number {
+    const peer = this.peers.get(fd);
+    if (!peer || !this.em) return -1;
+    // Same sockaddr layout `recvfrom` writes above.
+    const heap8 = this.em.HEAP8;
+    const heap16 = this.em.HEAP16;
+    heap16[sockaddrPtr >> 1] = 2; // AF_INET
+    heap8[sockaddrPtr + 2] = (peer.port >> 8) & 0xff;
+    heap8[sockaddrPtr + 3] = peer.port & 0xff;
+    for (let i = 0; i < 4; i++) heap8[sockaddrPtr + 4 + i] = peer.ip[i];
+    this.em.HEAP32[socklenPtr >> 2] = 16;
+    return 0;
+  }
+}
+
 export class Xash3DBridge extends Xash3D {
   private ws?: WebSocket;
   private readonly bridgeAddress: string;
@@ -54,7 +139,7 @@ export class Xash3DBridge extends Xash3D {
   // Xash3D class passes `this.net` into the Emscripten module as `net:`
   // (see xash3d.js runEm), so we must build the Net in our constructor,
   // keyed to ourselves as the SendtoSender.
-  declare public net: InstanceType<typeof NetImpl>;
+  declare public net: BridgeNet;
 
   constructor(opts: Xash3DBridgeOptions) {
     super(opts);
@@ -62,7 +147,7 @@ export class Xash3DBridge extends Xash3D {
     // `NetImpl` needs a SendtoSender — this class provides `sendto()`.
     // hostname/hostID feed `gethostname()`, which the engine uses for
     // the server browser list; the bridge conventions mirror WebRTC.
-    this.net = new NetImpl(this, { hostname: 'tsbridge', hostID: 1 });
+    this.net = new BridgeNet(this, { hostname: 'tsbridge', hostID: 1 });
   }
 
   async init() {
