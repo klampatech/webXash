@@ -8,14 +8,26 @@
     @pointerdown="engageInput"
     oncontextmenu="event.preventDefault()"
   ></canvas>
-  <TSHud />
+  <!--
+    The Vue HUD is hidden for now (D.7.37): its cash, timer and team pills
+    are JS-simulated, so it shows values that do not match the live game
+    state and it sits on top of the engine's own (correct) HUD. Toggle it
+    back with ?hud=vue to A/B, or ?hud=engine to force it off.
+  -->
+  <TSHud v-if="showVueHud" />
 </template>
 
 <script setup lang="ts">
   import { storeToRefs } from 'pinia';
   import { useXashStore } from '/@/stores/store.ts';
-  import { onMounted, ref } from 'vue';
+  import { onMounted, onBeforeUnmount, ref } from 'vue';
   import TSHud from '/@/components/TSHud.vue';
+  import {
+    startKeyboardBridge,
+    tryAttachMouseBridge,
+  } from '/@/services/keyboard-bridge.ts';
+  import { logDebug } from '/@/services/debug-log.ts';
+  import XashLoader from '/@/services/xash-loader.ts';
 
   // Dependencies
 
@@ -25,6 +37,15 @@
   // Data
 
   const xashCanvasElement = ref<HTMLCanvasElement>();
+
+  /**
+   * The Vue HUD is off unless explicitly asked for. Its values are
+   * JS-simulated (see TSHud.vue), so while the real client is live it
+   * contradicts the engine's own HUD. `?hud=vue` brings it back for an
+   * A/B; anything else hides it.
+   */
+  const showVueHud =
+    new URLSearchParams(window.location.search).get('hud') === 'vue';
 
   /**
    * Focus the canvas and grab pointer lock on first press.
@@ -70,9 +91,41 @@
 
   // Hooks
 
+  /**
+   * Input bridge installation.
+   *
+   * D.7.37: this used to live in TSHud.vue's onMounted, which meant
+   * hiding the Vue HUD (`?hud=engine`, the default now) silently
+   * disabled ALL keyboard and mouse-button input. Input is not the HUD's
+   * job, so it is installed here instead — the component that owns the
+   * canvas.
+   *
+   * `?nohud=1` still skips it, for the isolation test that tells us
+   * whether the HUD is implicated in any remaining input problem.
+   */
+  let stopKeyboardBridge: (() => void) | null = null;
+
   onMounted(() => {
-    xashCanvas.value = xashCanvasElement.value
-  })
+    if (new URLSearchParams(window.location.search).get('nohud') !== '1') {
+      // `give` and friends are gated behind sv_cheats; TS's own rules
+      // enable it anyway (TSGameRules.enabledCheats).
+      XashLoader.exec('sv_cheats 1');
+      stopKeyboardBridge = startKeyboardBridge();
+      tryAttachMouseBridge();
+      logDebug('[input] keyboard + mouse bridges installed');
+    } else {
+      logDebug('[input] ?nohud=1 — input bridges NOT installed');
+    }
+  });
+
+  onBeforeUnmount(() => {
+    stopKeyboardBridge?.();
+    stopKeyboardBridge = null;
+  });
+
+  onMounted(() => {
+    xashCanvas.value = xashCanvasElement.value;
+  });
 </script>
 
 <style scoped lang="scss">

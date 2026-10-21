@@ -26,6 +26,8 @@
 // `+cmd` on keydown, `-cmd` on keyup, exactly like a real bind.
 
 import XashLoader from '/@/services/xash-loader';
+import { logDebug } from './debug-log';
+import { injectKey, scancodeFor } from './sdl-key-inject';
 
 export type BridgeKey =
   | 'KeyW' | 'KeyA' | 'KeyS' | 'KeyD'
@@ -35,23 +37,54 @@ export type BridgeKey =
   | 'KeyF' | 'KeyC';
 
 /** Key code → engine command. Value is the `+cmd` form; we append `-`. */
-const KEY_TO_CMD: Record<string, string> = {
+/**
+ * Keys we translate into an engine command, because the engine's native
+ * keyboard path is dead in the WASM build.
+ *
+ * Split by kind, because the engine treats them differently:
+ *
+ *  - HELD (`+cmd` on down, `-cmd` on up): movement and the fire buttons.
+ *    The engine needs both edges to set and clear the button state.
+ *  - INSTANT (`cmd` once, on down only): `slot1`, `use`, `reload`,
+ *    `impulse`. These are not buttons. Sending them as `+slot1` makes the
+ *    engine wait for a matching `-slot1`, and it ignores the command
+ *    entirely — which is exactly the "unknown keybind" symptom: the
+ *    weapon never switches.
+ *
+ * Anything NOT listed here is passed to the engine as a real key event,
+ * so the ENGINE's own bindings run (the console toggle, and anything the
+ * port registers that we have not mapped).
+ */
+const KEY_HELD_CMD: Record<string, string> = {
   // Movement
   KeyW: 'forward', ArrowUp: 'forward',
   KeyS: 'back', ArrowDown: 'back',
   KeyA: 'moveleft', ArrowLeft: 'moveleft',
   KeyD: 'moveright', ArrowRight: 'moveright',
-  // Actions
+  // Buttons
   Space: 'jump',
   ControlLeft: 'duck', ControlRight: 'duck',
+};
+
+/** Instant commands: fired once on keydown, never negated. */
+const KEY_INSTANT_CMD: Record<string, string> = {
   KeyQ: 'lastinv',
   KeyE: 'use',
   KeyR: 'reload',
-  // Weapons
   Digit1: 'slot1', Digit2: 'slot2', Digit3: 'slot3', Digit4: 'slot4',
-  // View / misc
+  Digit5: 'slot5', Digit6: 'slot6', Digit7: 'slot7', Digit8: 'slot8',
+  Digit9: 'slot9', Digit0: 'slot10',
   KeyF: 'impulse 100', // flashlight
+  KeyB: 'buy',
 };
+
+/**
+ * True when we translate this key ourselves. Everything else is passed to
+ * the engine as a real key event so its own bindings run.
+ */
+function isMapped(code: string): boolean {
+  return code in KEY_HELD_CMD || code in KEY_INSTANT_CMD;
+}
 
 /**
  * Install the bridge. Returns a stop function.
@@ -82,8 +115,8 @@ export function setBridgeSuspended(v: boolean) {
   if (v) {
     // Release anything currently held so nothing sticks.
     for (const code of Array.from(heldKeys)) {
-      const cmd = KEY_TO_CMD[code];
-      if (cmd) XashLoader.exec(`-${cmd}`);
+      const held = KEY_HELD_CMD[code];
+      if (held) XashLoader.exec(`-${held}`);
     }
     heldKeys.clear();
   }
@@ -119,40 +152,100 @@ export function tryAttachMouseBridge() {
   if (c) attachMouseBridge(c);
 }
 
+/**
+ * Hand a key to the engine as a real key press, so the ENGINE's own
+ * bindings run.
+ *
+ * The engine's native keyboard path is dead in the WASM build (nothing
+ * drains its SDL event queue), so we translate the DOM `code` to an SDL
+ * scancode and push an `SDL_KeyboardEvent`. If the engine's event pump
+ * is fixed upstream, this becomes a no-op fallback rather than a
+ * dependency.
+ *
+ * Keys WE map (movement, fire) deliberately do not come through here:
+ * those are exec'd as `+cmd` instead, because a command is unambiguous
+ * and does not depend on the engine's bind table.
+ */
+function sendKey(code: string, down: boolean): void {
+  const scancode = scancodeFor(code);
+  if (scancode === undefined) {
+    logDebug(`[key] ${code}: no SDL scancode; nothing sent`);
+    return;
+  }
+  try {
+    const ok = injectKey(code, down);
+    logDebug(
+      `[key] ${down ? 'DOWN' : 'UP  '} ${code} scancode=${scancode} -> ` +
+        `${ok ? 'pushed to SDL queue' : 'REFUSED by SDL'}`
+    );
+  } catch (err) {
+    logDebug(`[key] ${code}: inject failed: ${(err as Error).message}`);
+  }
+}
+
 /** Keys currently mapped-to-engine-command and held down. */
 const heldKeys = new Set<string>();
 
 export function startKeyboardBridge(): () => void {
 
   const onKeyDown = (e: KeyboardEvent) => {
-    if (bridgeSuspended || e.repeat) return;
     // Don't hijack keys while the user is typing in a form field.
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
       return;
     }
-    const cmd = KEY_TO_CMD[e.code];
-    if (!cmd) return;
-    if (heldKeys.has(e.code)) return;
+    const held = KEY_HELD_CMD[e.code];
+    const instant = KEY_INSTANT_CMD[e.code];
+    logDebug(
+      `[key] DOWN code=${e.code} key=${e.key} repeat=${e.repeat} ` +
+        `held=${held ?? '-'} instant=${instant ?? '-'}` +
+        (isMapped(e.code) ? '' : ' -> passing to engine') +
+        (bridgeSuspended ? ' [SUSPENDED]' : '')
+    );
+    if (e.repeat) return;
+    if (held) {
+      // A button: the engine needs both edges.
+      if (heldKeys.has(e.code)) return;
+      heldKeys.add(e.code);
+      logDebug(`[key] ${e.code} -> exec +${held}`);
+      XashLoader.exec(`+${held}`);
+      return;
+    }
+    if (instant) {
+      // Not a button: fire once, on keydown only.
+      logDebug(`[key] ${e.code} -> exec ${instant} (once)`);
+      XashLoader.exec(instant);
+      return;
+    }
+    // No mapping: hand it to the engine as a real key press so the
+    // ENGINE's own bindings run (the console toggle, and anything the
+    // client DLL registers that we have not mapped).
     heldKeys.add(e.code);
-    XashLoader.exec(`+${cmd}`);
+    sendKey(e.code, true);
   };
 
   const onKeyUp = (e: KeyboardEvent) => {
-    if (bridgeSuspended) return;
-    const cmd = KEY_TO_CMD[e.code];
-    if (!cmd) return;
-    if (!heldKeys.has(e.code)) return;
+    const held = KEY_HELD_CMD[e.code];
+    if (!heldKeys.has(e.code)) {
+      logDebug(`[key] UP   code=${e.code} (not held; ignoring)`);
+      return;
+    }
     heldKeys.delete(e.code);
-    XashLoader.exec(`-${cmd}`);
+    if (held) {
+      logDebug(`[key] ${e.code} -> exec -${held}`);
+      XashLoader.exec(`-${held}`);
+    } else {
+      logDebug(`[key] UP   ${e.code} -> release to engine`);
+      sendKey(e.code, false);
+    }
   };
 
   // Releasing focus while a key is held would strand the engine in a
   // "still moving" state. Release everything on blur.
   const onBlur = () => {
     for (const code of heldKeys) {
-      const cmd = KEY_TO_CMD[code];
-      if (cmd) XashLoader.exec(`-${cmd}`);
+      const held = KEY_HELD_CMD[code];
+      if (held) XashLoader.exec(`-${held}`);
     }
     heldKeys.clear();
   };

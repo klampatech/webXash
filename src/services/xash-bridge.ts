@@ -26,6 +26,7 @@ import {
   type Xash3DOptions,
   Net as NetImpl,
 } from 'xash3d-fwgs';
+import { logDebug, logTrace } from './debug-log';
 
 export interface Xash3DBridgeOptions extends Xash3DOptions {
   /**
@@ -113,7 +114,7 @@ class BridgeNet extends NetImpl {
   private recvLogged = 0;
 
   override socket(family: number, type: number, protocol: number): number {
-    console.log(`[bridge-net] socket(${family}, ${type}, ${protocol})`);
+    logDebug(`[bridge-net] socket(${family}, ${type}, ${protocol})`);
     return super.socket(family, type, protocol);
   }
 
@@ -128,11 +129,11 @@ class BridgeNet extends NetImpl {
     if (this.em && sockaddrPtr) {
       const [ip, port] = this.readSockaddrFast(sockaddrPtr);
       this.peers.set(fd, { ip, port });
-      console.log(
+      logDebug(
         `[bridge-net] connect(fd=${fd}) -> ${ip.join('.')}:${port} (accepted)`
       );
     } else {
-      console.log(`[bridge-net] connect(fd=${fd}) (accepted)`);
+      logDebug(`[bridge-net] connect(fd=${fd}) (accepted)`);
     }
     return 0;
   }
@@ -173,7 +174,7 @@ class BridgeNet extends NetImpl {
         const head = new Uint8Array(this.em!.HEAPU8.buffer, bufPtr, Math.min(8, n));
         let hex = '';
         for (let i = 0; i < head.length; i++) hex += head[i].toString(16).padStart(2, '0');
-        console.log(`[bridge-recv] GOT ${n}B head=${hex}`);
+        logTrace(`[bridge-recv] GOT ${n}B head=${hex}`);
       }
     }
     return n;
@@ -363,7 +364,7 @@ export class Xash3DBridge extends Xash3D {
     for (let i = 0; i < first8.length; i++) {
       hex += first8[i].toString(16).padStart(2, '0');
     }
-    console.log(
+    logTrace(
       `[bridge-send] ${size}B →`,
       `${packet.ip.join('.')}:${packet.port}`,
       `head=${hex}`
