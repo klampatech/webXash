@@ -133,7 +133,15 @@ export class Xash3DBridge extends Xash3D {
 
   sendto(packet: Packet) {
     const ws = this.ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      console.warn(
+        '[bridge-send] DROPPED (ws not open):',
+        `state=${ws?.readyState ?? 'no-ws'}`,
+        `${packet.data.byteLength}B`,
+        `${packet.ip.join('.')}:${packet.port}`
+      );
+      return;
+    }
     // Forward the raw bytes. The engine embeds the destination address
     // in its own protocol header (GoldSrc connectionless challenge
     // includes the addr); the bridge just shoots bytes at 127.0.0.1:27015.
@@ -147,5 +155,12 @@ export class Xash3DBridge extends Xash3D {
     const copy = new ArrayBuffer(data.byteLength);
     new Int8Array(copy).set(data);
     ws.send(new Int8Array(copy));
+    // Cheap enough to keep on permanently during M5 bring-up — the send
+    // rate on a dedicated-server connection is a few packets/sec.
+    console.log(
+      `[bridge-send] ${data.byteLength}B →`,
+      `${packet.ip.join('.')}:${packet.port}`,
+      `head=${data.subarray(0, 6).reduce((a, b) => (a << 8) | (b & 0xff), 0) >>> 0}`
+    );
   }
 }
