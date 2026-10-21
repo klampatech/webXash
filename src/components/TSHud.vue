@@ -760,14 +760,19 @@ onUnmounted(() => {
 }
 
 /* D.7.29 engine-error toast */
-/* D.7.56 — pump telemetry strip. Bottom-left, deliberately tiny and
-   dim: it's diagnostic furniture, not game chrome. The bright green
-   live state is the only thing that should catch your eye — it means
-   TS gameplay code in the WASM is actually being ticked. */
+/* D.7.56 — pump telemetry strip. Lives top-left under the cash
+   bar, deliberately dim. The bright green live state is the only
+   thing that should catch your eye — it means TS gameplay code in
+   the WASM is actually being ticked. */
+
 .ts-hud__pump {
   position: absolute;
+  /* The bottom-left is occupied by the weapon card (MP5 / BURST),
+     so the pump strip moved to top-left beneath the cash bar.
+     `top` matches the height of the cash block (`ts-hud__top`); 8px
+     below gives a small gap that reads as alignment. */
+  top: 64px;
   left: 12px;
-  bottom: 12px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -778,6 +783,7 @@ onUnmounted(() => {
   font-size: 10px;
   letter-spacing: 0.06em;
   opacity: 0.65;
+  z-index: 5;
 }
 
 .pump-tag {
