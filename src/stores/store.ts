@@ -41,7 +41,13 @@ export const useXashStore = defineStore(
     // but the previous URL-route didn't reliably plumb the
     // launchOptions string through to pinia, so launching was
     // landing in HL1 c0a0 menu mode.
-    const launchOptions = ref('-noip -noip6 -game ts +sv_lan 1 +map ts_lobby');
+    const launchOptions = ref(
+      // 2026-10-21: ?launchOptions=<urlencoded args> now overrides the
+      // default so a remote-connect URL actually connects instead of
+      // falling back to the in-browser listen server.
+      new URLSearchParams(window.location.search).get('launchOptions')
+        ?? '-noip -noip6 -game ts +sv_lan 1 +map ts_lobby'
+    );
 
     // -- TS-specific launcher config (D.7.26 — JS-side parity layer)
     // TS-specific cvars that the engine reads from the launcher's argv
