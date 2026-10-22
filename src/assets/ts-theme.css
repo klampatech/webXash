@@ -1,0 +1,151 @@
+/**
+ * The Specialists — theme foundation.
+ *
+ * Every colour here was sampled from the actual TS 2.0 game package, not
+ * eyeballed. Sources:
+ *   - game/gfx/shell/btns_main.bmp     menu button art
+ *   - game/gfx/shell/head_*.BMP       menu panel headers (27 tabs)
+ *   - game/gfx/shell/splash.bmp        splash background
+ *   - game/titles.txt                 intro text $color / $color2
+ *   - game/TSManual/Images/Menu1-4.jpg in-game menu screenshots
+ *
+ * Two claims that LOOKED right and were not verified, so they are absent:
+ *   - "MEMENTO MORI" as part of the emblem — grep over the whole tree
+ *     returned zero hits and OCR found no text. Do not reintroduce.
+ *   - A seal-ring interior motif — decoding pldecal.wad's LOGO (64x64)
+ *     yields a diagonal shard, not a ring. The reticle below is our own
+ *     design in that spirit, not a reconstruction of their art.
+ *
+ * Typography: client.dll contains the literal "Arial" exactly once,
+ * adjacent to the VGUI scheme parser. No Tahoma/Verdana/Times/Courier/
+ * Impact. HUD text uses custom bitmap fonts from fonts.wad (FONT0/1/2).
+ * So the authentic pairing is a plain grotesque plus bitmap glyphs —
+ * which is why the display face below is a condensed grotesque and the
+ * technical readouts are monospaced: neither tries to fake a bitmap font
+ * we cannot ship.
+ */
+
+:root {
+  /* ---- surfaces, darkest to lightest -------------------------------- */
+  --ts-void: #000301; /* specialists.wad title1, dominant */
+  --ts-abyss: #060c14; /* splash.bmp */
+  --ts-panel: #292a22; /* TSManual Menu1.jpg panel bg */
+  --ts-panel-hi: #303129; /* Menu2.jpg panel bg, lighter */
+  --ts-raised: #333333; /* Menu4.jpg selection bg */
+
+  /* ---- olive-khaki chrome (the menu-button family) ------------------ */
+  --ts-khaki: #ccc19a; /* btns_main.bmp button face */
+  --ts-khaki-dim: #b0a883; /* btns_main.bmp button midtone */
+  --ts-khaki-deep: #9e9574; /* btns_main.bmp button shadow */
+  --ts-header: #a69c7a; /* head_*.BMP header lettering */
+  --ts-edge: #2c2d24; /* btns_main.bmp button outline */
+
+  /* ---- accents ------------------------------------------------------ */
+  --ts-signal: #f06e00; /* titles.txt $color2 240 110 0 — THE orange */
+  --ts-signal-hot: #ff8c1a; /* lifted for hover */
+  --ts-lime: #e8ecbb; /* btns_main.bmp button highlight */
+  --ts-alert: #ffff00; /* head_single.BMP active tab */
+
+  /* ---- type --------------------------------------------------------- */
+  --ts-ink: #9e9daf; /* Menu1.jpg menu text, grey-lavender */
+  --ts-ink-bright: #e9e9e9; /* head_advanced.BMP header text highlight */
+  --ts-ink-dim: #646464; /* titles.txt $color 100 100 100 */
+  --ts-ink-faint: #3d3a2d; /* head_*.BMP header letter shadow */
+
+  /* ---- geometry ----------------------------------------------------- */
+  --ts-notch: 10px; /* chamfer depth — GoldSrc panels have angled edges */
+  --ts-edge-thin: 1px solid var(--ts-edge);
+  --ts-edge-lit: 1px solid var(--ts-khaki-dim);
+
+  /* ---- motion ------------------------------------------------------- */
+  --ts-ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+  --ts-sweep: 240ms;
+
+  /* ---- typefaces ---------------------------------------------------- */
+  /* Display: condensed grotesque, the shape of GoldSrc HUD lettering. */
+  --ts-font-display: 'Barlow Condensed', 'Arial Narrow', Arial, sans-serif;
+  /* Technical readouts: instrument-panel feel for map names and counts. */
+  --ts-font-mono: 'Share Tech Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+/**
+ * The chamfered panel. GoldSrc UI panels have cut corners; clip-path gives
+ * us that without shipping their art. --ts-notch is the cut depth.
+ */
+.ts-panel {
+  position: relative;
+  background:
+    linear-gradient(180deg, var(--ts-panel-hi) 0%, var(--ts-panel) 100%);
+  border: var(--ts-edge-thin);
+  clip-path: polygon(
+    var(--ts-notch) 0,
+    100% 0,
+    100% calc(100% - var(--ts-notch)),
+    calc(100% - var(--ts-notch)) 100%,
+    0 100%,
+    0 var(--ts-notch)
+  );
+}
+
+/**
+ * Corner ticks — the crosshair/reticle motif. Four L-shaped marks at the
+ * corners of a container. Reads as a targeting overlay without pretending
+ * to be their logo.
+ */
+.ts-reticle::before,
+.ts-reticle::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--ts-signal);
+  opacity: 0.55;
+  pointer-events: none;
+}
+.ts-reticle::before {
+  top: 6px;
+  left: 6px;
+  border-right: none;
+  border-bottom: none;
+}
+.ts-reticle::after {
+  right: 6px;
+  bottom: 6px;
+  border-left: none;
+  border-top: none;
+}
+
+/** Scanline wash. Two gradients so it survives high-DPI without moire. */
+.ts-scanlines::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0px,
+    rgba(0, 0, 0, 0) 2px,
+    rgba(0, 0, 0, 0.22) 3px,
+    rgba(0, 0, 0, 0.22) 4px
+  );
+  opacity: 0.5;
+  z-index: 1;
+}
+
+/** The letterpress text treatment the TS headers use: light face, hard shadow. */
+.ts-stamp {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-family: var(--ts-font-display);
+  font-weight: 700;
+  text-shadow: 2px 2px 0 var(--ts-ink-faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ts-panel,
+  .ts-reticle::before,
+  .ts-reticle::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}

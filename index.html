@@ -4,7 +4,18 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/src/assets/hl-bright.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WebXash</title>
+    <!-- The Specialists landing theme.
+         Barlow Condensed stands in for the condensed GoldSrc HUD lettering;
+         Share Tech Mono for instrument-panel readouts. TS's own client.dll
+         requests Arial and draws HUD text from bitmap fonts in fonts.wad,
+         neither of which we can ship — see src/assets/ts-theme.css. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Share+Tech+Mono&display=swap"
+      rel="stylesheet"
+    />
+    <title>The Specialists</title>
   </head>
   <body>
     <div id="app"></div>
