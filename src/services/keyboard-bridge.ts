@@ -67,13 +67,16 @@ const KEY_HELD_CMD: Record<string, string> = {
   // Scoreboard. Held, not instant: the engine binds it `+showscores` /
   // `-showscores`, and sending only `showscores` opens it and never closes.
   Tab: 'showscores',
+  // Reload is a +button in TS (it is in GATED_BINDINGS), not an instant
+  // command. Sending the bare name `reload` runs a command with no real
+  // weapon behind it, which is what OOM'd the wasm heap.
+  KeyR: 'reload',
 };
 
 /** Instant commands: fired once on keydown, never negated. */
 const KEY_INSTANT_CMD: Record<string, string> = {
   KeyQ: 'lastinv',
   KeyE: 'use',
-  KeyR: 'reload',
   Digit1: 'slot1', Digit2: 'slot2', Digit3: 'slot3', Digit4: 'slot4',
   Digit5: 'slot5', Digit6: 'slot6', Digit7: 'slot7', Digit8: 'slot8',
   Digit9: 'slot9', Digit0: 'slot10',
