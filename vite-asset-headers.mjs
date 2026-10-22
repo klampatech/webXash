@@ -47,8 +47,21 @@
  * requests, so this is the whole of the server-side change.
  */
 
-/** Paths that hold large, rarely-changing game content. */
+/**
+ * Paths that hold large, rarely-changing game content.
+ *
+ * Two tiers, because the archive is now chunked:
+ *
+ *   /webXash/hl/ts/<version>/part-NNN.bin   content-addressed, IMMUTABLE
+ *   /webXash/hl/ts/manifest.json             the pointer that moves, revalidated
+ *
+ * Splitting on the version directory is what makes `immutable` safe here:
+ * the directory name IS the archive's SHA-256, so a URL can never change
+ * meaning. The manifest must not be immutable, because it is exactly the
+ * thing that changes to point at a new archive.
+ */
 const ASSET_PATH_RE = /^\/webXash\/hl\//;
+const VERSIONED_PART_RE = /^\/webXash\/hl\/ts\/[^/]+\/.+\.bin$/;
 
 export function gameAssetCacheHeadersPlugin() {
   return {
@@ -56,11 +69,13 @@ export function gameAssetCacheHeadersPlugin() {
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const url = (req.url || '').split('?')[0];
-        if (ASSET_PATH_RE.test(url)) {
+        if (VERSIONED_PART_RE.test(url)) {
+          // Content-addressed: this URL can never mean anything else.
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          res.setHeader('Accept-Ranges', 'bytes');
+        } else if (ASSET_PATH_RE.test(url)) {
+          // Everything else under /hl/, including the manifest pointer.
           res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
-          // Range support is what makes a dropped 494MB download resumable
-          // instead of restarting from zero. Vite already honours Range;
-          // it just does not advertise it on this path.
           res.setHeader('Accept-Ranges', 'bytes');
         }
         next();

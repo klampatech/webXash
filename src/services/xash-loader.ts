@@ -4,7 +4,7 @@ import type { FilesWithPath } from '/@/utils/directory-open.ts';
 import type { ConsoleCallback, Enumify } from '/@/types.ts';
 import { Unzip, UnzipInflate, UnzipPassThrough } from 'fflate';
 import type { UnzipFile, AsyncFlateStreamHandler } from 'fflate';
-import { getZip } from '/@/utils/zip-helpers';
+import { getTsmodArchive } from '/@/services/ts-mod-assets';
 import SaveManager from '/@/services/save-manager.ts';
 import { tsPump } from '/@/services/ts-pump.ts';
 import { useXashStore } from '/@/stores/store.ts';
@@ -888,14 +888,28 @@ class XashLoader {
     return xash;
   }
 
+  /**
+   * Fetch the mod archive.
+   *
+   * The archive is chunked into 64MB parts (see ts-mod-assets.ts and
+   * docs/ASSET-DELIVERY.md) because a 517MB single object exceeds every
+   * storage ceiling between here and the browser. `selectedZip` and
+   * `publicDir` are ignored - there is one artifact and it is described by
+   * its manifest - but they stay in the signature so the call sites do not
+   * churn.
+   */
   public async downloadZip(
     selectedZip: string,
     publicDir: string,
     onProgress?: (progress: number) => void,
     opts?: { bypassCache?: boolean },
   ): Promise<ArrayBuffer | undefined> {
-    if (!selectedZip) return;
-    return await getZip(selectedZip, publicDir, onProgress!, opts);
+    void selectedZip;
+    void publicDir;
+    return await getTsmodArchive(
+      (p) => onProgress?.(p.percent),
+      { bypassCache: opts?.bypassCache },
+    );
   }
 
   public async fetchExtras(): Promise<ArrayBuffer> {
