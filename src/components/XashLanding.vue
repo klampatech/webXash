@@ -387,6 +387,7 @@ function onJoinServer(server: TsServer) {
     background: linear-gradient(180deg, var(--ts-signal-hot) 0%, var(--ts-signal) 100%);
     border: none;
     /* chamfer matches the panels */
+    height: auto; /* immune to any future global button height rule */
     clip-path: polygon(
       12px 0,
       100% 0,
@@ -395,6 +396,7 @@ function onJoinServer(server: TsServer) {
       0 100%,
       0 12px
     );
+    height: auto; /* immune to any future global button height rule */
     cursor: pointer;
     transition: transform 140ms var(--ts-ease), box-shadow var(--ts-sweep) var(--ts-ease);
     box-shadow: 0 0 0 rgba(240, 110, 0, 0);
@@ -449,7 +451,7 @@ function onJoinServer(server: TsServer) {
     font-family: var(--ts-font-mono);
     font-size: 0.74rem;
     letter-spacing: 0.1em;
-    color: var(--ts-ink-dim);
+    color: var(--ts-ink-muted);
   }
 
   /* ---- tabs ---- */

@@ -16,6 +16,21 @@
  *     yields a diagonal shard, not a ring. The reticle below is our own
  *     design in that spirit, not a reconstruction of their art.
  *
+ * ACCENT — CORRECTED 2026-10-22. This was #f06e00, taken from
+ * game/titles.txt `$color2 240 110 0`, which is the INTRO TEXT colour: a
+ * real but incidental sample. The colour players actually see constantly
+ * is amber, and it has far better provenance — TS's original team colour
+ * table at `0x10096974`:
+ *
+ *     // crates/client/src/menus/widgets.rs
+ *     pub const TEAM_COLORS: [[u8;3];5] = [[255,170,0], ...];
+ *
+ * `iTeamColors[0]` drives the HUD status bar, the scoreboard and the team
+ * colour bars, so a live session is mostly amber. It also means the
+ * handoff from landing page to game is amber-to-amber rather than a colour
+ * change, and it harmonises with the gold/cream already in TSHud.vue
+ * instead of adding a fourth palette.
+ *
  * Typography: client.dll contains the literal "Arial" exactly once,
  * adjacent to the VGUI scheme parser. No Tahoma/Verdana/Times/Courier/
  * Impact. HUD text uses custom bitmap fonts from fonts.wad (FONT0/1/2).
@@ -41,15 +56,23 @@
   --ts-edge: #2c2d24; /* btns_main.bmp button outline */
 
   /* ---- accents ------------------------------------------------------ */
-  --ts-signal: #f06e00; /* titles.txt $color2 240 110 0 — THE orange */
-  --ts-signal-hot: #ff8c1a; /* lifted for hover */
-  --ts-lime: #e8ecbb; /* btns_main.bmp button highlight */
+  /* THE accent: TS's iTeamColors[0] (0x10096974). HUD + scoreboard. */
+  --ts-signal: #ffaa00;
+  --ts-signal-hot: #ffc44d; /* lifted for hover */
+  /* TS green appears ONLY in the ts_logo mark. 0 pixels in a live game. */
+  --ts-green: #00a600;
+  --ts-lime: #e8ecbb; /* btns_main.bmp button highlight — the wordmark */
   --ts-alert: #ffff00; /* head_single.BMP active tab */
 
   /* ---- type --------------------------------------------------------- */
   --ts-ink: #9e9daf; /* Menu1.jpg menu text, grey-lavender */
   --ts-ink-bright: #e9e9e9; /* head_advanced.BMP header text highlight */
-  --ts-ink-dim: #646464; /* titles.txt $color 100 100 100 */
+  --ts-ink-dim: #646464; /* titles.txt $color 100 100 100 — decorative only:
+                            measures 3.50:1 on void, which is AA-large at
+                            best. Never use it for small UI text. */
+  --ts-ink-muted: #9696ab; /* AA-safe muted, same grey-lavender family as
+                             --ts-ink. Measured 6.6:1 on void. Use this
+                             for small labels that must stay readable. */
   --ts-ink-faint: #3d3a2d; /* head_*.BMP header letter shadow */
 
   /* ---- geometry ----------------------------------------------------- */

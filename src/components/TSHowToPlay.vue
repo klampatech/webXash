@@ -69,7 +69,7 @@ const controls = [
   { keys: ['LMB'], action: 'Fire — and spawn, when observing' },
   { keys: ['1', '…', '0'], action: 'Weapon slots' },
   { keys: ['R'], action: 'Reload' },
-  { keys: ['B'], action: 'Buy menu' },
+  { keys: ['B'], action: 'Buy menu — while dead or observing' },
   { keys: ['Tab'], action: 'Scoreboard (hold)' },
   { keys: ['`'], action: 'Developer console' },
 ];
@@ -153,7 +153,7 @@ const controls = [
     }
 
     span {
-      color: var(--ts-ink-dim);
+      color: var(--ts-ink-muted);
     }
   }
 }

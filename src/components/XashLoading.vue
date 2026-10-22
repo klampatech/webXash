@@ -271,11 +271,11 @@ const arcStyle = computed(() => ({
     padding: 0.16rem 0;
     font-family: var(--ts-font-mono);
     font-size: 0.76rem;
-    color: var(--ts-ink-faint);
+    color: var(--ts-ink-muted);
     transition: color 200ms var(--ts-ease);
 
     &.is-done {
-      color: var(--ts-ink-dim);
+      color: var(--ts-ink-muted);
     }
 
     &.is-active {
@@ -300,7 +300,7 @@ const arcStyle = computed(() => ({
     font-family: var(--ts-font-mono);
     font-size: 0.7rem;
     letter-spacing: 0.08em;
-    color: var(--ts-ink-faint);
+    color: var(--ts-ink-muted);
     text-align: center;
   }
 }

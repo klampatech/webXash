@@ -13,14 +13,22 @@
       </button>
     </header>
 
-    <p v-if="!servers.length && !loading" class="ts-servers__empty">
-      No servers responded.
+    <!-- Distinguish "no servers" from "could not ask" — they are
+         different facts and collapsing them hides a broken endpoint. -->
+    <p v-if="error" class="ts-servers__empty ts-servers__empty--error">
+      {{ error }}
+    </p>
+
+    <p v-else-if="loading" class="ts-servers__empty">
+      Scanning for servers…
+    </p>
+
+    <p v-else-if="!servers.length" class="ts-servers__empty">
+      No servers answered.
       <span class="ts-servers__hint">
         Start one with <code>tools/port/tsp-rs/scripts/start-ts-server.sh</code>
       </span>
     </p>
-
-    <p v-if="loading" class="ts-servers__empty">Scanning…</p>
 
     <ul v-else class="ts-servers__list" role="list">
       <li v-for="server in servers" :key="server.id" class="ts-panel ts-reticle ts-server">
@@ -60,12 +68,22 @@ defineEmits<{ (e: 'join', server: TsServer): void }>();
 const servers = ref<TsServer[]>([]);
 const loading = ref(true);
 const refreshing = ref(false);
+const error = ref('');
 
 async function refresh() {
   refreshing.value = true;
-  servers.value = await fetchServerList();
-  refreshing.value = false;
-  loading.value = false;
+  error.value = '';
+  try {
+    servers.value = await fetchServerList();
+  } catch (e) {
+    // Never fall back to placeholder rows here. A fabricated server that
+    // a visitor can click is worse than an honest empty panel.
+    servers.value = [];
+    error.value = e instanceof Error ? e.message : 'Server list unavailable';
+  } finally {
+    refreshing.value = false;
+    loading.value = false;
+  }
 }
 
 onMounted(refresh);
@@ -122,15 +140,20 @@ onMounted(refresh);
     padding: 1.1rem;
     font-family: var(--ts-font-mono);
     font-size: 0.82rem;
-    color: var(--ts-ink-dim);
+    color: var(--ts-ink-muted);
     text-align: center;
+  }
+
+  &__empty--error {
+    color: var(--ts-signal);
+    border: 1px solid var(--ts-edge);
   }
 
   &__hint {
     display: block;
     margin-top: 0.5rem;
     font-size: 0.74rem;
-    color: var(--ts-ink-faint);
+    color: var(--ts-ink-muted);
 
     code {
       color: var(--ts-header);
@@ -200,12 +223,12 @@ onMounted(refresh);
 
     &-slash {
       margin: 0 0.1rem;
-      color: var(--ts-ink-faint);
+      color: var(--ts-ink-muted);
     }
 
     &-max {
       font-size: 0.95rem;
-      color: var(--ts-ink-dim);
+      color: var(--ts-ink-muted);
     }
   }
 
@@ -215,7 +238,7 @@ onMounted(refresh);
     font-size: 0.6rem;
     letter-spacing: 0.18em;
     text-transform: uppercase;
-    color: var(--ts-ink-faint);
+    color: var(--ts-ink-muted);
   }
 
   &__join {
@@ -228,6 +251,7 @@ onMounted(refresh);
     color: var(--ts-void);
     background: var(--ts-signal);
     border: none;
+    height: auto; /* immune to any future global button height rule */
     cursor: pointer;
     transition: background var(--ts-sweep) var(--ts-ease),
       transform 120ms var(--ts-ease);

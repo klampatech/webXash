@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { a2sServerListPlugin } from './vite-a2s-plugin.mjs';
 
 // https://vite.dev/config/
 //
@@ -20,7 +21,28 @@ const certDir = '/home/kyle/Development/scratch/cheerpx-inspect/certs';
 
 export default defineConfig({
   base: '/webXash/',
-  plugins: [vue()],
+  plugins: [
+    vue(),
+    // Real A2S server list for the landing page's server browser.
+    // Same-origin on purpose: the page is HTTPS and ts-udp-bridge.js is
+    // plain HTTP, so a fetch from the page would be blocked as mixed
+    // content. A browser cannot emit UDP either, so this has to be Node.
+    // Edit `targets` to change which servers are listed.
+    a2sServerListPlugin({
+      // `host` is where the A2S query is SENT from this machine; it is
+      // also the address the server reports back, which for a local
+      // server is 127.0.0.1 — unreachable from a remote browser. So
+      // `publicAddress` is what the browser is told to +connect to.
+      targets: [
+        {
+          id: 'dev',
+          host: '127.0.0.1',
+          port: 27015,
+          publicAddress: '100.95.111.112',
+        },
+      ],
+    }),
+  ],
   resolve: {
     alias: {
       '/@': path.resolve(__dirname, './src'),
