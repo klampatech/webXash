@@ -67,6 +67,10 @@ const KEY_HELD_CMD: Record<string, string> = {
   // Scoreboard. Held, not instant: the engine binds it `+showscores` /
   // `-showscores`, and sending only `showscores` opens it and never closes.
   Tab: 'showscores',
+  // Backquote opens the console as a held button too in GoldSrc
+  // (`+toggleconsole` / `-toggleconsole`). Verified: held for 1.5s it
+  // opens; a zero-length press does not render.
+  Backquote: 'toggleconsole',
 };
 
 /** Instant commands: fired once on keydown, never negated. */
@@ -82,7 +86,6 @@ const KEY_INSTANT_CMD: Record<string, string> = {
   // Console toggle and the TS-specific client-DLL menus. These are plain
   // engine commands (both symbols are present in the client WASM), so they
   // go through the command channel rather than needing HUD_Key_Event.
-  Backquote: 'toggleconsole',
   KeyM: 'messagemode2', // open mic
   KeyY: 'messagemode',  // team chat
   KeyX: 'thirdperson',
