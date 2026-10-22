@@ -1,5 +1,7 @@
 <template>
-  <div v-if="loading" class="loading"></div>
+  <div v-if="showLambda" class="lambda">
+    <p class="lambda__label">{{ lambdaLabel }}</p>
+  </div>
   <canvas
     ref="xashCanvasElement"
     id="canvas"
@@ -20,7 +22,7 @@
 <script setup lang="ts">
   import { storeToRefs } from 'pinia';
   import { useXashStore } from '/@/stores/store.ts';
-  import { onMounted, onBeforeUnmount, ref } from 'vue';
+  import {onMounted,onBeforeUnmount,ref, computed } from 'vue';
   import TSHud from '/@/components/TSHud.vue';
   import {
     startKeyboardBridge,
@@ -32,7 +34,13 @@
   // Dependencies
 
   const store = useXashStore();
-  const { loading, xashCanvas } = storeToRefs(store);
+  const { loading, xashCanvas, launching } = storeToRefs(store);
+
+// The lambda spinner shows only after the themed boot screen has handed
+// off, i.e. while the engine paints its first frames. It is ours, not the
+// engine's — hl-spin.svg is a frontend asset behind the WASM canvas.
+const showLambda = computed(() => !loading.value && launching.value);
+const lambdaLabel = computed(() => 'Connecting to server');
 
   // Data
 
@@ -129,13 +137,27 @@
 </script>
 
 <style scoped lang="scss">
-  .loading {
+  .lambda {
     position: absolute;
-    height: 100%;
-    width: 100%;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--ts-void, #000301);
+    background-image: url('../assets/hl-spin.svg');
     background-repeat: no-repeat;
     background-position: center;
-    background-image: url('../assets/hl-spin.svg');
     z-index: 9;
+
+    &__label {
+      position: absolute;
+      bottom: 14%;
+      margin: 0;
+      font-family: var(--ts-font-mono, monospace);
+      font-size: 0.78rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--ts-signal, #ffaa00);
+    }
   }
 </style>

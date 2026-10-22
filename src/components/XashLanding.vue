@@ -97,7 +97,7 @@ import { storeToRefs } from 'pinia';
 import { useXashStore } from '/@/stores/store';
 import { XashLoader } from '/@/services';
 import { launchOptionsFor, type TsServer } from '/@/services/ts-server-list.ts';
-import setCanvasLoading from '/@/utils/setCanvasLoading.ts';
+import setCanvasLoading, { clearCanvasLoading } from '/@/utils/setCanvasLoading.ts';
 import TSServerList from '/@/components/TSServerList.vue';
 import TSHowToPlay from '/@/components/TSHowToPlay.vue';
 
@@ -112,7 +112,7 @@ const isStarting = ref(false);
 const store = useXashStore();
 const { xashCanvas, selectedGame, launchOptions, fullScreen, enableConsole, enableCheats, loadingProgress, customGameArg } =
   storeToRefs(store);
-const { onStartLoading, onEndLoading, onBootPhase, refreshSavesList } = store;
+const { onStartLoading, onEndLoading, onBootPhase, onLaunching, refreshSavesList } = store;
 
 const downloadProgress = computed(() => Math.round(loadingProgress.value));
 
@@ -128,6 +128,7 @@ async function launch(options?: string) {
     return;
   }
   isStarting.value = true;
+  onLaunching(true);
   setCanvasLoading();
 
   // Take over the screen BEFORE the zip download, not just for the
@@ -194,6 +195,11 @@ async function launch(options?: string) {
     );
   } finally {
     isStarting.value = false;
+    onLaunching(false);
+    // The lambda spinner background was only ever added, never removed,
+    // so it stayed on the canvas for the whole session. Invisible in-game
+    // because the engine paints opaque pixels over it, but dead state.
+    clearCanvasLoading();
   }
 }
 

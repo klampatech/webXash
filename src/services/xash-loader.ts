@@ -2,7 +2,8 @@ import { type Xash3D } from 'xash3d-fwgs';
 import { type Xash3DWebRTC } from '/@/services/xash-webrtc.ts';
 import type { FilesWithPath } from '/@/utils/directory-open.ts';
 import type { ConsoleCallback, Enumify } from '/@/types.ts';
-import { unzipSync } from 'fflate';
+import { Unzip, UnzipInflate, UnzipPassThrough } from 'fflate';
+import type { UnzipFile, AsyncFlateStreamHandler } from 'fflate';
 import { getZip } from '/@/utils/zip-helpers';
 import SaveManager from '/@/services/save-manager.ts';
 import { tsPump } from '/@/services/ts-pump.ts';
@@ -607,24 +608,136 @@ class XashLoader {
     xash.em.FS.chdir(XASH_BASE_DIR);
   }
 
-  public async processZip(zipBuffer: ArrayBuffer, xash: Xash3D): Promise<void> {
+  /**
+   * Unzip the mod archive into the WASM filesystem.
+   *
+   * STREAMED, NOT BUFFERED. This used to be `unzipSync(zipData)`, which
+   * for tsmod.zip is one synchronous call expanding 492MB into 885MB
+   * across 5297 files. Three consequences, all visible to a user:
+   *
+   *   1. The main thread was blocked for the entire duration, so no CSS
+   *      animation could run — the boot ring froze solid.
+   *   2. It reported no progress at all, because there was nothing to
+   *      report until the single call returned.
+   *   3. unzipSync returns EVERY file as a Uint8Array before the caller
+   *      can write any of them, so all 885MB was resident at once.
+   *
+   * fflate's `Unzip` CLASS is what streams. The top-level `unzip()`
+   * helper is also async but still collects every file into one
+   * `Unzipped` object before calling back — no progress, all 885MB
+   * resident — so it would have fixed nothing that matters here.
+   *
+   * Progress is measured as bytes of archive consumed, which is honest
+   * and needs no up-front total-uncompressed-size estimate.
+   */
+  public async processZip(
+    zipBuffer: ArrayBuffer,
+    xash: Xash3D,
+    onProgress?: (fraction: number) => void,
+  ): Promise<void> {
     const zipData = new Uint8Array(zipBuffer);
-    const files = unzipSync(zipData);
+    const CHUNK = 1 << 20; // 1MB into the unzipper at a time
 
     xash.em.FS.mkdirTree(XASH_BASE_DIR);
 
-    for (const [filename, content] of Object.entries(files)) {
-      const path = XASH_BASE_DIR + filename;
-      if (filename.endsWith('/')) {
-        xash.em.FS.mkdirTree(path);
-      } else {
-        const dir = path.substring(0, path.lastIndexOf('/'));
-        if (dir) {
-          xash.em.FS.mkdirTree(dir);
+    await new Promise<void>((resolve, reject) => {
+      let failed: unknown = null;
+      let finished = false;
+
+      const fail = (e: unknown) => {
+        if (failed) return;
+        failed = e;
+        finish(new Error(typeof e === 'string' ? e : ((e as Error)?.message ?? e)));
+      };
+      const finish = (e?: unknown) => {
+        if (finished) return;
+        finished = true;
+        if (e) reject(e);
+        else resolve();
+      };
+
+      const uz = new Unzip((f: UnzipFile) => {
+        const name = f.name;
+        if (name.endsWith('/')) {
+          xash.em.FS.mkdirTree(XASH_BASE_DIR + name);
+          return;
         }
-        xash.em.FS.writeFile(path, content);
-      }
-    }
+
+        const path = XASH_BASE_DIR + name;
+        const dir = path.substring(0, path.lastIndexOf('/'));
+        // fflate may emit a file before its directory entry, so create
+        // on demand rather than relying on archive ordering.
+        if (dir) xash.em.FS.mkdirTree(dir);
+
+        // ORDER MATTERS: fflate's `start()` throws err(5)
+        // ("no stream handler") when `ondata` is not already assigned, so
+        // the handler must be attached first. Reversing these two lines
+        // fails on the first file with a bare, untraceable error.
+        //
+        // Accumulate per file, then write once. The archive is 5297 files
+        // averaging ~167KB, so this holds one file in memory rather than
+        // the whole 885MB, without needing FS append semantics we cannot
+        // rely on in every WASM FS shim.
+        const parts: Uint8Array[] = [];
+        let bytes = 0;
+
+        f.ondata = ((err, chunk, final) => {
+          if (err) return fail(err);
+          if (chunk && chunk.length) {
+            parts.push(chunk);
+            bytes += chunk.length;
+          }
+          if (final) {
+            const out = new Uint8Array(bytes);
+            let at = 0;
+            for (const p of parts) {
+              out.set(p, at);
+              at += p.length;
+            }
+            try {
+              xash.em.FS.writeFile(path, out);
+            } catch (e) {
+              fail(e);
+            }
+          }
+        }) as AsyncFlateStreamHandler;
+
+        f.start();
+      });
+
+      // REQUIRED. The top-level unzip() helper registers decoders for you;
+      // the Unzip class does not, and without this every push throws
+      // "no stream handler". A zip may also carry methods other than
+      // deflate, so fall back to the transparent pass-through.
+      uz.register(UnzipInflate);
+      uz.register(UnzipPassThrough);
+
+      let offset = 0;
+      // Yield to the event loop periodically so the boot ring can
+      // actually animate between pushes. Without this the loop below is
+      // itself a long task, which is the problem we are fixing.
+      const step = () => {
+        if (finished) return;
+        const sliceEnd = Math.min(offset + CHUNK * 16, zipData.length);
+        while (offset < sliceEnd) {
+          const end = Math.min(offset + CHUNK, zipData.length);
+          const isFinal = end >= zipData.length;
+          try {
+            uz.push(zipData.subarray(offset, end), isFinal);
+          } catch (e) {
+            return fail(e);
+          }
+          offset = end;
+          onProgress?.(offset / zipData.length);
+          if (isFinal) return finish();
+        }
+        setTimeout(step, 0);
+      };
+      step();
+
+      // Safety net: never hang the boot on a malformed archive.
+      setTimeout(() => fail('unzip timed out before completion'), 180_000);
+    });
 
     xash.em.FS.chdir(XASH_BASE_DIR);
   }
@@ -658,7 +771,9 @@ class XashLoader {
     onPhase?.({ phase: 'filesystem', percent: null });
     // Load zip and extras in parallel
     const [, extrasBuffer] = await Promise.all([
-      this.processZip(zipBuffer, xash),
+      this.processZip(zipBuffer, xash, (f) =>
+        onPhase?.({ phase: 'filesystem', percent: Math.round(f * 100) }),
+      ),
       this.fetchExtras(),
     ]);
 
@@ -768,7 +883,9 @@ class XashLoader {
       });
 
       options.onPhase?.({ phase: 'filesystem', percent: null });
-      await this.processZip(zipBuffer, xash);
+      await this.processZip(zipBuffer, xash, (f) =>
+        options.onPhase?.({ phase: 'filesystem', percent: Math.round(f * 100) }),
+      );
       await this.writeExtras(xash, extrasBuffer);
       options.onPhase?.({ phase: 'starting', percent: null });
       xash.main();

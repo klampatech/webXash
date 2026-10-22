@@ -26,6 +26,12 @@ export const useXashStore = defineStore(
     // means the phase cannot report progress — the UI shows an
     // indeterminate sweep rather than a fake percentage.
     const bootPhase = ref<BootPhase | null>(null);
+    // True once the engine has been started and the themed boot screen has
+    // handed off, but the first frame has not painted yet. This is the
+    // only window in which the lambda spinner should be visible; it used
+    // to persist for the whole session because the class was never
+    // removed.
+    const launching = ref(false);
     const bootPercent = ref<number | null>(null);
     const showXashSettingUI = ref(true);
     // -- Launch options
@@ -103,6 +109,10 @@ export const useXashStore = defineStore(
     };
 
     /** Phase transitions emitted by XashLoader at real await boundaries. */
+    const onLaunching = (value: boolean) => {
+      launching.value = value;
+    };
+
     const onBootPhase = (info: { phase: BootPhase; percent: number | null }) => {
       bootPhase.value = info.phase;
       bootPercent.value = info.percent;
@@ -197,8 +207,10 @@ export const useXashStore = defineStore(
       loadingProgress,
       maxLoadingAmount,
       bootPhase,
+      launching,
       bootPercent,
       onBootPhase,
+      onLaunching,
       showXashSettingUI,
       launchOptions,
       effectiveLaunchOptions,
