@@ -4,6 +4,11 @@
     <div class="ts-landing__bg" aria-hidden="true">
       <div class="ts-landing__grid" />
       <div class="ts-landing__glow" />
+      <!-- The circular emblem. wiki_logo.jpg carries a large circular
+           mass beneath the wordmark (verified by OCR); this rebuilds it
+           in CSS rather than shipping their art. Two concentric rings
+           plus radiating tick streaks — a targeting-dial reading. -->
+      <div class="ts-landing__emblem" />
     </div>
 
     <div class="ts-landing__inner">
@@ -256,6 +261,47 @@ function onJoinServer(server: TsServer) {
     min-height: 100%;
     margin: 0 auto;
     padding: clamp(1.5rem, 4vh, 3rem) 1.4rem 1.5rem;
+  }
+
+  /* the emblem: concentric rings + radiating ticks, behind the wordmark */
+  &__emblem {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: min(620px, 92vw);
+    aspect-ratio: 1;
+    transform: translate(-50%, -46%);
+    border: 2px solid rgba(166, 156, 122, 0.3);
+    border-radius: 50%;
+    pointer-events: none;
+
+    /* inner ring, offset in rather than inset so it reads as depth */
+    &::before {
+      content: '';
+      position: absolute;
+      inset: 14px;
+      border: 1px solid rgba(232, 236, 187, 0.2);
+      border-radius: 50%;
+    }
+
+    /* radiating streaks — the tick marks on a dial */
+    &::after {
+      content: '';
+      position: absolute;
+      inset: -14px;
+      border-radius: 50%;
+      background: repeating-conic-gradient(
+        from 0deg,
+        rgba(166, 156, 122, 0.16) 0deg 1.2deg,
+        transparent 1.2deg 15deg
+      );
+      /* keep the streaks outside the rings */
+      mask: radial-gradient(
+        circle at center,
+        transparent 0 49.6%,
+        #000 50.4% 100%
+      );
+    }
   }
 
   /* ---- masthead ---- */
