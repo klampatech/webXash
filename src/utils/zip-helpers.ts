@@ -1,20 +1,43 @@
-// Cache API storage for the (large) tsmod.zip download.
-// First call: fetches from /webXash/hl/<zipName> with progress, stores
-// the response in a Cache, returns ArrayBuffer.
-// Subsequent calls: instant return from the Cache.
+// Fetch the (large) tsmod.zip for the engine's virtual filesystem.
 //
-// Bumping TSMOD_CACHE_VERSION forces a fresh download — bump it when
-// tsmod.zip is regenerated with new content (we gitignore the zip, so
-// the URL doesn't change but the bytes do).
-const TSMOD_CACHE_NAME = 'xash-zips-v1';
-const TSMOD_CACHE_VERSION = '1';
+// WHY THERE IS NO Cache API HERE ANYMORE
+// ---------------------------------------
+// This used to wrap the download in `caches.open('xash-zips-v1')` to
+// store it for reuse. That never worked: `cache.put` refuses a single
+// response above roughly 100-300MB, and tsmod.zip is one 494MB entry.
+// Measured against this same origin:
+//
+//     single 492MB entry   FAILED  UnknownError: 'put' on 'Cache'
+//     single 100MB entry   OK
+//     496MB as 62 x 8MB    OK
+//
+// It was not a quota problem (storage estimate reported 496MB used of
+// 10736MB available) and not an artifact of an ephemeral browser
+// profile. The write threw, this module logged `cache write failed` and
+// returned the buffer anyway, and nothing was ever stored — so the
+// archive re-downloaded on every visit while appearing to have a cache.
+// `TSMOD_CACHE_VERSION` never had anything to bust.
+//
+// The browser's own HTTP cache has no such per-entry ceiling and is what
+// this workload actually wants: one large, unchanging static file. It
+// needs permission from the server, which now comes from
+// `vite-asset-headers.mjs` — `public, max-age=0, must-revalidate`.
+// Unchanged content then costs one 304 revalidation; changed content
+// re-downloads correctly. Neither case needs anything from us.
+//
+// WHAT THIS STILL OWNS
+// --------------------
+// Progress reporting. A 494MB download with no progress bar is
+// indistinguishable from a hang, so the body is streamed and reported as
+// bytes land rather than handed to `response.arrayBuffer()` in one go.
 
 /**
- * @param opts.bypassCache  force a genuinely cold download — skip the
- *   cache read, skip the cache write, and evict any existing entry. Wired
- *   to `?nocache=1` so the cold path is a repeatable experiment rather
- *   than a DevTools excursion. Without it, telling "the cache works" from
- *   "the server is just very fast locally" is guesswork.
+ * @param progressCallback  receives 0-100 as bytes arrive.
+ * @param opts.bypassCache  force a genuinely cold download by telling the
+ *   HTTP cache to be skipped for this one request (`cache: 'no-store'`).
+ *   Wired to `?nocache=1` so the cold path is a repeatable experiment
+ *   rather than a DevTools excursion — necessary because a locally-served
+ *   archive re-downloads fast enough to look like a cache hit.
  */
 const getZip = async (
   zipName: string,
@@ -23,92 +46,48 @@ const getZip = async (
   opts?: { bypassCache?: boolean },
 ): Promise<ArrayBuffer> => {
   const url = './' + zipPath + zipName;
-  const bypass = !!opts?.bypassCache;
 
-  if (bypass && typeof caches !== 'undefined') {
-    try {
-      const cache = await caches.open(TSMOD_CACHE_NAME);
-      await cache.delete(url);
-      console.info('[zip-helpers] cache bypassed (?nocache=1)');
-    } catch (err) {
-      console.warn('[zip-helpers] cache eviction failed:', err);
-    }
-  }
+  const response = await fetch(url, {
+    // `no-store` is the platform primitive for "do not use or update the
+    // cache for this request" — the honest expression of the intent the
+    // old Cache API eviction dance was approximating.
+    cache: opts?.bypassCache ? 'no-store' : 'default',
+  });
 
-  // Cache hit — instant return. Skip progress (it's <1ms).
-  if (!bypass && typeof caches !== 'undefined') {
-    try {
-      const cache = await caches.open(TSMOD_CACHE_NAME);
-      const cached = await cache.match(url);
-      if (cached) {
-        progressCallback(100);
-        return await cached.arrayBuffer();
-      }
-    } catch (err) {
-      // Cache API can throw in private modes or restricted contexts.
-      // Fall through to fetch.
-      console.warn('[zip-helpers] cache read failed:', err);
-    }
-  }
-
-  // Cache miss — fetch with streaming progress.
-  const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Failed to fetch ${url}: ${response.statusText}`);
   }
 
   const total = parseInt(response.headers.get('content-length') || '0', 10);
   const reader = response.body?.getReader();
-  let arrayBuffer: ArrayBuffer;
 
   if (!reader || !response.body) {
-    // No ReadableStream — fall back to plain arrayBuffer().
-    arrayBuffer = await response.arrayBuffer();
+    // No ReadableStream — fall back to a plain read.
+    const buffer = await response.arrayBuffer();
     progressCallback(100);
-  } else {
-    const chunks: Uint8Array[] = [];
-    let received = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      received += value.length;
-      if (total) {
-        progressCallback(Math.round((received / total) * 100));
-      }
-    }
-    // Concat chunks into one ArrayBuffer.
-    const merged = new Uint8Array(received);
-    let offset = 0;
-    for (const chunk of chunks) {
-      merged.set(chunk, offset);
-      offset += chunk.length;
-    }
-    arrayBuffer = merged.buffer;
-    progressCallback(100);
+    return buffer;
   }
 
-  // Store in cache for next time. Skipped on a bypass so a cold run
-  // stays cold rather than silently re-warming the cache it just evaded.
-  if (!bypass && typeof caches !== 'undefined') {
-    try {
-      const cache = await caches.open(TSMOD_CACHE_NAME);
-      await cache.put(
-        url,
-        new Response(arrayBuffer, {
-          status: 200,
-          headers: { 'content-type': 'application/zip' },
-        }),
-      );
-    } catch (err) {
-      // Quota exceeded or other issue — log but don't fail the
-      // current download.
-      console.warn('[zip-helpers] cache write failed:', err);
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    if (total) {
+      progressCallback(Math.round((received / total) * 100));
     }
   }
 
-  return arrayBuffer;
+  const merged = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  progressCallback(100);
+  return merged.buffer;
 };
 
-// Expose version so XashSettings can show it / bust on demand.
-export { getZip, TSMOD_CACHE_NAME, TSMOD_CACHE_VERSION };
+export { getZip };

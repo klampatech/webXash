@@ -3,6 +3,7 @@ import vue from '@vitejs/plugin-vue';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { a2sServerListPlugin } from './vite-a2s-plugin.mjs';
+import { gameAssetCacheHeadersPlugin } from './vite-asset-headers.mjs';
 
 // https://vite.dev/config/
 //
@@ -23,6 +24,11 @@ export default defineConfig({
   base: '/webXash/',
   plugins: [
     vue(),
+    // Let the browser cache tsmod.zip. Vite's dev default is
+    // `cache-control: no-cache`, which forces a 494MB re-download on
+    // every visit. See vite-asset-headers.mjs for why the HTTP cache is
+    // used instead of the Cache API, and for the nginx equivalent.
+    gameAssetCacheHeadersPlugin(),
     // Real A2S server list for the landing page's server browser.
     // Same-origin on purpose: the page is HTTPS and ts-udp-bridge.js is
     // plain HTTP, so a fetch from the page would be blocked as mixed
