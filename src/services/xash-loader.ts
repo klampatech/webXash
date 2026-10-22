@@ -179,6 +179,64 @@ const CSClientURL = HLClientURL;
 const CSServerURL = HLServerURL;
 
 const XASH_BASE_DIR = '/rodir/';
+/**
+ * Total uncompressed byte count of a ZIP archive, read from its central
+ * directory without decompressing anything.
+ *
+ * WHY THIS IS NEEDED
+ * ------------------
+ * Progress used to be measured as bytes pushed INTO the unzipper, which
+ * made the bar stall at ~97% and sit there looking frozen. The tail of a
+ * ZIP is not like the rest of it: the final few percent of INPUT can
+ * carry a large fraction of the OUTPUT, because the biggest members live
+ * at the end. Measured on tsmod.zip:
+ *
+ *     5297 entries, 492.3MB compressed -> 884.9MB uncompressed (1.80x)
+ *     largest single member: 36.2MB
+ *
+ * So ~3% of input took as long as the previous 30%, and reporting input
+ * made that visible as a dead bar. Reporting OUTPUT against the real
+ * total moves smoothly and reaches an honest 100%.
+ *
+ * The central directory is parsed directly because fflate will not report
+ * a total until it has already decompressed the archive - which is the
+ * thing being avoided here.
+ */
+function zipTotalUncompressed(data: Uint8Array): number {
+  // End of central directory: 0x06054b50, scanned back from the tail
+  // (it sits within the last 22 bytes plus a variable-length comment).
+  const floor = Math.max(0, data.length - 22 - 0xffff);
+  let eocd = -1;
+  for (let i = data.length - 22; i >= floor; i--) {
+    if (data[i] === 0x50 && data[i + 1] === 0x4b && data[i + 2] === 0x05 && data[i + 3] === 0x06) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) return 0;
+
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const count = view.getUint16(eocd + 10, true);
+  let p = view.getUint32(eocd + 16, true);
+
+  let total = 0;
+  for (let i = 0; i < count; i++) {
+    // 0x02014b50 = central directory file header.
+    if (
+      !(data[p] === 0x50 && data[p + 1] === 0x4b &&
+        data[p + 2] === 0x01 && data[p + 3] === 0x02)
+    ) {
+      break;
+    }
+    total += view.getUint32(p + 24, true); // uncompressed size
+    const nameLen = view.getUint16(p + 28, true);
+    const extraLen = view.getUint16(p + 30, true);
+    const commentLen = view.getUint16(p + 32, true);
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  return total;
+}
+
 
 // xash3d.js already loads filesystem_stdio.wasm, libmenu.wasm,
 // hl.dll, and client.dll automatically (in that order) via
@@ -637,12 +695,36 @@ class XashLoader {
   public async processZip(
     zipBuffer: ArrayBuffer,
     xash: Xash3D,
-    onProgress?: (fraction: number) => void,
+    onProgress?: (percent: number) => void,
   ): Promise<void> {
     const zipData = new Uint8Array(zipBuffer);
     const CHUNK = 1 << 20; // 1MB into the unzipper at a time
+    const totalOut = zipTotalUncompressed(zipData);
 
     xash.em.FS.mkdirTree(XASH_BASE_DIR);
+
+    // Progress is OUTPUT bytes against the real total, not input consumed.
+    // Reported from the inflate callback as well as from the push loop, so
+    // a single large member (tsmod.zip's biggest is 36.2MB) decompressing
+    // and writing to the WASM filesystem still advances the bar instead of
+    // freezing it for a second. Takes the max of the two signals so it can
+    // never appear to go backwards.
+    let written = 0;
+    let lastReported = -1;
+    const report = (forced?: number) => {
+      let pct: number;
+      if (totalOut > 0) {
+        pct = Math.min(100, Math.round((written / totalOut) * 100));
+      } else if (forced != null) {
+        pct = Math.round(forced * 100);
+      } else {
+        return;
+      }
+      if (pct !== lastReported) {
+        lastReported = pct;
+        onProgress?.(pct);
+      }
+    };
 
     await new Promise<void>((resolve, reject) => {
       let failed: unknown = null;
@@ -690,6 +772,8 @@ class XashLoader {
           if (chunk && chunk.length) {
             parts.push(chunk);
             bytes += chunk.length;
+            written += chunk.length;
+            report();
           }
           if (final) {
             const out = new Uint8Array(bytes);
@@ -732,7 +816,9 @@ class XashLoader {
             return fail(e);
           }
           offset = end;
-          onProgress?.(offset / zipData.length);
+          // Fallback signal for when the central directory could not be
+          // read; input consumed is a poorer metric but better than none.
+          report(offset / zipData.length);
           if (isFinal) return finish();
         }
         setTimeout(step, 0);
@@ -775,8 +861,8 @@ class XashLoader {
     onPhase?.({ phase: 'filesystem', percent: null });
     // Load zip and extras in parallel
     const [, extrasBuffer] = await Promise.all([
-      this.processZip(zipBuffer, xash, (f) =>
-        onPhase?.({ phase: 'filesystem', percent: Math.round(f * 100) }),
+      this.processZip(zipBuffer, xash, (p) =>
+        onPhase?.({ phase: 'filesystem', percent: p }),
       ),
       this.fetchExtras(),
     ]);
@@ -889,8 +975,8 @@ class XashLoader {
       });
 
       options.onPhase?.({ phase: 'filesystem', percent: null });
-      await this.processZip(zipBuffer, xash, (f) =>
-        options.onPhase?.({ phase: 'filesystem', percent: Math.round(f * 100) }),
+      await this.processZip(zipBuffer, xash, (p) =>
+        options.onPhase?.({ phase: 'filesystem', percent: p }),
       );
       await this.writeExtras(xash, extrasBuffer);
       options.onPhase?.({ phase: 'starting', percent: null });

@@ -30,7 +30,11 @@
             r="52"
             :style="arcStyle"
           />
-          <g v-if="percent == null && !done" class="ts-boot__ring-sweep">
+          <!-- Determinate phases still spin a faint tick. A bar that is
+               holding at 97% while one 36MB archive member inflates and
+               writes to the WASM filesystem looks broken; a rotating tick
+               over a stalled arc reads as "working on a big piece". -->
+          <g v-if="!done" class="ts-boot__ring-sweep" :class="{ 'is-dim': percent != null }">
             <line x1="60" y1="60" x2="60" y2="14" />
           </g>
         </svg>
@@ -76,7 +80,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useXashStore } from '/@/stores/store';
 import type { BootPhase } from '/@/services/xash-loader.ts';
@@ -98,7 +102,49 @@ const steps: { id: BootPhase; label: string }[] = [
 ];
 
 const phase = computed(() => bootPhase.value ?? 'download');
-const percent = computed(() => bootPercent.value);
+
+/**
+ * Smoothed percentage. The raw value can hold for a while while a large
+ * archive member decompresses, so we ease toward the target and never let
+ * a change go unseen for long. A smoothly creeping bar plus the rotating
+ * tick reads as continuous work; a static one does not.
+ */
+const target = computed(() => bootPercent.value);
+const shown = ref<number | null>(null);
+let raf = 0;
+
+function tick() {
+  raf = 0;
+  const t = target.value;
+  if (t == null) {
+    shown.value = null;
+    return;
+  }
+  if (shown.value == null) {
+    shown.value = t;
+    return;
+  }
+  const delta = t - shown.value;
+  if (Math.abs(delta) < 0.4) {
+    shown.value = t;
+    return;
+  }
+  // Move fast when catching up, gently when creeping, so the last few
+  // percent visibly tick over instead of arriving in one jump.
+  shown.value += delta * (delta > 8 ? 0.35 : 0.08);
+  schedule();
+}
+
+function schedule() {
+  if (!raf) raf = requestAnimationFrame(tick);
+}
+
+watch(target, schedule, { immediate: true });
+onBeforeUnmount(() => {
+  if (raf) cancelAnimationFrame(raf);
+});
+
+const percent = computed(() => shown.value);
 const done = computed(() => phase.value === 'starting');
 
 const currentLabel = computed(
@@ -187,7 +233,7 @@ const arcStyle = computed(() => ({
     transition: stroke-dashoffset 260ms var(--ts-ease);
   }
 
-  /* sweep hand, for phases that cannot report progress */
+  /* sweep hand — full strength when indeterminate, faint over a bar */
   &__ring-sweep {
     transform-origin: 60px 60px;
     animation: ts-boot-sweep 1.25s linear infinite;
@@ -202,6 +248,11 @@ const arcStyle = computed(() => ({
 
   &__ring.is-indeterminate &__ring-track {
     stroke: rgba(166, 156, 122, 0.28);
+  }
+
+  &__ring-sweep.is-dim {
+    animation-duration: 2.4s;
+    opacity: 0.4;
   }
 
   &__ring.is-done &__ring-arc {

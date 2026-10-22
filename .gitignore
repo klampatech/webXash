@@ -47,3 +47,6 @@ vite.config.js
 *.sw?
 public/test-assets/
 public/hl/tsmod.zip
+
+# Throwaway cache-size probes (see git history). Never commit.
+public/hl/_cacheprobe_*.bin
