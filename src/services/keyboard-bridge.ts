@@ -67,10 +67,6 @@ const KEY_HELD_CMD: Record<string, string> = {
   // Scoreboard. Held, not instant: the engine binds it `+showscores` /
   // `-showscores`, and sending only `showscores` opens it and never closes.
   Tab: 'showscores',
-  // Backquote opens the console as a held button too in GoldSrc
-  // (`+toggleconsole` / `-toggleconsole`). Verified: held for 1.5s it
-  // opens; a zero-length press does not render.
-  Backquote: 'toggleconsole',
 };
 
 /** Instant commands: fired once on keydown, never negated. */
@@ -83,6 +79,12 @@ const KEY_INSTANT_CMD: Record<string, string> = {
   Digit9: 'slot9', Digit0: 'slot10',
   KeyF: 'impulse 100', // flashlight
   KeyB: 'buy',
+  // NOTE: send this BARE, not as `+toggleconsole`. The engine registers
+  // toggleconsole as a plain command, not a button, so the + form is a
+  // literal name lookup and the engine prints "Unknown command:
+  // +toggleconsole". Contrast +forward / +duck, which are real buttons
+  // and must keep the +.
+  Backquote: 'toggleconsole',
   // Console toggle and the TS-specific client-DLL menus. These are plain
   // engine commands (both symbols are present in the client WASM), so they
   // go through the command channel rather than needing HUD_Key_Event.
