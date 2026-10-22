@@ -147,15 +147,21 @@ function attachMouseBridge(canvas: HTMLCanvasElement) {
   const held = new Set<number>();
   const handler = (e: MouseEvent) => {
     const cmd = MOUSE_BUTTON_TO_CMD[String(e.button)];
+    logDebug(
+      `[mouse] ${e.type} button=${e.button} -> ${cmd ?? '(unmapped)'}` +
+        (bridgeSuspended ? ' [SUSPENDED]' : '')
+    );
     if (!cmd) return;
     e.preventDefault();
     if (e.type === 'mousedown') {
       if (held.has(e.button)) return;
       held.add(e.button);
-      XashLoader.exec(`+${cmd}`);
+      logDebug(`[mouse] exec +${cmd}`);
+      execHeld(cmd);
     } else {
       if (!held.has(e.button)) return;
       held.delete(e.button);
+      logDebug(`[mouse] exec -${cmd}`);
       XashLoader.exec(`-${cmd}`);
     }
   };
@@ -170,6 +176,31 @@ function attachMouseBridge(canvas: HTMLCanvasElement) {
 export function tryAttachMouseBridge() {
   const c = document.getElementById('canvas') as HTMLCanvasElement | null;
   if (c) attachMouseBridge(c);
+}
+
+
+/**
+ * TS's anti-script gate: only a real keypress opens it, and the WASM engine never delivers a
+ * key event, so every gated `+` command (`+attack`, `+jump`, `+duck`, `+forward`, ...) is
+ * silently dropped. `ts_gate` holds it for the frame the bridge is about to use. 200ms is the
+ * same lifetime a held key gives it before `HUD_Frame` re-arms the gate.
+ */
+const GATED_COMMANDS = new Set([
+  'attack', 'attack2', 'alt2', 'reload',
+  'forward', 'back', 'moveleft', 'moveright', 'jump',
+]);
+
+function needsGate(cmd: string): boolean {
+  return GATED_COMMANDS.has(cmd.replace(/^[+-]/, ''));
+}
+
+/** Fire a held `+` command, opening TS's anti-script gate first if it needs it. */
+function execHeld(cmd: string): void {
+  if (needsGate(cmd)) {
+    logDebug(`[gate] opening for +${cmd}`);
+    XashLoader.exec('ts_gate 200');
+  }
+  XashLoader.exec(`+${cmd}`);
 }
 
 /**
@@ -228,7 +259,7 @@ export function startKeyboardBridge(): () => void {
       if (heldKeys.has(e.code)) return;
       heldKeys.add(e.code);
       logDebug(`[key] ${e.code} -> exec +${held}`);
-      XashLoader.exec(`+${held}`);
+      execHeld(held);
       return;
     }
     if (instant) {
