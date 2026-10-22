@@ -157,6 +157,9 @@ async function launch(options?: string) {
 
   try {
     const xash = await XashLoader.startGameZip(zip, {
+      // ?nocache=1 forces a genuinely cold zip download: skips the cache
+      // read, skips the write, and evicts any stored entry.
+      bypassZipCache: new URLSearchParams(location.search).get('nocache') === '1',
       canvas: xashCanvas.value,
       selectedGame: selectedGame.value,
       selectedZip: 'tsmod.zip',

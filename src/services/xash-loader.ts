@@ -224,6 +224,8 @@ export interface BootPhaseInfo {
 }
 
 export interface StartGameOptions extends GameLoaderOptions {
+  /** `?nocache=1` — force a cold zip download for testing. */
+  bypassZipCache?: boolean;
   onStartLoading?: () => void;
   onEndLoading?: () => void;
   onPhase?: (info: BootPhaseInfo) => void;
@@ -239,6 +241,8 @@ export interface PostLoadOptions {
 }
 
 export interface FullStartOptions {
+  /** `?nocache=1` — force a cold zip download for testing. */
+  bypassZipCache?: boolean;
   canvas: HTMLCanvasElement;
   selectedGame: Enumify<typeof GAME_SETTINGS>;
   selectedZip?: string;
@@ -794,9 +798,10 @@ class XashLoader {
     selectedZip: string,
     publicDir: string,
     onProgress?: (progress: number) => void,
+    opts?: { bypassCache?: boolean },
   ): Promise<ArrayBuffer | undefined> {
     if (!selectedZip) return;
-    return await getZip(selectedZip, publicDir, onProgress!);
+    return await getZip(selectedZip, publicDir, onProgress!, opts);
   }
 
   public async fetchExtras(): Promise<ArrayBuffer> {
@@ -866,6 +871,7 @@ class XashLoader {
             options.onPhase?.({ phase: 'download', percent: p });
             onDownloadProgress?.(p);
           },
+          { bypassCache: options.bypassZipCache },
         ),
         this.fetchExtras(),
       ]);

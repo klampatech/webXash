@@ -9,15 +9,34 @@
 const TSMOD_CACHE_NAME = 'xash-zips-v1';
 const TSMOD_CACHE_VERSION = '1';
 
+/**
+ * @param opts.bypassCache  force a genuinely cold download — skip the
+ *   cache read, skip the cache write, and evict any existing entry. Wired
+ *   to `?nocache=1` so the cold path is a repeatable experiment rather
+ *   than a DevTools excursion. Without it, telling "the cache works" from
+ *   "the server is just very fast locally" is guesswork.
+ */
 const getZip = async (
   zipName: string,
   zipPath: string,
   progressCallback: (progress: number) => any,
+  opts?: { bypassCache?: boolean },
 ): Promise<ArrayBuffer> => {
   const url = './' + zipPath + zipName;
+  const bypass = !!opts?.bypassCache;
+
+  if (bypass && typeof caches !== 'undefined') {
+    try {
+      const cache = await caches.open(TSMOD_CACHE_NAME);
+      await cache.delete(url);
+      console.info('[zip-helpers] cache bypassed (?nocache=1)');
+    } catch (err) {
+      console.warn('[zip-helpers] cache eviction failed:', err);
+    }
+  }
 
   // Cache hit — instant return. Skip progress (it's <1ms).
-  if (typeof caches !== 'undefined') {
+  if (!bypass && typeof caches !== 'undefined') {
     try {
       const cache = await caches.open(TSMOD_CACHE_NAME);
       const cached = await cache.match(url);
@@ -69,8 +88,9 @@ const getZip = async (
     progressCallback(100);
   }
 
-  // Store in cache for next time.
-  if (typeof caches !== 'undefined') {
+  // Store in cache for next time. Skipped on a bypass so a cold run
+  // stays cold rather than silently re-warming the cache it just evaded.
+  if (!bypass && typeof caches !== 'undefined') {
     try {
       const cache = await caches.open(TSMOD_CACHE_NAME);
       await cache.put(
