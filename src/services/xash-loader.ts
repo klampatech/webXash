@@ -804,7 +804,7 @@ class XashLoader {
       // Yield to the event loop periodically so the boot ring can
       // actually animate between pushes. Without this the loop below is
       // itself a long task, which is the problem we are fixing.
-      const step = () => {
+      const step = async () => {
         if (finished) return;
         const sliceEnd = Math.min(offset + CHUNK * 16, zipData.length);
         while (offset < sliceEnd) {
@@ -819,7 +819,15 @@ class XashLoader {
           // Fallback signal for when the central directory could not be
           // read; input consumed is a poorer metric but better than none.
           report(offset / zipData.length);
-          if (isFinal) return finish();
+          if (isFinal) {
+            // Hold the completed state long enough to be PAINTED. Without
+            // this the final 100% and the phase tick-off happen in the
+            // same task as the hand-off, so the browser never renders them
+            // and the bar appears to stop at ~90% and skip to the game.
+            // The value is real; it just never got a frame.
+            if (lastReported >= 100) await delay(450);
+            return finish();
+          }
         }
         setTimeout(step, 0);
       };
@@ -966,6 +974,12 @@ class XashLoader {
       if (!zipBuffer) {
         throw new Error('Failed to download or provide zip file');
       }
+
+      // Same reasoning as the dwell in processZip: the download reports
+      // 100% and hands straight to the engine phase in one task, so the
+      // browser never paints the completion and the bar appears to stop
+      // at ~97%. The value is real, it just needs a frame.
+      await delay(300);
 
       options.onPhase?.({ phase: 'engine', percent: null });
       const xash = await this.initXash({

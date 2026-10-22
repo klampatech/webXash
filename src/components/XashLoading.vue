@@ -42,7 +42,7 @@
         <div class="ts-boot__ring-center">
           <span v-if="done" class="ts-boot__pct ts-boot__pct--word">OK</span>
           <span v-else-if="percent != null" class="ts-boot__pct">
-            {{ percent }}<i>%</i>
+            {{ Math.round(percent) }}<i>%</i>
           </span>
           <span v-else class="ts-boot__pct ts-boot__pct--word">···</span>
         </div>
@@ -104,18 +104,31 @@ const steps: { id: BootPhase; label: string }[] = [
 const phase = computed(() => bootPhase.value ?? 'download');
 
 /**
- * Smoothed percentage. The raw value can hold for a while while a large
- * archive member decompresses, so we ease toward the target and never let
- * a change go unseen for long. A smoothly creeping bar plus the rotating
- * tick reads as continuous work; a static one does not.
+ * Smoothed percentage.
+ *
+ * Two things this must not do, both of which it did:
+ *
+ *  1. Show fractions. The eased value is a float, so `{{ percent }}`
+ *     rendered "37.56561154577637%". Always round at the point of
+ *     display, never at the point of computation - the easing needs the
+ *     precision.
+ *  2. Lag a phase behind and then "skip". An ease proportional to the
+ *     remaining gap has no time bound: a 90%-to-100% move at a small
+ *     per-frame rate can take longer than the phase lasts, so the bar
+ *     showed 90% as the phase ended and the screen then jumped. Easing is
+ *     therefore rate-limited to close any gap within ~0.5s, and snaps
+ *     outright on completion.
  */
 const target = computed(() => bootPercent.value);
 const shown = ref<number | null>(null);
 let raf = 0;
+let lastFrame = 0;
+const CONVERGE_MS = 500;
 
-function tick() {
+function tick(now: number) {
   raf = 0;
   const t = target.value;
+
   if (t == null) {
     shown.value = null;
     return;
@@ -124,14 +137,21 @@ function tick() {
     shown.value = t;
     return;
   }
-  const delta = t - shown.value;
-  if (Math.abs(delta) < 0.4) {
+  // Completion is a fact, not something to animate toward.
+  if (t >= 100) {
+    shown.value = 100;
+    return;
+  }
+
+  const dt = lastFrame ? Math.min(100, now - lastFrame) : CONVERGE_MS;
+  lastFrame = now;
+
+  const gap = t - shown.value;
+  if (Math.abs(gap) < 0.5) {
     shown.value = t;
     return;
   }
-  // Move fast when catching up, gently when creeping, so the last few
-  // percent visibly tick over instead of arriving in one jump.
-  shown.value += delta * (delta > 8 ? 0.35 : 0.08);
+  shown.value += gap * Math.min(1, dt / CONVERGE_MS);
   schedule();
 }
 
@@ -139,7 +159,18 @@ function schedule() {
   if (!raf) raf = requestAnimationFrame(tick);
 }
 
-watch(target, schedule, { immediate: true });
+watch(target, () => {
+  lastFrame = 0;
+  schedule();
+}, { immediate: true });
+
+// A phase change must not leave the previous phase's value on screen.
+watch(bootPhase, () => {
+  shown.value = target.value ?? null;
+  lastFrame = 0;
+  schedule();
+});
+
 onBeforeUnmount(() => {
   if (raf) cancelAnimationFrame(raf);
 });
