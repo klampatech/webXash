@@ -64,6 +64,9 @@ const KEY_HELD_CMD: Record<string, string> = {
   // Buttons
   Space: 'jump',
   ControlLeft: 'duck', ControlRight: 'duck',
+  // Scoreboard. Held, not instant: the engine binds it `+showscores` /
+  // `-showscores`, and sending only `showscores` opens it and never closes.
+  Tab: 'showscores',
 };
 
 /** Instant commands: fired once on keydown, never negated. */
@@ -76,6 +79,18 @@ const KEY_INSTANT_CMD: Record<string, string> = {
   Digit9: 'slot9', Digit0: 'slot10',
   KeyF: 'impulse 100', // flashlight
   KeyB: 'buy',
+  // Console toggle and the TS-specific client-DLL menus. These are plain
+  // engine commands (both symbols are present in the client WASM), so they
+  // go through the command channel rather than needing HUD_Key_Event.
+  Backquote: 'toggleconsole',
+  KeyM: 'messagemode2', // open mic
+  KeyY: 'messagemode',  // team chat
+  KeyX: 'thirdperson',
+  KeyZ: 'usepowerup',
+  KeyG: 'useitems',   // toggle attachments
+  KeyT: 'drop',
+  KeyH: 'impulse 201', // taunt
+  BracketLeft: 'invprev', BracketRight: 'invnext',
 };
 
 /**
