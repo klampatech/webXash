@@ -4,6 +4,7 @@ import { defineStore } from 'pinia';
 import { type SaveEntry } from '/@/services/save-manager.ts';
 import { DEFAULT_GAME_DIR } from '/@/services/save-manager.ts';
 import { GAME_SETTINGS } from '/@/services/xash-loader.ts';
+import type { BootPhase } from '/@/services/xash-loader.ts';
 
 export const useXashStore = defineStore(
   'xash',
@@ -21,6 +22,11 @@ export const useXashStore = defineStore(
     const loading = ref(false);
     const loadingProgress = ref(1);
     const maxLoadingAmount = ref(100);
+    // Which boot phase we are in, and how far through it. `null` percent
+    // means the phase cannot report progress — the UI shows an
+    // indeterminate sweep rather than a fake percentage.
+    const bootPhase = ref<BootPhase | null>(null);
+    const bootPercent = ref<number | null>(null);
     const showXashSettingUI = ref(true);
     // -- Launch options
     // Default to TS game launchArgs + 4 bots. xash.wasm heap cap was
@@ -92,6 +98,17 @@ export const useXashStore = defineStore(
     const onEndLoading = () => {
       loading.value = false;
       showXashSettingUI.value = false;
+      bootPhase.value = null;
+      bootPercent.value = null;
+    };
+
+    /** Phase transitions emitted by XashLoader at real await boundaries. */
+    const onBootPhase = (info: { phase: BootPhase; percent: number | null }) => {
+      bootPhase.value = info.phase;
+      bootPercent.value = info.percent;
+      if (info.percent != null) {
+        loadingProgress.value = info.percent;
+      }
     };
 
     const refreshSavesList = async () => {
@@ -179,6 +196,9 @@ export const useXashStore = defineStore(
       loading,
       loadingProgress,
       maxLoadingAmount,
+      bootPhase,
+      bootPercent,
+      onBootPhase,
       showXashSettingUI,
       launchOptions,
       effectiveLaunchOptions,

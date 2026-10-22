@@ -112,7 +112,7 @@ const isStarting = ref(false);
 const store = useXashStore();
 const { xashCanvas, selectedGame, launchOptions, fullScreen, enableConsole, enableCheats, loadingProgress, customGameArg } =
   storeToRefs(store);
-const { onStartLoading, onEndLoading, refreshSavesList } = store;
+const { onStartLoading, onEndLoading, onBootPhase, refreshSavesList } = store;
 
 const downloadProgress = computed(() => Math.round(loadingProgress.value));
 
@@ -130,16 +130,26 @@ async function launch(options?: string) {
   isStarting.value = true;
   setCanvasLoading();
 
+  // Take over the screen BEFORE the zip download, not just for the
+  // engine boot. onStartLoading is otherwise only called inside
+  // startGameWithZip, which meant the largest single wait — the mod zip —
+  // played out on the landing page behind its own thin progress bar, and
+  // the boot screen only appeared for the part after it.
+  onStartLoading();
+  onBootPhase({ phase: 'download', percent: 0 });
+
   // Fetch tsmod.zip from /hl/
   const zip = await XashLoader.downloadZip(
     'tsmod.zip',
     'hl/',
     (progress: number) => {
       loadingProgress.value = progress;
+      onBootPhase({ phase: 'download', percent: progress });
     },
   );
   if (!zip) {
     alert('Could not load tsmod.zip!');
+    onEndLoading();
     isStarting.value = false;
     return;
   }
@@ -156,6 +166,9 @@ async function launch(options?: string) {
       enableCheats: enableCheats.value,
       onStartLoading,
       onEndLoading,
+      // Real phase boundaries from the loader, so the boot screen can
+      // show indeterminate sweeps where there is no byte count.
+      onPhase: onBootPhase,
       onProgress: (progress: any) => {
         loadingProgress.value =
           typeof progress === 'number' ? progress : progress.current;
@@ -173,6 +186,9 @@ async function launch(options?: string) {
     await refreshSavesList();
   } catch (error) {
     console.error('Failed to start game:', error);
+    // Give the screen back, or the user is stranded staring at a loader
+    // that will never advance.
+    onEndLoading();
     alert(
       'Failed to start: ' + (error instanceof Error ? error.message : String(error)),
     );

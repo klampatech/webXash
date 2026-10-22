@@ -199,9 +199,33 @@ export interface LoadProgress {
   total: number;
 }
 
+/**
+ * The boot sequence, as real await boundaries in `startWithZip`.
+ *
+ * Only `download` has a byte count. Everything after it is a single
+ * opaque await — fetching xash.wasm (3.9MB) and the client side module,
+ * then unzipping the mod and writing the extras into the wasm FS — so
+ * those phases report `indeterminate` and the UI shows a sweep instead of
+ * a percentage. Labelling them is factual: each id is emitted at an
+ * actual boundary, not on a timer.
+ */
+export type BootPhase =
+  | 'download'
+  | 'engine'
+  | 'client-module'
+  | 'filesystem'
+  | 'starting';
+
+export interface BootPhaseInfo {
+  phase: BootPhase;
+  /** 0-100 when known; null when the phase cannot report progress. */
+  percent: number | null;
+}
+
 export interface StartGameOptions extends GameLoaderOptions {
   onStartLoading?: () => void;
   onEndLoading?: () => void;
+  onPhase?: (info: BootPhaseInfo) => void;
   onProgress?: (progress: LoadProgress) => void;
   setCanvasLoading?: () => void;
 }
@@ -225,6 +249,7 @@ export interface FullStartOptions {
   onStartLoading?: () => void;
   onEndLoading?: () => void;
   onProgress?: (progress: LoadProgress) => void;
+  onPhase?: (info: BootPhaseInfo) => void;
   setCanvasLoading?: () => void;
   setMaxLoadingAmount?: (amount: number) => void;
 }
@@ -625,9 +650,12 @@ class XashLoader {
   public async startWithZip(
     options: GameLoaderOptions,
     zipBuffer: ArrayBuffer,
+    onPhase?: (info: BootPhaseInfo) => void,
   ): Promise<Xash3D> {
+    onPhase?.({ phase: 'engine', percent: null });
     const xash = await this.initXash(options);
 
+    onPhase?.({ phase: 'filesystem', percent: null });
     // Load zip and extras in parallel
     const [, extrasBuffer] = await Promise.all([
       this.processZip(zipBuffer, xash),
@@ -635,6 +663,7 @@ class XashLoader {
     ]);
 
     await this.writeExtras(xash, extrasBuffer);
+    onPhase?.({ phase: 'starting', percent: null });
     xash.main();
     // D.7.56 — start the TS game-loop pump. The engine's loopback
     // connect never completes in webXash, so its server frame loop
@@ -708,13 +737,21 @@ class XashLoader {
     }
 
     options.onStartLoading?.();
+    options.onPhase?.({ phase: 'download', percent: 0 });
 
     let zipBuffer = zip;
 
     // Download zip and fetch extras in parallel if needed
     if (!zipBuffer && selectedZip && publicDir) {
       const [downloadedZip, extrasBuffer] = await Promise.all([
-        this.downloadZip(selectedZip, publicDir, onDownloadProgress),
+        this.downloadZip(
+          selectedZip,
+          publicDir,
+          (p) => {
+            options.onPhase?.({ phase: 'download', percent: p });
+            onDownloadProgress?.(p);
+          },
+        ),
         this.fetchExtras(),
       ]);
       zipBuffer = downloadedZip;
@@ -723,15 +760,17 @@ class XashLoader {
         throw new Error('Failed to download or provide zip file');
       }
 
-      // Init xash and process zip, then write extras
+      options.onPhase?.({ phase: 'engine', percent: null });
       const xash = await this.initXash({
         canvas: options.canvas,
         selectedGame: options.selectedGame,
         launchArgs: options.launchArgs,
       });
 
+      options.onPhase?.({ phase: 'filesystem', percent: null });
       await this.processZip(zipBuffer, xash);
       await this.writeExtras(xash, extrasBuffer);
+      options.onPhase?.({ phase: 'starting', percent: null });
       xash.main();
 
       options.onEndLoading?.();
@@ -749,6 +788,7 @@ class XashLoader {
         launchArgs: options.launchArgs,
       },
       zipBuffer,
+      options.onPhase,
     );
 
     options.onEndLoading?.();
@@ -887,6 +927,7 @@ class XashLoader {
           launchArgs,
           onStartLoading: options.onStartLoading,
           onEndLoading: options.onEndLoading,
+          onPhase: options.onPhase,
         },
         zip,
         options.selectedZip,
