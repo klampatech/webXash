@@ -66,7 +66,10 @@ function parseRules(buf) {
 }
 
 /** Parse a Source A2S_INFO ('I') reply, in case the peer is not GoldSrc. */
-function parseInfo(buf) {
+// Exported for the regression suite: the bot count lives at a byte offset
+// in the GoldSrc reply that was wrong once, and a wrong offset is
+// invisible — it just reports a plausible number.
+export function parseInfo(buf) {
   if (buf.length < 6 || buf.readUInt32BE(0) !== 0xffffffff) return null;
   if (buf[4] !== 0x49 /* 'I' */) return null;
   let o = 6; // magic + type + protocol byte
