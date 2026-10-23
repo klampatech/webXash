@@ -34,6 +34,15 @@ export interface Xash3DBridgeOptions extends Xash3DOptions {
    *     WebSocket-binary on `/ws`. See scripts/ts-udp-bridge.js.
    */
   bridgeAddress?: string;
+
+  /**
+   * Called when the connection to the game server goes away.
+   *
+   * The engine keeps running when the WebSocket closes — it simply stops
+   * receiving packets, so the world freezes mid-game with no message and
+   * no way back. Something outside the engine has to notice and say so.
+   */
+  onDisconnect?: (reason: string) => void;
   /**
    * The dedicated server's real `ip:port` as named in `+connect`.
    * Attributed as the source address on every inbound packet — see
@@ -231,10 +240,14 @@ export class Xash3DBridge extends Xash3D {
    * for why this needs to be the real peer, not a loopback stub.
    */
   private readonly serverAddress: { ip: [number, number, number, number]; port: number };
+  private readonly onDisconnect?: (reason: string) => void;
+  /** Once a disconnect is reported, do not report it again. */
+  private disconnectReported = false;
 
   constructor(opts: Xash3DBridgeOptions) {
     super(opts);
     this.bridgeAddress = opts.bridgeAddress ?? '';
+    this.onDisconnect = opts.onDisconnect;
     const serverAddr =
       opts.serverAddress ?? this.bridgeAddress.split('/')[0];
     const parsed = parseIpPort(serverAddr);
@@ -271,6 +284,23 @@ export class Xash3DBridge extends Xash3D {
     await super.init();
   }
 
+  /**
+   * Report the disconnect once.
+   *
+   * Guarded because a failed connection fires both `onerror` and
+   * `onclose`, and the player only needs to be told once.
+   */
+  private reportDisconnect(reason: string): void {
+    if (this.disconnectReported) return;
+    this.disconnectReported = true;
+    logDebug(`[bridge] disconnect: ${reason}`);
+    try {
+      this.onDisconnect?.(reason);
+    } catch (err) {
+      console.error('[bridge] onDisconnect handler threw:', err);
+    }
+  }
+
   private _connect(): Promise<void> {
     if (!this.bridgeAddress) {
       throw new Error('Xash3DBridge: bridgeAddress required (host:port)');
@@ -300,7 +330,24 @@ export class Xash3DBridge extends Xash3D {
       ws.onopen = () => resolve();
       ws.onerror = (e) => {
         console.error('[bridge] WebSocket error', e);
+        this.reportDisconnect('Could not reach the game server.');
         reject(new Error(`WebSocket failed: ${url}`));
+      };
+      ws.onclose = (ev) => {
+        // A close AFTER a successful open means the server went away —
+        // the orchestrator restarting it, or the box dropping the
+        // connection. Either way the game is over and the player needs to
+        // be told, because the engine will otherwise just freeze.
+        //
+        // Code 1006 is the "abnormal closure" the browser reports when
+        // the socket died without a close frame, which is what a server
+        // restart looks like from here.
+        const reason =
+          ev?.code === 1006 || ev?.code === 1001
+            ? 'The connection to the game server was lost.'
+            : `The game server closed the connection (code ${ev?.code ?? 'unknown'}).`;
+        console.warn('[bridge] WebSocket closed:', ev?.code, ev?.reason);
+        this.reportDisconnect(reason);
       };
       ws.onmessage = (e) => {
         // Mirror the WebRTC transport's incoming-packet shim: mark the

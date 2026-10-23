@@ -17,6 +17,23 @@
     back with ?hud=vue to A/B, or ?hud=engine to force it off.
   -->
   <TSHud v-if="showVueHud" />
+  <!--
+    Shown when the transport to the game server goes away.
+
+    The engine does not notice this on its own: a closed WebSocket just
+    stops delivering packets, so the last frame stays on the canvas
+    forever. A player left alone with that has no idea whether the game
+    hung, their connection dropped, or they are supposed to wait. Saying
+    so — and offering the one action that can actually help — is the
+    difference between a bug and a message.
+  -->
+  <div v-if="connectionLost" class="lost">
+    <div class="lost__panel">
+      <p class="lost__title">CONNECTION LOST</p>
+      <p class="lost__body">{{ connectionLostReason }}</p>
+      <button class="lost__btn" @click="reconnect">Reconnect</button>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -34,7 +51,22 @@
   // Dependencies
 
   const store = useXashStore();
-  const { loading, xashCanvas, launching } = storeToRefs(store);
+  const { loading, xashCanvas, launching, connectionLost, connectionLostReason } =
+    storeToRefs(store);
+
+  /**
+   * Reconnect = reload the page.
+   *
+   * There is no cheaper option. The engine's state — the map, the
+   * player, the round — lives in the server and in WASM memory that a
+   * reload discards; the browser would have to re-establish the socket
+   * and re-run the whole handshake against a server that no longer knows
+   * this client. A reload is the honest "try again", and the archive is
+   * cached in IndexedDB, so it is quick.
+   */
+  function reconnect() {
+    window.location.reload();
+  }
 
 // The lambda spinner shows only after the themed boot screen has handed
 // off, i.e. while the engine paints its first frames. It is ours, not the
@@ -137,6 +169,58 @@ const lambdaLabel = computed(() => 'Connecting to server');
 </script>
 
 <style scoped lang="scss">
+  .lost {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 3, 1, 0.92);
+    z-index: 20;
+
+    &__panel {
+      text-align: center;
+      padding: 2rem 2.5rem;
+      border: 1px solid rgba(255, 170, 0, 0.35);
+      background: rgba(0, 3, 1, 0.85);
+      max-width: 30rem;
+    }
+
+    &__title {
+      margin: 0 0 0.75rem;
+      font-family: var(--ts-font-mono, monospace);
+      font-size: 1.05rem;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--ts-signal, #ffaa00);
+    }
+
+    &__body {
+      margin: 0 0 1.5rem;
+      font-family: var(--ts-font-mono, monospace);
+      font-size: 0.8rem;
+      line-height: 1.5;
+      letter-spacing: 0.04em;
+      color: rgba(230, 240, 225, 0.78);
+    }
+
+    &__btn {
+      font-family: var(--ts-font-mono, monospace);
+      font-size: 0.78rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--ts-signal, #ffaa00);
+      background: transparent;
+      border: 1px solid var(--ts-signal, #ffaa00);
+      padding: 0.6rem 1.6rem;
+      cursor: pointer;
+
+      &:hover {
+        background: rgba(255, 170, 0, 0.12);
+      }
+    }
+  }
+
   .lambda {
     position: absolute;
     inset: 0;

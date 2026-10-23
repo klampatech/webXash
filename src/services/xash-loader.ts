@@ -639,6 +639,11 @@ class XashLoader {
       canvas: options.canvas,
       libraries: options.selectedGame.libraries,
       dynamicLibraries: DYNAMIC_LIBRARIES,
+      // Tell the UI when the transport to the game server dies. Without
+      // this the engine keeps running, keeps rendering the last frame,
+      // and the player is left looking at a frozen world with no
+      // explanation and no way back.
+      onDisconnect: (reason: string) => store.setConnectionLost(reason),
     };
     const xash = new (Xash3D as unknown as new (o: unknown) => Xash3D)(ctorOpts);
 

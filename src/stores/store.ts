@@ -32,6 +32,12 @@ export const useXashStore = defineStore(
     // to persist for the whole session because the class was never
     // removed.
     const launching = ref(false);
+    // Set when the transport to the game server goes away. The engine
+    // does NOT surface this on its own — a closed WebSocket just stops
+    // delivering packets, so the world freezes with no explanation and no
+    // way back except a reload. Production restarts the server when it
+    // degrades, so this is not a theoretical path.
+    const connectionLost = ref(false);
     const bootPercent = ref<number | null>(null);
     const showXashSettingUI = ref(true);
     // -- Launch options
@@ -112,6 +118,19 @@ export const useXashStore = defineStore(
     const onLaunching = (value: boolean) => {
       launching.value = value;
     };
+
+    /**
+     * Mark the game-server connection as gone.
+     *
+     * `reason` is shown to the player, so it should say what happened
+     * rather than "error 1006".
+     */
+    const setConnectionLost = (reason: string) => {
+      if (connectionLost.value) return;
+      connectionLost.value = true;
+      connectionLostReason.value = reason;
+    };
+    const connectionLostReason = ref('');
 
     const onBootPhase = (info: { phase: BootPhase; percent: number | null }) => {
       bootPhase.value = info.phase;
@@ -205,6 +224,9 @@ export const useXashStore = defineStore(
       saves,
       loading,
       loadingProgress,
+      connectionLost,
+      connectionLostReason,
+      setConnectionLost,
       maxLoadingAmount,
       bootPhase,
       launching,
