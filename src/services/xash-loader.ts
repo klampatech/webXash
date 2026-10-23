@@ -22,10 +22,15 @@ import menuURL from 'xash3d-fwgs/libmenu.wasm?url';
 import webgl2URL from 'xash3d-fwgs/libref_webgl2.wasm?url';
 // @ts-ignore -- vite url imports
 import extrasURL from 'xash3d-fwgs/extras.pk3?url';
-// STUB: hlsdk-portable and cs16-client npm packages 404 from npm registry.
-// Phase 0 patch: stub the WASM URLs to empty strings so the page renders.
-// HL client.dll + hl.dll compiled to WASM via emscripten
-// Build recipe in /tmp/hlsdk-portable (FWGS/hlsdk-portable) with
+// The HL client.dll and hl.dll are compiled to WASM with emscripten and
+// served from the app's own asset paths — NOT from npm.
+//
+// They used to come from the `hlsdk-portable` and `cs16-client` packages,
+// which were unpublished from npm on 2026-09-08. A dependency that cannot
+// be installed is not a dependency, and leaving it in package.json meant
+// every fresh `bun install` failed with a 404 — including CI's.
+//
+// The build recipe is in /tmp/hlsdk-portable (FWGS/hlsdk-portable) with
 // emcmake. Output renamed from *.so → *.wasm for webXash's loader.
 // Note: vite config has base: '/', so these are root-relative.
 const HLClientURL = '/cl_dlls/client_emscripten_wasm32.wasm';
