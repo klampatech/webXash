@@ -70,6 +70,20 @@ export const useXashStore = defineStore(
         // socket() entirely — so +connect has no socket to sendto on.
         // (They were useful for the original shim/local-listen path,
         // and the persistence bug kept them in place across sessions.)
+        // DANGER: this is a DEVELOPMENT address, and it is correct only
+        // when a game server is running on the same machine. From a
+        // browser anywhere else, 127.0.0.1 is THE PLAYER'S OWN MACHINE.
+        //
+        // That is not hypothetical: PLAY used to launch with these
+        // options, and a real user found it — the whole game downloaded
+        // and booted, then failed with "Could not reach the game server",
+        // because the engine was trying to connect to itself and the
+        // bridge correctly refused the address.
+        //
+        // The production path no longer reads this (PLAY resolves its
+        // target from the live server list), and the components that did
+        // read it are not mounted. But anything that launches with this
+        // fallback in a browser will do the same thing again.
         ?? '-game ts +connect 127.0.0.1:27015 +maxplayers 8'
     );
 
