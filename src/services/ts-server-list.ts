@@ -67,7 +67,44 @@ export async function fetchServerList(): Promise<TsServer[]> {
  * calling socket() — `+connect` then has no socket to send on, and the
  * failure is indistinguishable from a dead transport.
  */
+/**
+ * Where the browser opens the WebSocket to the bridge, as `host:port`.
+ *
+ * In production the bridge sits behind the SAME reverse proxy as the page,
+ * and it has to: a page served over HTTPS cannot open a plain `ws://`
+ * WebSocket (the browser blocks it as mixed content), and a cross-origin
+ * WebSocket cannot carry the page's cross-origin-isolation context, which
+ * the WASM engine needs for SharedArrayBuffer. So the default is the
+ * page's own host.
+ *
+ * Dev is the exception — the Vite dev server is on :5174 and the bridge on
+ * :27017 — so the dev build sets VITE_BRIDGE_ADDRESS.
+ */
+export function bridgeAddress(): string {
+  const configured = import.meta.env.VITE_BRIDGE_ADDRESS;
+  if (configured) return configured;
+  if (typeof location === 'undefined' || !location.hostname) return '';
+  const port = location.port || (location.protocol === 'https:' ? '443' : '80');
+  return `${location.hostname}:${port}`;
+}
+
 export function launchOptionsFor(server: TsServer): string {
   const host = server.publicAddress ?? server.address;
-  return `-game ts +connect ${host}:${server.port} +maxplayers ${server.maxPlayers || 8}`;
+  const parts = [
+    '-game ts',
+    `+connect ${host}:${server.port}`,
+    `+maxplayers ${server.maxPlayers || 8}`,
+  ];
+
+  // Only in the production topology. In dev the loader derives the bridge
+  // address from the game IP and `+bridgeport`, which is correct there;
+  // naming a bridge explicitly would point the browser at the dev server's
+  // own port instead of the bridge's.
+  const bridge = bridgeAddress();
+  const secure = typeof location !== 'undefined' && location.protocol === 'https:';
+  if (bridge && (import.meta.env.VITE_BRIDGE_ADDRESS || secure)) {
+    parts.push(`+bridge ${bridge}`);
+  }
+
+  return parts.join(' ');
 }

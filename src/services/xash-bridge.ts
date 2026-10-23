@@ -276,7 +276,22 @@ export class Xash3DBridge extends Xash3D {
       throw new Error('Xash3DBridge: bridgeAddress required (host:port)');
     }
     return new Promise((resolve, reject) => {
-      const url = `ws://${this.bridgeAddress}/ws`;
+      // The scheme has to match the page's own. An https:// page cannot
+      // open a ws:// WebSocket — the browser blocks it as mixed content —
+      // and in production the bridge is behind Caddy on the same domain,
+      // so the certificate only matches if we use wss://.
+      const secure =
+        typeof location !== 'undefined' && location.protocol === 'https:';
+      const scheme = secure ? 'wss' : 'ws';
+      // Name the game peer so the bridge can pick the right instance. The
+      // bridge matches it against its allowlist and refuses anything it
+      // does not recognise, so the browser cannot use it to reach an
+      // arbitrary UDP endpoint.
+      const peer = this.serverAddress
+        ? `${this.serverAddress.ip.join('.')}:${this.serverAddress.port}`
+        : '';
+      const query = peer ? `?address=${encodeURIComponent(peer)}` : '';
+      const url = `${scheme}://${this.bridgeAddress}/bridge${query}`;
       const ws = new WebSocket(url);
       // The `ws` (the WebSocket we open) MUST be a binary stream,
       // because we hand the raw engine datagrams straight in.

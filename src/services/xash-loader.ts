@@ -452,6 +452,44 @@ export function _dedicatedConnectHostPort(
   return `${host}:${bridgePort}`;
 }
 
+/**
+ * The bridge's own address, when the launch options name one explicitly.
+ *
+ *   +bridge bulletballet.dev:443
+ *
+ * WHY THIS IS SEPARATE FROM `+connect`
+ * ------------------------------------
+ * `+connect` names the GAME SERVER — the address the engine dials and the
+ * address every inbound packet is attributed to. It stays a raw ip:port
+ * because that is what the engine's own filter compares against.
+ *
+ * `+bridge` names the BRIDGE — where the BROWSER opens a WebSocket. In
+ * production those are different hosts: the game peer is a raw UDP address
+ * while the bridge is reached through a TLS hostname (Caddy terminates it
+ * on the same domain as the page). A hostname is allowed here — and only
+ * here — because the bridge address is never compared against engine
+ * state.
+ *
+ * Without this, the browser would have to open a WebSocket to an IP, which
+ * means a certificate that does not match the domain the page was served
+ * from, and a `ws://` URL on an `https://` page, which the browser blocks
+ * as mixed content.
+ */
+export function _dedicatedBridgeHostPort(
+  launchOptions: string
+): string | null {
+  if (!launchOptions) return null;
+  const m = launchOptions.match(/\+bridge\s+([^\s]+)/i);
+  if (!m) return null;
+  const v = m[1];
+  const idx = v.lastIndexOf(':');
+  if (idx === -1) return null;
+  const host = v.slice(0, idx);
+  const port = v.slice(idx + 1);
+  if (!host || !/^\d+$/.test(port)) return null;
+  return v;
+}
+
 class XashLoader {
   // D.7.28 live-state bridge. The running Xash3D instance exposes a
   // public `Cmd_ExecuteString(cmd)` that runs an engine console
@@ -513,7 +551,11 @@ class XashLoader {
       //                    packet. Must match what `+connect <ip>:<port>`
       //                    named; cls.serveradr gets compared against it
       //                    to decide whether to accept each reply.
-      (window as any).__xashBridgeAddress = connectTarget;
+      // An explicit `+bridge host:port` wins over the derived
+      // `<game-ip>:<bridgeport>`, because in production the bridge lives
+      // behind a TLS hostname rather than on the game server's IP.
+      const explicitBridge = _dedicatedBridgeHostPort(launchOptions ?? '');
+      (window as any).__xashBridgeAddress = explicitBridge ?? connectTarget;
       (window as any).__xashServerAddress = connectPeer ?? null;
       const Ctor = Xash3DBridge as unknown as typeof Xash3D;
       return Ctor;
