@@ -31,7 +31,8 @@
     <div class="lost__panel">
       <p class="lost__title">CONNECTION LOST</p>
       <p class="lost__body">{{ connectionLostReason }}</p>
-      <button class="lost__btn" @click="reconnect">Reconnect</button>
+      <p class="lost__countdown">Reconnecting in {{ countdown }}s</p>
+      <button class="lost__btn" @click="reconnect">Reconnect now</button>
     </div>
   </div>
 </template>
@@ -39,7 +40,7 @@
 <script setup lang="ts">
   import { storeToRefs } from 'pinia';
   import { useXashStore } from '/@/stores/store.ts';
-  import {onMounted,onBeforeUnmount,ref, computed } from 'vue';
+  import {onMounted,onBeforeUnmount,ref, computed, watch } from 'vue';
   import TSHud from '/@/components/TSHud.vue';
   import {
     startKeyboardBridge,
@@ -67,6 +68,39 @@
   function reconnect() {
     window.location.reload();
   }
+
+  /**
+   * Count down and reconnect on our own.
+   *
+   * A player staring at a frozen screen needs to click something to be
+   * told what to do, and most will not. The server is coming back in
+   * about a minute, so the useful thing to do is wait it out and put
+   * them straight back in.
+   */
+  const RECONNECT_SECONDS = 12;
+  const countdown = ref(RECONNECT_SECONDS);
+  let countdownTimer: ReturnType<typeof setInterval> | null = null;
+
+  watch(connectionLost, (lost) => {
+    if (countdownTimer) {
+      clearInterval(countdownTimer);
+      countdownTimer = null;
+    }
+    if (!lost) return;
+    countdown.value = RECONNECT_SECONDS;
+    countdownTimer = setInterval(() => {
+      countdown.value -= 1;
+      if (countdown.value <= 0) {
+        if (countdownTimer) clearInterval(countdownTimer);
+        countdownTimer = null;
+        reconnect();
+      }
+    }, 1000);
+  });
+
+  onBeforeUnmount(() => {
+    if (countdownTimer) clearInterval(countdownTimer);
+  });
 
 // The lambda spinner shows only after the themed boot screen has handed
 // off, i.e. while the engine paints its first frames. It is ours, not the
@@ -202,6 +236,15 @@ const lambdaLabel = computed(() => 'Connecting to server');
       line-height: 1.5;
       letter-spacing: 0.04em;
       color: rgba(230, 240, 225, 0.78);
+    }
+
+    &__countdown {
+      margin: 0 0 1.25rem;
+      font-family: var(--ts-font-mono, monospace);
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: rgba(230, 240, 225, 0.5);
     }
 
     &__btn {

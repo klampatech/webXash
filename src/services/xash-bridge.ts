@@ -342,10 +342,16 @@ export class Xash3DBridge extends Xash3D {
         // Code 1006 is the "abnormal closure" the browser reports when
         // the socket died without a close frame, which is what a server
         // restart looks like from here.
+        // 4001 is the bridge's application code: the bridge is fine, the
+        // game server behind it is not (it is restarting). That is a
+        // completely different situation from the network dropping, and
+        // the player deserves to know which one it is.
         const reason =
-          ev?.code === 1006 || ev?.code === 1001
-            ? 'The connection to the game server was lost.'
-            : `The game server closed the connection (code ${ev?.code ?? 'unknown'}).`;
+          ev?.code === 4001
+            ? 'The game server is restarting. It will be back in about a minute.'
+            : ev?.code === 1006 || ev?.code === 1001
+              ? 'The connection to the game server was lost.'
+              : `The game server closed the connection (code ${ev?.code ?? 'unknown'}).`;
         console.warn('[bridge] WebSocket closed:', ev?.code, ev?.reason);
         this.reportDisconnect(reason);
       };
