@@ -21,7 +21,10 @@ import { gameAssetCacheHeadersPlugin } from './vite-asset-headers.mjs';
 const certDir = '/home/kyle/Development/scratch/cheerpx-inspect/certs';
 
 export default defineConfig({
-  base: '/webXash/',
+  // Served from the site root so the app lives at https://bulletballet.dev/
+  // rather than https://bulletballet.dev/webXash/. Every path below that
+  // mentions the base has to track this value.
+  base: '/',
   plugins: [
     vue(),
     // Let the browser cache tsmod.zip. Vite's dev default is

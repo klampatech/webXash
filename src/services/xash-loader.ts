@@ -27,9 +27,9 @@ import extrasURL from 'xash3d-fwgs/extras.pk3?url';
 // HL client.dll + hl.dll compiled to WASM via emscripten
 // Build recipe in /tmp/hlsdk-portable (FWGS/hlsdk-portable) with
 // emcmake. Output renamed from *.so → *.wasm for webXash's loader.
-// Note: vite config has base: '/webXash/' so paths must include it.
-const HLClientURL = '/webXash/cl_dlls/client_emscripten_wasm32.wasm';
-const HLServerURL = '/webXash/dlls/hl_emscripten_wasm32.wasm';
+// Note: vite config has base: '/', so these are root-relative.
+const HLClientURL = '/cl_dlls/client_emscripten_wasm32.wasm';
+const HLServerURL = '/dlls/hl_emscripten_wasm32.wasm';
 
 // D.7.29 — Neutralise the engine's modal `alert()`.
 //

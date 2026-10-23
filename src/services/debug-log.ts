@@ -19,7 +19,7 @@
  *               session stays readable.
  *
  * Enable it for a session with:
- *   https://<host>/webXash/?debug=trace
+ *   https://<host>/?debug=trace
  * and turn it off again by removing the flag (no reload needed — the
  * gate reads the flag on every call, so editing the URL mid-session
  * takes effect immediately).

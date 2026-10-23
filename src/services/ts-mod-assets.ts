@@ -29,6 +29,7 @@
 // Network panel's transferred-bytes column.
 
 import { getPart, hasPart, pruneVersions, putPart } from '/@/services/ts-asset-store.ts';
+import { logDebug } from '/@/services/debug-log.ts';
 
 /** One part as described by the manifest. */
 export interface TsPart {
@@ -94,11 +95,20 @@ async function fetchManifest(
       cache: bypassCache ? 'no-store' : 'default',
     });
   } catch (e) {
-    throw new AssetFetchError(
-      `could not reach ${MANIFEST_URL}. Has the archive been split?\n` +
-        '  Run:  node tools/assets/split-tsmod.mjs',
-      e,
-    );
+    // Same self-heal as fetchPart: a CDN variant cached without the CORS
+    // header fails opaquely, and a changed cache key gets a fresh copy from
+    // the origin. The manifest is the entry point, so failing here fails
+    // everything.
+    try {
+      res = await fetch(bustCacheKey(MANIFEST_URL));
+      logDebug('[assets] manifest fetch failed, retried with a cache-busting key');
+    } catch {
+      throw new AssetFetchError(
+        `could not reach ${MANIFEST_URL}. Has the archive been split?\n` +
+          '  Run:  node tools/assets/split-tsmod.mjs',
+        e,
+      );
+    }
   }
   if (res.status === 404) {
     throw new AssetFetchError(
@@ -115,10 +125,15 @@ async function fetchManifest(
   }
   // Part URLs are resolved against THIS file, not the document. The
   // manifest's `prefix` is written relative to itself, so resolving it
-  // against location.href sent requests to /webXash/<version>/... instead
-  // of /webXash/hl/ts/<version>/... and Vite answered every one with
+  // against location.href sent requests to /<version>/... instead
+  // of /hl/ts/<version>/... and Vite answered every one with
   // index.html - 1107 bytes where 67108864 were expected.
-  return { manifest: m, baseUrl: new URL('.', res.url).href };
+  // Strip any cache-buster before deriving the base URL for part
+  // resolution, so the parts resolve against the manifest's directory and
+  // not against a query string.
+  const manifestUrl = new URL(res.url);
+  manifestUrl.search = '';
+  return { manifest: m, baseUrl: new URL('.', manifestUrl.href).href };
 }
 
 /**
@@ -127,9 +142,58 @@ async function fetchManifest(
  * A dev server or SPA host answers an unknown path with index.html and a
  * 200, so a status check alone is not enough - check the declared length
  * and say so clearly when the response is not a part at all.
+ *
+ * NETWORK ERRORS GET ONE RETRY WITH A CACHE-BUSTING QUERY STRING.
+ *
+ * Once a CORS policy exists on the asset origin, the origin sends
+ * `vary: Origin`, so a CDN caches one variant of each object per origin. A
+ * variant that was cached *before* the policy was applied comes back
+ * without `Access-Control-Allow-Origin`, and a cross-origin fetch of it
+ * fails with an opaque TypeError - no status, no body, no explanation. The
+ * bytes are right there on the origin; only the cached copy is wrong.
+ *
+ * Adding a query string changes the cache key, so the retry is served
+ * fresh from origin with correct headers. That makes the client self-heal
+ * against a poisoned edge variant instead of failing forever, which matters
+ * because the failure is indistinguishable from "the network is down" and
+ * nobody is watching a CDN's cache.
+ *
+ * Only network failures are retried. A 404 or a 403 will not be fixed by
+ * changing the cache key, and retrying those just delays the real error.
  */
+/**
+ * Add a cache-busting query string to a URL.
+ *
+ * The value only has to be unique per attempt; it exists to change the CDN
+ * cache key so the request misses the cached copy and is served fresh from
+ * the origin.
+ */
+function bustCacheKey(url: string): string {
+  const u = new URL(url);
+  u.searchParams.set('cb', Date.now().toString(36));
+  return u.href;
+}
+
 async function fetchPart(url: string, expectedBytes: number): Promise<ArrayBuffer> {
-  const res = await fetch(url);
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch (err) {
+    const busted = bustCacheKey(url);
+    try {
+      res = await fetch(busted);
+    } catch {
+      // Throw the ORIGINAL error: a cache-busted retry failing too means the
+      // origin itself is unreachable, and the first error is the honest one.
+      throw new AssetFetchError(
+        `part fetch failed for ${url}: ${(err as Error)?.message || err}`,
+      );
+    }
+    logDebug(
+      '[assets] part fetch failed, retried with a cache-busting key:',
+      busted,
+    );
+  }
   if (!res.ok) {
     throw new AssetFetchError(`part fetch failed (HTTP ${res.status}): ${url}`);
   }

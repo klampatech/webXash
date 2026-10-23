@@ -170,13 +170,13 @@ export async function queryServer(address, port, id, publicAddress) {
   };
 }
 
-/** Vite plugin: GET <base>api/servers -> { servers: [...] } */
+/** Vite plugin: GET /api/servers -> { servers: [...] } */
 export function a2sServerListPlugin({ targets }) {
   const list = Array.isArray(targets) ? targets : [];
   return {
     name: 'ts-a2s-server-list',
     configureServer(server) {
-      server.middlewares.use('/webXash/api/servers', async (_req, res) => {
+      server.middlewares.use('/api/servers', async (_req, res) => {
         res.setHeader('Content-Type', 'application/json');
         res.setHeader('Cache-Control', 'no-store');
         try {

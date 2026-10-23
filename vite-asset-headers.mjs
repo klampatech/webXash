@@ -52,16 +52,16 @@
  *
  * Two tiers, because the archive is now chunked:
  *
- *   /webXash/hl/ts/<version>/part-NNN.bin   content-addressed, IMMUTABLE
- *   /webXash/hl/ts/manifest.json             the pointer that moves, revalidated
+ *   /hl/ts/<version>/part-NNN.bin   content-addressed, IMMUTABLE
+ *   /hl/ts/manifest.json             the pointer that moves, revalidated
  *
  * Splitting on the version directory is what makes `immutable` safe here:
  * the directory name IS the archive's SHA-256, so a URL can never change
  * meaning. The manifest must not be immutable, because it is exactly the
  * thing that changes to point at a new archive.
  */
-const ASSET_PATH_RE = /^\/webXash\/hl\//;
-const VERSIONED_PART_RE = /^\/webXash\/hl\/ts\/[^/]+\/.+\.bin$/;
+const ASSET_PATH_RE = /^\/hl\//;
+const VERSIONED_PART_RE = /^\/hl\/ts\/[^/]+\/.+\.bin$/;
 
 export function gameAssetCacheHeadersPlugin() {
   return {
