@@ -83,12 +83,17 @@ function parseInfo(buf) {
   o = game.next + 2;
   const players = buf[o];
   const maxPlayers = buf[o + 1];
+  // The bot count follows. A2S counts bots as players, so without this
+  // there is no way to tell a human from a bot — every occupied slot
+  // looks like a person.
+  const bots = buf.length > o + 2 ? buf[o + 2] : 0;
   return {
     name: name.value || 'Unnamed server',
     map: map.value || 'unknown',
     game: game.value,
     players,
     maxPlayers,
+    bots,
   };
 }
 
@@ -140,9 +145,10 @@ export async function queryServer(address, port, id, publicAddress) {
   let game;
   let players = 0;
   let maxPlayers = 0;
+  let bots = 0;
 
   if (info) {
-    ({ name, map, game, players, maxPlayers } = info);
+    ({ name, map, game, players, maxPlayers, bots } = info);
   } else {
     const rules = parseRules(raw);
     if (!rules) return null;
@@ -152,6 +158,8 @@ export async function queryServer(address, port, id, publicAddress) {
     if (counts && counts.length >= 6 && counts.readUInt32BE(0) === 0xffffffff) {
       players = counts[5];
       maxPlayers = counts[6];
+      // 'U' reply: magic(4) | 'U' | players | maxplayers | bots.
+      bots = counts.length >= 8 ? counts[7] : 0;
     }
   }
 
@@ -162,6 +170,7 @@ export async function queryServer(address, port, id, publicAddress) {
     mode: modeFromGame(game),
     players,
     maxPlayers: maxPlayers || 0,
+    bots,
     address,
     port,
     // Omitted when it matches the queried address, so the browser only
