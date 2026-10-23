@@ -57,7 +57,19 @@ export class AssetFetchError extends Error {
   }
 }
 
-const MANIFEST_URL = './hl/ts/manifest.json';
+/**
+ * Where the parts live.
+ *
+ * Defaults to the same origin, which is correct for local dev and for a
+ * single-box deploy. In production the payload sits on R2 behind a custom
+ * domain, so the build sets VITE_ASSET_BASE and part URLs resolve there.
+ *
+ * Part URLs themselves are relative in the manifest and get resolved
+ * against wherever the manifest was fetched from - see fetchManifest -
+ * so the manifest never needs re-splitting when the host changes.
+ */
+const ASSET_BASE = (import.meta.env.VITE_ASSET_BASE ?? './').replace(/\/+$/, '') + '/';
+const MANIFEST_URL = `${ASSET_BASE}hl/ts/manifest.json`;
 
 /**
  * Progress detail. Two honest signals rather than one synthetic one:
