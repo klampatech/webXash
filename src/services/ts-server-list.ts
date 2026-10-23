@@ -37,6 +37,14 @@ export interface TsServer {
    * every reply as coming from the wrong peer.
    */
   publicAddress?: string;
+  /**
+   * Real human players on the server.
+   *
+   * Distinct from `players`, which A2S reports as players PLUS bots —
+   * and which also includes client slots whose browsers have disconnected
+   * but have not timed out yet. The registry reports the true count.
+   */
+  humans?: number;
 }
 
 /** Distinguishes a transport failure from a genuinely empty server list. */
@@ -86,6 +94,40 @@ export function bridgeAddress(): string {
   if (typeof location === 'undefined' || !location.hostname) return '';
   const port = location.port || (location.protocol === 'https:' ? '443' : '80');
   return `${location.hostname}:${port}`;
+}
+
+/**
+ * Pick the server a PLAY should join.
+ *
+ * PLAY must never fall back to a hard-coded address. The store's default
+ * launch options carry a DEVELOPMENT address (127.0.0.1), and from a
+ * browser that means the PLAYER'S OWN MACHINE — not the server. That is
+ * not hypothetical: it is what shipped, and it failed at the very last
+ * step with "Could not reach the game server", after the whole engine
+ * had booted, because the bridge correctly refused an address that was
+ * not the production one.
+ *
+ * So the target comes from the same list the Join button uses. One
+ * source of truth for "where does a player go" — which is the only way
+ * the two buttons can be kept from diverging again.
+ *
+ * Preference: servers with room first, and among those the one with the
+ * FEWEST humans. TS is an FFA deathmatch — players want company, not
+ * empty servers, so spreading them thin is the wrong default.
+ */
+export async function resolveLaunchTarget(): Promise<TsServer | null> {
+  const servers = await fetchServerList();
+  if (!servers.length) return null;
+  return [...servers].sort((a, b) => {
+    const humansA = a.humans ?? a.players ?? 0;
+    const humansB = b.humans ?? b.players ?? 0;
+    const roomA = (a.maxPlayers || 0) - humansA;
+    const roomB = (b.maxPlayers || 0) - humansB;
+    // A server with no room goes last, however few humans it has.
+    if ((roomA > 0) !== (roomB > 0)) return roomB > 0 ? 1 : -1;
+    if (humansA !== humansB) return humansA - humansB;
+    return a.id.localeCompare(b.id);
+  })[0];
 }
 
 export function launchOptionsFor(server: TsServer): string {

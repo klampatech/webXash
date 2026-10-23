@@ -66,7 +66,14 @@
    * cached in IndexedDB, so it is quick.
    */
   function reconnect() {
-    window.location.reload();
+    // `autoplay=1` puts the player straight back into a game on reload.
+    // A plain reload drops them on the landing page, which read
+    // literally is not a reconnect — it is "click Play again", and if
+    // the thing that broke was the connect address, clicking Play again
+    // would break it again.
+    const url = new URL(window.location.href);
+    url.searchParams.set('autoplay', '1');
+    window.location.href = url.toString();
   }
 
   /**

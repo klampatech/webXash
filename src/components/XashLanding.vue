@@ -37,6 +37,13 @@
             {{ isStarting ? 'Deploying…' : 'Play' }}
           </span>
         </button>
+        <!--
+          A launch that could not start says so, here. Failing silently
+          is what made the first production bug take so long to find:
+          the button did nothing visible and the reason was three layers
+          down.
+        -->
+        <p v-if="launchError" class="ts-landing__error">{{ launchError }}</p>
 
         <div class="ts-landing__progress" :class="{ 'is-active': isStarting }">
           <div class="ts-landing__progress-bar" :style="{ width: downloadProgress + '%' }" />
@@ -92,11 +99,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useXashStore } from '/@/stores/store';
 import { XashLoader } from '/@/services';
-import { launchOptionsFor, type TsServer } from '/@/services/ts-server-list.ts';
+import {
+  launchOptionsFor,
+  resolveLaunchTarget,
+  type TsServer,
+} from '/@/services/ts-server-list.ts';
 import setCanvasLoading, { clearCanvasLoading } from '/@/utils/setCanvasLoading.ts';
 import TSServerList from '/@/components/TSServerList.vue';
 import TSHowToPlay from '/@/components/TSHowToPlay.vue';
@@ -108,9 +119,13 @@ const tabs = [
 
 const activeTab = ref<(typeof tabs)[number]['id']>('servers');
 const isStarting = ref(false);
+// Why a launch could not start. Shown on the landing page rather than
+// thrown away, because "nothing happened when I pressed Play" is the
+// least debuggable failure there is.
+const launchError = ref('');
 
 const store = useXashStore();
-const { xashCanvas, selectedGame, launchOptions, fullScreen, enableConsole, enableCheats, loadingProgress, customGameArg } =
+const { xashCanvas, selectedGame, fullScreen, enableConsole, enableCheats, loadingProgress, customGameArg } =
   storeToRefs(store);
 const { onStartLoading, onEndLoading, onBootPhase, onLaunching, refreshSavesList } = store;
 
@@ -127,6 +142,35 @@ async function launch(options?: string) {
     console.error('Canvas is not available');
     return;
   }
+
+  // Resolve WHERE to connect BEFORE anything expensive happens.
+  //
+  // The address has to come from the server list, never from a
+  // hard-coded default: the default in the store is a DEVELOPMENT
+  // address, and from a browser that resolves to the player's own
+  // machine. Finding that out after a 493 MB download and a full engine
+  // boot is a terrible way to learn it.
+  //
+  // It also means PLAY and Join cannot disagree about where a player
+  // goes, because they now resolve it the same way.
+  let resolved = options;
+  if (!resolved) {
+    try {
+      const target = await resolveLaunchTarget();
+      if (!target) {
+        launchError.value =
+          'No servers answered. Check back in a moment — the fleet may be restarting.';
+        return;
+      }
+      resolved = launchOptionsFor(target);
+    } catch (e) {
+      launchError.value =
+        e instanceof Error ? e.message : 'Could not reach the server list.';
+      return;
+    }
+  }
+
+  launchError.value = '';
   isStarting.value = true;
   onLaunching(true);
   setCanvasLoading();
@@ -164,7 +208,7 @@ async function launch(options?: string) {
       selectedGame: selectedGame.value,
       selectedZip: 'tsmod.zip',
       selectedLocalFolder: '',
-      launchOptions: options ?? launchOptions.value ?? '',
+      launchOptions: resolved,
       fullScreen: fullScreen.value,
       enableConsole: enableConsole.value,
       enableCheats: enableCheats.value,
@@ -206,7 +250,11 @@ async function launch(options?: string) {
   }
 }
 
-/** PLAY — pre-configured launch options, no options UI anywhere. */
+/**
+ * PLAY — the pre-configured path.
+ *
+ * The target is resolved inside `launch()`, from the live server list.
+ */
 function onPlay() {
   launch();
 }
@@ -215,10 +263,40 @@ function onPlay() {
 function onJoinServer(server: TsServer) {
   launch(launchOptionsFor(server));
 }
+
+/**
+ * Auto-launch after a reconnect.
+ *
+ * The CONNECTION LOST overlay reloads the page, and a reload drops the
+ * player back on the landing page — which, read literally, is not a
+ * reconnect. It is a "click Play again", and if the thing that broke was
+ * the connect address, clicking Play again would break it again.
+ *
+ * `?autoplay=1` says: on load, go straight back in.
+ */
+onMounted(() => {
+  const params = new URLSearchParams(location.search);
+  if (params.get('autoplay') === '1') {
+    // Let the landing paint first, so the boot screen is what the player
+    // sees rather than a blank frame.
+    setTimeout(() => onPlay(), 60);
+  }
+});
 </script>
 
 <style scoped lang="scss">
 .ts-landing {
+  &__error {
+    margin: 1rem auto 0;
+    max-width: 34rem;
+    text-align: center;
+    font-family: var(--ts-font-mono, monospace);
+    font-size: 0.78rem;
+    line-height: 1.6;
+    letter-spacing: 0.04em;
+    color: var(--ts-signal, #ffaa00);
+  }
+
   position: absolute;
   inset: 0;
   z-index: 10;
