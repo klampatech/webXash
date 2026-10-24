@@ -48,7 +48,6 @@
   import { computed, onMounted, ref } from 'vue';
   import { storeToRefs } from 'pinia';
   import { XashLoader } from '/@/services';
-  import setCanvasLoading from '/@/utils/setCanvasLoading.ts';
 
   // Dependencies
 
@@ -124,7 +123,6 @@
         fullScreen: fullScreen.value,
         enableConsole: enableConsole.value,
         enableCheats: enableCheats.value,
-        setCanvasLoading,
         onStartLoading: () => {
           onStartLoading();
           store.maxLoadingAmount = files.value!.length;

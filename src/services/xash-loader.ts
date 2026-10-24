@@ -294,7 +294,6 @@ export interface StartGameOptions extends GameLoaderOptions {
   onEndLoading?: () => void;
   onPhase?: (info: BootPhaseInfo) => void;
   onProgress?: (progress: LoadProgress) => void;
-  setCanvasLoading?: () => void;
 }
 
 export interface PostLoadOptions {
@@ -319,7 +318,6 @@ export interface FullStartOptions {
   onEndLoading?: () => void;
   onProgress?: (progress: LoadProgress) => void;
   onPhase?: (info: BootPhaseInfo) => void;
-  setCanvasLoading?: () => void;
   setMaxLoadingAmount?: (amount: number) => void;
 }
 
@@ -1032,7 +1030,6 @@ class XashLoader {
       throw new Error('Canvas is not available');
     }
 
-    options.setCanvasLoading?.();
     options.onStartLoading?.();
 
     const xash = await this.startWithFiles(
@@ -1223,7 +1220,6 @@ class XashLoader {
           canvas: options.canvas,
           selectedGame: options.selectedGame,
           launchArgs,
-          setCanvasLoading: options.setCanvasLoading,
           onStartLoading: () => {
             options.onStartLoading?.();
             options.setMaxLoadingAmount?.(filesArray.length);
