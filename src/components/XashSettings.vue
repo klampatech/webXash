@@ -1,57 +1,27 @@
 <template>
   <div class="xash-settings">
-    <div class="xash-menu-flex" v-if="!loading">
-      <XashGames />
-      <XashZips v-if="selectedGame.name === GAME_SETTINGS.HL.name" />
-      <XashLoadDirectory />
-      <XashLoadZip />
-      <XashLaunchOptions />
-      <XashMultiplayerIP />
-      <XashSaves v-if="selectedGame.name === GAME_SETTINGS.HL.name" />
-      <Attribution />
-    </div>
+    <!-- Landing page — TS only.
+         Replaces the old hero + "Advanced" options disclosure. Launch
+         options are now pre-configured and the server browser carries the
+         per-server targeting, so there is no options UI by design. -->
+    <XashLanding v-if="!loading" />
+
+    <!-- Loading screen -->
     <XashLoading v-if="loading" />
   </div>
 </template>
 
 <script setup lang="ts">
-  import { storeToRefs } from 'pinia';
-  import { useXashStore } from '/@/stores/store';
-  import { GAME_SETTINGS } from '/@/services/xash-loader.ts';
-  import XashZips from './XashZips.vue';
-  import XashLoading from '/@/components/XashLoading.vue';
-  import XashLaunchOptions from '/@/components/XashLaunchOptions.vue';
-  import Attribution from '/@/components/Attribution.vue';
-  import XashLoadZip from '/@/components/XashLoadZip.vue';
-  import XashLoadDirectory from '/@/components/XashLoadDirectory.vue';
-  import XashGames from '/@/components/XashGames.vue';
-  import XashSaves from '/@/components/XashSaves.vue';
-  import XashMultiplayerIP from '/@/components/XashMultiplayerIP.vue';
+// This component is now a thin switch between the landing page and the
+// loading screen. The launch path (zip download, startGameZip, console
+// callbacks, save refresh) moved to XashLanding.vue, which also owns the
+// pre-configured launch options the old "Advanced" disclosure used to
+// expose.
+import { storeToRefs } from 'pinia';
+import { useXashStore } from '/@/stores/store';
+import XashLanding from '/@/components/XashLanding.vue';
+import XashLoading from '/@/components/XashLoading.vue';
 
-  const store = useXashStore();
-  const { loading, selectedGame } = storeToRefs(store);
+const store = useXashStore();
+const { loading } = storeToRefs(store);
 </script>
-
-<style scoped lang="scss">
-  .xash-settings {
-    width: 90%;
-    position: absolute;
-    display: flex;
-    flex-wrap: wrap;
-    overflow: hidden;
-    margin: 10px;
-    flex-direction: column;
-    z-index: 10;
-  }
-
-  .xash-menu-flex {
-    height: 86vh;
-    display: flex;
-    flex-direction: column;
-    flex-wrap: wrap;
-    justify-content: start;
-    align-items: start;
-    align-content: flex-start;
-    overflow: hidden;
-  }
-</style>

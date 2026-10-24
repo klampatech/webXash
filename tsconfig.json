@@ -18,6 +18,10 @@
     "jsx": "preserve",
     /* Linting */
     "strict": true,
+    /* Gives import.meta.env its type. ts-mod-assets.ts reads
+       VITE_ASSET_BASE to point the chunked payload at the R2 custom
+       domain in production while staying same-origin in dev. */
+    "types": ["vite/client"],
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,

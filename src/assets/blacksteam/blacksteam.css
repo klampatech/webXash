@@ -1,13 +1,12 @@
 /*** Navbar ***/
 nav {
-  border-top: solid 1px #323232;
-  border-bottom: solid 1px #080808;
-  border-left: solid 1px #323232;
-  border-right: solid 1px #080808;
+  /* REMOVED 2026-10-22: the Steam-panel chrome (borders, #212121
+     background, 20px bottom margin) applied to every <nav> app-wide. The
+     only <nav> in the app is the TS landing tab strip, which was
+     rendering a grey Steam-era band behind its tabs. Opt in per-component
+     if you actually want the legacy panel here. */
   padding: 0;
   list-style: none;
-  background: #212121;
-  margin-bottom: 20px;
 }
 nav li {
   display: inline-block;
@@ -57,7 +56,12 @@ input[type="color"],
 .greensteam-button {
   color: white;
   background-color: #212121;
-  height: 25px;
+  /* REMOVED 2026-10-22: `height: 25px` on the bare element selector.
+     Any themed button that sets its own vertical padding had its box
+     collapsed to 25px regardless, because an explicit height beats
+     padding under border-box. It broke the TS landing PLAY button
+     (33.59px tall while declaring 16.8px padding top and bottom).
+     Chrome now comes from the component's own styles. */
   min-width: 75px;
   cursor: pointer;
   border-top: solid 1px #323232;
