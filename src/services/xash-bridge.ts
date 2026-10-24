@@ -132,6 +132,17 @@ class BridgeNet extends NetImpl {
     (this as unknown as { incoming: unknown }).incoming = new LosslessPacketQueue();
   }
 
+  /**
+   * When the engine last took a packet off the queue.
+   *
+   * The engine stops pulling for exactly one reason: it is no longer
+   * running. A crashed WASM engine (an OOM abort, a panic) leaves the
+   * page alive with a frozen canvas and no error — the player sees a
+   * dead world and a "connection interrupted" timer and has to guess.
+   * The watchdog in {@link Xash3DBridge} uses this to tell the player.
+   */
+  lastPullAt = Date.now();
+
   /** fd -> last peer address, for getsockname + diagnostics. */
   private peers = new Map<number, { ip: number[]; port: number }>();
   /** Count of recvfrom pulls — wrap-around so logs stay finite. */
@@ -192,6 +203,7 @@ class BridgeNet extends NetImpl {
     socklenPtr: number
   ): number {
     const n = super.recvfrom(fd, bufPtr, bufLen, flags, sockaddrPtr, socklenPtr);
+    this.lastPullAt = Date.now();
     if (this.recvLogged < 60) {
       this.recvLogged++;
       if (n >= 0) {
@@ -398,6 +410,10 @@ export class Xash3DBridge extends Xash3D {
   private readonly onDisconnect?: (reason: string) => void;
   /** Once a disconnect is reported, do not report it again. */
   private disconnectReported = false;
+  /** When the last packet arrived from the server. */
+  private lastEnqueueAt = Date.now();
+  /** The stall watchdog's interval handle. */
+  private watchdog?: ReturnType<typeof setInterval>;
 
   constructor(opts: Xash3DBridgeOptions) {
     super(opts);
@@ -540,9 +556,61 @@ export class Xash3DBridge extends Xash3D {
           port: this.serverAddress.port,
           data: arr,
         };
+        this.lastEnqueueAt = Date.now();
         this.net.incoming.enqueue(packet);
       };
+      this.startWatchdog();
     });
+  }
+
+  /**
+   * The stall watchdog.
+   *
+   * WHY
+   * ---
+   * A dead client and a live-but-frozen client look identical from
+   * outside: the canvas shows the last frame, the engine's own
+   * "connection interrupted" timer is counting, and nothing in the
+   * page says what happened. The player is left refreshing by hand.
+   *
+   * The engine's WASM instance can die outright — an OOM abort, a
+   * panic — and the page survives it, frozen. That has happened: the
+   * engine aborted with `RuntimeError: Aborted(OOM)` mid-session and
+   * the page just sat there.
+   *
+   * The signal is simple and hard to fake: the server keeps sending
+   * (packets keep arriving) but the engine stops TAKING them off the
+   * queue. A live engine pulls at frame rate; a dead one never pulls
+   * again. So: packets arriving AND nothing pulled for a few seconds
+   * means the engine is wedged.
+   *
+   * A backgrounded tab is the one false positive (the browser throttles
+   * rAF, so the engine legitimately stops pulling) — so the watchdog
+   * only fires while the page is visible.
+   */
+  private startWatchdog(): void {
+    const STALL_MS = 8000;
+    this.watchdog = setInterval(() => {
+      if (this.disconnectReported) return;
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+        return;
+      }
+      const now = Date.now();
+      const sincePull = now - this.net.lastPullAt;
+      const sincePacket = now - this.lastEnqueueAt;
+      // Packets must be ARRIVING (otherwise this is just a quiet
+      // server) and the engine must be FAILING to take them.
+      if (sincePacket < 2000 && sincePull > STALL_MS) {
+        console.error(
+          `[bridge] the engine stopped taking packets ${Math.round(sincePull / 1000)}s ago ` +
+            `while the server kept sending — the engine is wedged`
+        );
+        this.reportDisconnect(
+          'The game connection stalled. Reloading to get you back in.'
+        );
+      }
+    }, 2000);
+    (this.watchdog as { unref?: () => void }).unref?.();
   }
 
   sendto(packet: Packet) {
