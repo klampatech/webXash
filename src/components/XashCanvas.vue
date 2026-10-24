@@ -234,14 +234,14 @@ const lambdaLabel = computed(() => 'Connecting to server');
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 3, 1, 0.92);
+    background: rgba(1, 10, 4, 0.94);
     z-index: 20;
 
     &__panel {
       text-align: center;
       padding: 2rem 2.5rem;
-      border: 1px solid rgba(255, 170, 0, 0.35);
-      background: rgba(0, 3, 1, 0.85);
+      border: 1px solid rgba(255, 92, 92, 0.4);
+      background: rgba(1, 10, 4, 0.88);
       max-width: 30rem;
     }
 
@@ -251,7 +251,7 @@ const lambdaLabel = computed(() => 'Connecting to server');
       font-size: 1.05rem;
       letter-spacing: 0.22em;
       text-transform: uppercase;
-      color: var(--ts-signal, #ffaa00);
+      color: var(--ts-error, #ff5c5c);
     }
 
     &__body {
@@ -260,7 +260,7 @@ const lambdaLabel = computed(() => 'Connecting to server');
       font-size: 0.8rem;
       line-height: 1.5;
       letter-spacing: 0.04em;
-      color: rgba(230, 240, 225, 0.78);
+      color: rgba(216, 255, 226, 0.78);
     }
 
     &__countdown {
@@ -269,7 +269,7 @@ const lambdaLabel = computed(() => 'Connecting to server');
       font-size: 0.72rem;
       letter-spacing: 0.12em;
       text-transform: uppercase;
-      color: rgba(230, 240, 225, 0.5);
+      color: rgba(216, 255, 226, 0.5);
     }
 
     &__btn {
@@ -277,14 +277,14 @@ const lambdaLabel = computed(() => 'Connecting to server');
       font-size: 0.78rem;
       letter-spacing: 0.18em;
       text-transform: uppercase;
-      color: var(--ts-signal, #ffaa00);
+      color: var(--ts-error, #ff5c5c);
       background: transparent;
-      border: 1px solid var(--ts-signal, #ffaa00);
+      border: 1px solid var(--ts-error, #ff5c5c);
       padding: 0.6rem 1.6rem;
       cursor: pointer;
 
       &:hover {
-        background: rgba(255, 170, 0, 0.12);
+        background: rgba(255, 92, 92, 0.14);
       }
     }
   }
@@ -295,7 +295,7 @@ const lambdaLabel = computed(() => 'Connecting to server');
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--ts-void, #000301);
+    background: var(--ts-void, #010a04);
     background-image: url('../assets/hl-spin.svg');
     background-repeat: no-repeat;
     background-position: center;
@@ -309,7 +309,7 @@ const lambdaLabel = computed(() => 'Connecting to server');
       font-size: 0.78rem;
       letter-spacing: 0.16em;
       text-transform: uppercase;
-      color: var(--ts-signal, #ffaa00);
+      color: var(--ts-warn, #ffc44d);
     }
   }
 </style>

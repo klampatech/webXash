@@ -2,20 +2,56 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/src/assets/hl-bright.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- The Specialists landing theme.
-         Barlow Condensed stands in for the condensed GoldSrc HUD lettering;
-         Share Tech Mono for instrument-panel readouts. TS's own client.dll
-         requests Arial and draws HUD text from bitmap fonts in fonts.wad,
-         neither of which we can ship — see src/assets/ts-theme.css. -->
+
+    <!--
+      BulletBallet.
+
+      The favicon is the BB mark's SOLID silhouette, not the mark as
+      drawn: the mark is two slender cartridges with internal cutouts,
+      and at 16px the cutouts vanish and it reads as a green blob. See
+      src/assets/brand/bb-favicon.svg.
+    -->
+    <link rel="icon" type="image/svg+xml" href="/src/assets/brand/bb-favicon.svg" />
+    <link rel="apple-touch-icon" href="/src/assets/brand/bb-favicon.svg" />
+
+    <meta name="theme-color" content="#010a04" />
+    <meta
+      name="description"
+      content="BulletBallet — Half-Life 1's Specialists, ported to WebAssembly and running in your browser. Tactical deathmatch on a dedicated server. No install."
+    />
+
+    <!-- Open Graph / Twitter -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="BulletBallet" />
+    <meta property="og:title" content="BulletBallet — The Specialists in your browser" />
+    <meta
+      property="og:description"
+      content="Half-Life 1's Specialists, ported to WebAssembly and running in your browser. Tactical deathmatch on a dedicated server. No install."
+    />
+    <meta property="og:url" content="https://bulletballet.dev/" />
+    <meta property="og:image" content="https://bulletballet.dev/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!--
+      Anton for display, Space Grotesk for body, JetBrains Mono for the
+      technical readouts. This is the SHELL only — the game keeps TS's
+      own bitmap fonts, which we do not ship and do not restyle.
+    -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Share+Tech+Mono&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Anton&family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@500&display=swap"
       rel="stylesheet"
     />
-    <title>The Specialists</title>
+
+    <!--
+      The engine overwrites this once it boots. `services/brand.ts` takes
+      it back and keeps it — see the note there.
+    -->
+    <title>BulletBallet — The Specialists in your browser</title>
   </head>
   <body>
     <div id="app"></div>

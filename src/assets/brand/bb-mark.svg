@@ -1,0 +1,33 @@
+<!--
+  BulletBallet — the BB cartridge mark.
+
+  Two mirrored cartridges, back to back: the negative space between them
+  is the bullet. Original artwork, made for BulletBallet.
+
+  This is the mark AS DRAWN — it is built from strokes with internal
+  cutouts, so it needs a larger box than the small UI can give it. For
+  24px and below use bb-mark-24.svg (no cutouts), and for the tab strip
+  use bb-favicon.svg (a single solid bullet).
+
+  `currentColor` so it inherits the surrounding text colour.
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 200 460"
+  role="img"
+  aria-label="BulletBallet BB cartridge mark"
+  fill="currentColor"
+>
+  <path
+    fill-rule="evenodd"
+    d="M102 20H134L148 170L140 192L156 214V402H102Z M116 38H123L137 166H116Z M116 210H138L144 220V392H116Z"
+  />
+  <path d="M102 412H164V440H102Z" />
+  <g transform="translate(200 0) scale(-1 1)">
+    <path
+      fill-rule="evenodd"
+      d="M102 20H134L148 170L140 192L156 214V402H102Z M116 38H123L137 166H116Z M116 210H138L144 220V392H116Z"
+    />
+    <path d="M102 412H164V440H102Z" />
+  </g>
+</svg>

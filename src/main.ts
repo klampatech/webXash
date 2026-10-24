@@ -23,6 +23,13 @@ installEscapeGate();
 import { installFullscreenWatchdog } from './services/fullscreen';
 installFullscreenWatchdog();
 
+// The brand guard. The engine overwrites document.title from its own window
+// title once it boots, so the tab would revert to the game's title the
+// moment you entered a match. This takes it back and keeps it — see
+// services/brand.ts for why an observer and not a one-shot write.
+import { claimDocumentTitle } from './services/brand';
+claimDocumentTitle();
+
 const app = createApp(App);
 const pinia = createPinia();
 

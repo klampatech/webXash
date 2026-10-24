@@ -145,7 +145,7 @@ onMounted(refresh);
   }
 
   &__empty--error {
-    color: var(--ts-signal);
+    color: var(--ts-error);
     border: 1px solid var(--ts-edge);
   }
 

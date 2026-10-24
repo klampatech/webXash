@@ -19,7 +19,12 @@
           Half-Life 1 · running in a browser
         </div>
 
-        <h1 class="ts-landing__title">The Specialists</h1>
+        <div class="ts-landing__mark" aria-hidden="true" />
+
+        <h1 class="ts-landing__title">
+          <span class="ts-landing__title-first">Bullet</span
+          ><span class="ts-landing__title-second">Ballet</span>
+        </h1>
 
         <p class="ts-landing__tagline">
           Tactical deathmatch with the original ruleset — ported to
@@ -319,12 +324,12 @@ onMounted(() => {
     gap: 0.4rem;
     margin-top: 0.75rem;
     font-size: 0.8rem;
-    color: var(--ts-muted, #8a9a8f);
+    color: var(--ts-ink-muted, #6fa67c);
     cursor: pointer;
     user-select: none;
 
     input {
-      accent-color: var(--ts-signal, #7fd1a0);
+      accent-color: var(--ts-signal, #00ff41);
       cursor: pointer;
     }
   }
@@ -337,7 +342,7 @@ onMounted(() => {
     font-size: 0.78rem;
     line-height: 1.6;
     letter-spacing: 0.04em;
-    color: var(--ts-signal, #ffaa00);
+    color: var(--ts-error, #ff5c5c);
   }
 
   position: absolute;
@@ -367,8 +372,8 @@ onMounted(() => {
     position: absolute;
     inset: -10%;
     background-image:
-      linear-gradient(rgba(240, 110, 0, 0.055) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(240, 110, 0, 0.055) 1px, transparent 1px);
+      linear-gradient(rgba(0, 255, 65, 0.055) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 255, 65, 0.055) 1px, transparent 1px);
     background-size: 46px 46px;
     mask-image: radial-gradient(ellipse 80% 62% at 50% 34%, #000 25%, transparent 78%);
   }
@@ -383,8 +388,8 @@ onMounted(() => {
     transform: translateX(-50%);
     background: radial-gradient(
       ellipse at center,
-      rgba(240, 110, 0, 0.2) 0%,
-      rgba(240, 110, 0, 0.07) 38%,
+      rgba(0, 255, 65, 0.2) 0%,
+      rgba(0, 255, 65, 0.07) 38%,
       transparent 68%
     );
   }
@@ -420,7 +425,7 @@ onMounted(() => {
     width: min(620px, 92vw);
     aspect-ratio: 1;
     transform: translate(-50%, -46%);
-    border: 2px solid rgba(166, 156, 122, 0.3);
+    border: 2px solid rgba(0, 255, 65, 0.28);
     border-radius: 50%;
     pointer-events: none;
 
@@ -429,7 +434,7 @@ onMounted(() => {
       content: '';
       position: absolute;
       inset: 14px;
-      border: 1px solid rgba(232, 236, 187, 0.2);
+      border: 1px solid rgba(216, 255, 226, 0.2);
       border-radius: 50%;
     }
 
@@ -441,7 +446,7 @@ onMounted(() => {
       border-radius: 50%;
       background: repeating-conic-gradient(
         from 0deg,
-        rgba(166, 156, 122, 0.16) 0deg 1.2deg,
+        rgba(0, 255, 65, 0.16) 0deg 1.2deg,
         transparent 1.2deg 15deg
       );
       /* keep the streaks outside the rings */
@@ -481,6 +486,19 @@ onMounted(() => {
     animation: ts-pulse 2.4s var(--ts-ease) infinite;
   }
 
+  /* The BB mark, masked rather than <img>-ed so it takes the accent
+     colour like everything else. A relative URL, because Vite resolves
+     CSS urls relative to the file, not from the project root. */
+  &__mark {
+    width: clamp(52px, 7.5vw, 88px);
+    aspect-ratio: 200 / 460;
+    margin: 0 auto;
+    background-color: var(--ts-signal);
+    -webkit-mask: url('../assets/brand/bb-mark.svg') no-repeat center / contain;
+    mask: url('../assets/brand/bb-mark.svg') no-repeat center / contain;
+    filter: drop-shadow(0 0 22px rgba(0, 255, 65, 0.5));
+  }
+
   &__title {
     margin: 0.5rem 0 0;
     font-family: var(--ts-font-display);
@@ -489,10 +507,18 @@ onMounted(() => {
     line-height: 0.92;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: var(--ts-lime);
     text-shadow:
-      0 0 34px rgba(240, 110, 0, 0.32),
-      3px 3px 0 rgba(61, 58, 45, 0.9);
+      0 0 34px rgba(0, 255, 65, 0.3),
+      3px 3px 0 rgba(42, 74, 49, 0.9);
+  }
+
+  /* BULLET in ghost-white, BALLET in phosphor — the mock's two-tone split. */
+  &__title-first {
+    color: var(--ts-lime);
+  }
+
+  &__title-second {
+    color: var(--ts-signal);
   }
 
   &__tagline {
@@ -519,24 +545,16 @@ onMounted(() => {
     color: var(--ts-void);
     background: linear-gradient(180deg, var(--ts-signal-hot) 0%, var(--ts-signal) 100%);
     border: none;
-    /* chamfer matches the panels */
-    height: auto; /* immune to any future global button height rule */
-    clip-path: polygon(
-      12px 0,
-      100% 0,
-      100% calc(100% - 12px),
-      calc(100% - 12px) 100%,
-      0 100%,
-      0 12px
-    );
+    /* Square corners: the chamfer was the GoldSrc panel language, and the
+       terminal language is a square edge plus the phosphor left-rule. */
     height: auto; /* immune to any future global button height rule */
     cursor: pointer;
     transition: transform 140ms var(--ts-ease), box-shadow var(--ts-sweep) var(--ts-ease);
-    box-shadow: 0 0 0 rgba(240, 110, 0, 0);
+    box-shadow: 0 0 0 rgba(0, 255, 65, 0);
 
     &:hover:not(:disabled) {
       transform: translateY(-2px);
-      box-shadow: 0 8px 34px rgba(240, 110, 0, 0.42);
+      box-shadow: 0 8px 34px rgba(0, 255, 65, 0.42);
     }
 
     &:active:not(:disabled) {
@@ -574,7 +592,7 @@ onMounted(() => {
   &__progress-bar {
     height: 3px;
     background: var(--ts-signal);
-    box-shadow: 0 0 10px rgba(240, 110, 0, 0.6);
+    box-shadow: 0 0 10px rgba(0, 255, 65, 0.6);
     transition: width 220ms var(--ts-ease);
   }
 

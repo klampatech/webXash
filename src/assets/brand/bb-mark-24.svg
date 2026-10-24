@@ -1,0 +1,24 @@
+<!--
+  BulletBallet — the BB mark for small UI (24px and below).
+
+  The same silhouette as bb-mark.svg with the two internal cutouts
+  removed. At 24px each cutout is barely a pixel wide, so keeping them
+  turns the counters into a smudge and the mark reads as a blob. Solid
+  cartridges still read as two cartridges.
+
+  Same viewBox as the full mark, so it drops straight into the same box.
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 200 460"
+  role="img"
+  aria-label="BulletBallet BB cartridge mark"
+  fill="currentColor"
+>
+  <path d="M102 20H134L148 170L140 192L156 214V402H102Z" />
+  <path d="M102 412H164V440H102Z" />
+  <g transform="translate(200 0) scale(-1 1)">
+    <path d="M102 20H134L148 170L140 192L156 214V402H102Z" />
+    <path d="M102 412H164V440H102Z" />
+  </g>
+</svg>

@@ -47,5 +47,5 @@ canvas {
      * siblings of this canvas and cover it while the engine starts, so
      * the pre-boot look comes from there — not from here.
      */
-    background: var(--ts-void, #000301);
+    background: var(--ts-void, #010a04);
 }
