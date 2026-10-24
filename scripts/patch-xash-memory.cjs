@@ -4,36 +4,47 @@
  *
  * WHY
  * ---
- * The client aborts with `RuntimeError: Aborted(OOM)` a few hundred
- * milliseconds after a map change. The wasm's memory section declares:
+ * The published xash3d-fwgs 1.2.2 wasm declares:
  *
  *     initial = 4096 pages = 256 MB
- *     maximum = 32768 pages = 2 GB
+ *     maximum = 4096 pages = 256 MB
  *
- * The heap does not grow before the abort, and the abort is Emscripten's
- * `abortOOM` — which is what `emscripten_resize_heap` calls when
- * `WebAssembly.Memory.grow()` FAILS. So the client wants more than the
- * 256 MB it starts with, and the growth is being refused.
+ * The maximum EQUALS the initial: **the client's heap cannot grow at
+ * all.** When a map change needs more room, `WebAssembly.Memory.grow()`
+ * fails, Emscripten's `emscripten_resize_heap` calls `abortOOM`, and the
+ * engine dies with `RuntimeError: Aborted(OOM)` — a few hundred
+ * milliseconds after the map change, with the page still showing the last
+ * frame. The player is left in a frozen world with no error.
  *
- * Raising the INITIAL memory means the map change never has to grow at
- * all: the space is there from the start.
+ * It was intermittent because how much the client needs depends on the
+ * map and the entity state.
  *
- * THE PATCH
- * ---------
- * The memory section's limits are LEB128, and both new values encode to
- * the same number of bytes as the old ones:
+ * THE FIX
+ * -------
+ * Give it room: a 512 MB initial heap and a 2 GB maximum. The initial
+ * is what matters — with the space present from the start, the map
+ * change never has to grow at all.
  *
- *     min: 4096  -> 8192    0x80 0x20     -> 0x80 0x40          2 bytes, 2 bytes
- *     max: 32768 -> 65536   0x80 0x80 0x02 -> 0x80 0x80 0x04    3 bytes, 3 bytes
+ * THE PATCH IS A REBUILD, NOT AN IN-PLACE WRITE
+ * ----------------------------------------------
+ * The limits are LEB128, and their ENCODED WIDTHS differ between the
+ * published module and the target:
  *
- * So the bytes are replaced in place: no section resizing, no
- * relocation, the module stays valid.
+ *     min: 4096  -> 8192    0x80 0x20  -> 0x80 0x40        2 bytes, 2 bytes
+ *     max: 4096  -> 32768   0x80 0x20  -> 0x80 0x80 0x02   2 bytes, 3 bytes
  *
- * MEASURED
- * --------
- * With the patched wasm the client survived map changes that had been
- * aborting it: the heap starts at 512 MB, stays there, and the engine
- * keeps playing (canvas alive, server banner received on every map).
+ * The new maximum needs ONE MORE BYTE than the old one, so the memory
+ * section is rebuilt and re-emitted with its new length. Everything
+ * before and after it is copied verbatim: the wasm format stores no
+ * absolute file offsets (the data section's segment offsets are relative
+ * to the data section), so inserting a byte here is safe.
+ *
+ * Writing the new maximum into the old 2-byte slot would silently
+ * truncate it — 65536 does not fit in two LEB bytes — and produce a
+ * module that fails validation ("maximum memory size (0 pages) is less
+ * than initial"). That is exactly the bug this script is written to
+ * avoid, so the script COMPILES THE RESULT and fails loudly if it does
+ * not validate.
  *
  *   usage: node scripts/patch-xash-memory.cjs [wasmPath] [initialMB] [maximumMB]
  */
@@ -44,7 +55,7 @@ const TARGET = path.resolve(
   process.argv[2] || 'node_modules/xash3d-fwgs/dist/xash.wasm'
 );
 const INITIAL_MB = Number(process.argv[3] || 512);
-const MAXIMUM_MB = Number(process.argv[4] || 4096);
+const MAXIMUM_MB = Number(process.argv[4] || 2048);
 
 /** LEB128 decode: returns [value, nextOffset]. */
 function lebDecode(buf, i) {
@@ -52,58 +63,84 @@ function lebDecode(buf, i) {
   let shift = 0;
   for (;;) {
     const b = buf[i++];
-    result |= (b & 0x7f) << shift;
-    if (!(b & 0x80)) return [result >>> 0, i];
+    result += (b & 0x7f) * Math.pow(2, shift);
+    if (!(b & 0x80)) return [result, i];
     shift += 7;
   }
 }
 
-/** LEB128 encode, padded to exactly `width` bytes. */
-function lebFixed(value, width) {
-  const out = Buffer.alloc(width);
-  let v = value >>> 0;
-  for (let i = 0; i < width; i++) {
+/** LEB128 encode, minimal width. */
+function lebEncode(value) {
+  const out = [];
+  let v = value;
+  do {
     let byte = v & 0x7f;
-    v >>>= 7;
-    if (i !== width - 1) byte |= 0x80;
-    out[i] = byte;
-  }
-  return out;
+    v = Math.floor(v / 128);
+    if (v) byte |= 0x80;
+    out.push(byte);
+  } while (v);
+  return Buffer.from(out);
 }
 
-function patch() {
-  if (!fs.existsSync(TARGET)) {
-    console.log(`[patch-xash-memory] ${TARGET} not found; skipping.`);
-    return;
-  }
-  const buf = fs.readFileSync(TARGET);
-  if (buf.readUInt32LE(0) !== 0x6d736100) {
-    console.log('[patch-xash-memory] not a wasm module; skipping.');
-    return;
-  }
-  const newMin = (INITIAL_MB * 1024) / 64;
-  const newMax = (MAXIMUM_MB * 1024) / 64;
-
+/** The limits of a wasm's memory section, for verification. */
+function readLimits(buf) {
   let i = 8;
   while (i < buf.length) {
     const sectionId = buf[i++];
     const [size, afterSize] = lebDecode(buf, i);
-    const end = afterSize + size;
+    const contentStart = afterSize;
+    const contentEnd = contentStart + size;
     if (sectionId === 5) {
-      // memory section
-      let j = afterSize;
+      let j = contentStart;
       let count;
       [count, j] = lebDecode(buf, j);
+      const limits = [];
       for (let m = 0; m < count; m++) {
         const flags = buf[j++];
         let minPages, afterMin;
         [minPages, afterMin] = lebDecode(buf, j);
-        const minWidth = afterMin - j;
         j = afterMin;
-        let maxPages = null, afterMax = j, maxWidth = 0;
+        let maxPages = null, afterMax = j;
         if (flags & 1) {
           [maxPages, afterMax] = lebDecode(buf, j);
-          maxWidth = afterMax - j;
+          j = afterMax;
+        }
+        limits.push({ flags, minPages, maxPages });
+      }
+      return limits;
+    }
+    i = contentEnd;
+  }
+  return null;
+}
+
+/**
+ * Rewrite the memory section's limits, rebuilding the section when the
+ * new encoding is a different width. Returns the new file bytes, or
+ * null when it is already patched.
+ */
+function patchBuffer(buf, newMin, newMax) {
+  let i = 8; // skip the magic + version
+  while (i < buf.length) {
+    const sectionStart = i;
+    const sectionId = buf[i++];
+    const [size, afterSize] = lebDecode(buf, i);
+    const contentStart = afterSize;
+    const contentEnd = contentStart + size;
+
+    if (sectionId === 5) {
+      let j = contentStart;
+      let count;
+      [count, j] = lebDecode(buf, j);
+      const parts = [];
+      for (let m = 0; m < count; m++) {
+        const flags = buf[j++];
+        let minPages, afterMin;
+        [minPages, afterMin] = lebDecode(buf, j);
+        j = afterMin;
+        let maxPages = null, afterMax = j;
+        if (flags & 1) {
+          [maxPages, afterMax] = lebDecode(buf, j);
           j = afterMax;
         }
         console.log(
@@ -114,41 +151,81 @@ function patch() {
               : '')
         );
         if (!(flags & 1)) {
-          console.log('[patch-xash-memory] no maximum declared; cannot patch in place.');
-          return;
+          throw new Error(
+            'the memory declares no maximum; it cannot be patched to allow growth'
+          );
         }
         if (minPages === newMin && maxPages === newMax) {
           console.log('[patch-xash-memory] already patched.');
-          return;
+          return null;
         }
-        const minBytes = lebFixed(newMin, minWidth);
-        const maxBytes = lebFixed(newMax, maxWidth);
-        if (minBytes.length !== minWidth || maxBytes.length !== maxWidth) {
-          console.error(
-            `[patch-xash-memory] ERROR: the new values do not fit the old ` +
-              `encoding widths (${minWidth}/${maxWidth} bytes).`
-          );
-          process.exitCode = 1;
-          return;
-        }
-        minBytes.copy(buf, afterMin - minWidth);
-        maxBytes.copy(buf, afterMax - maxWidth);
-        fs.writeFileSync(TARGET, buf);
-        console.log(
-          `[patch-xash-memory] patched: min=${newMin} (${INITIAL_MB}MB) ` +
-            `max=${newMax} (${MAXIMUM_MB}MB)`
-        );
-        return;
+        parts.push(Buffer.from([flags]));
+        parts.push(lebEncode(newMin));
+        parts.push(lebEncode(newMax));
       }
+      const newContent = Buffer.concat([lebEncode(count), ...parts]);
+      const headerAndId = Buffer.concat([
+        Buffer.from([sectionId]),
+        lebEncode(newContent.length),
+      ]);
+      return Buffer.concat([
+        buf.subarray(0, sectionStart),
+        headerAndId,
+        newContent,
+        buf.subarray(contentEnd),
+      ]);
     }
-    i = end;
+    i = contentEnd;
   }
-  console.log('[patch-xash-memory] no memory section found.');
+  throw new Error('no memory section found');
 }
 
-try {
-  patch();
-} catch (err) {
+async function main() {
+  if (!fs.existsSync(TARGET)) {
+    console.log(`[patch-xash-memory] ${TARGET} not found; skipping.`);
+    return;
+  }
+  const original = fs.readFileSync(TARGET);
+  if (original.readUInt32LE(0) !== 0x6d736100) {
+    console.log('[patch-xash-memory] not a wasm module; skipping.');
+    return;
+  }
+  const newMin = (INITIAL_MB * 1024) / 64;
+  const newMax = (MAXIMUM_MB * 1024) / 64;
+
+  const patched = patchBuffer(original, newMin, newMax);
+  if (!patched) return; // already patched
+
+  // VERIFY. A wasm that does not validate is worse than no patch at
+  // all: the client cannot start. So the result must compile, and its
+  // limits must be what we asked for.
+  try {
+    await WebAssembly.compile(patched);
+  } catch (err) {
+    console.error(
+      `[patch-xash-memory] ERROR: the patched module does not compile: ${err.message}`
+    );
+    process.exitCode = 1;
+    return;
+  }
+  const limits = readLimits(patched);
+  const limit = limits && limits[0];
+  if (!limit || limit.minPages !== newMin || limit.maxPages !== newMax) {
+    console.error(
+      `[patch-xash-memory] ERROR: the patched module has the wrong limits: ` +
+        JSON.stringify(limit)
+    );
+    process.exitCode = 1;
+    return;
+  }
+  fs.writeFileSync(TARGET, patched);
+  console.log(
+    `[patch-xash-memory] patched: min=${newMin} (${INITIAL_MB}MB) ` +
+      `max=${newMax} (${MAXIMUM_MB}MB) — the module compiles`
+  );
+}
+
+main().catch((err) => {
   console.error(`[patch-xash-memory] ERROR: ${err.message}`);
   process.exitCode = 1;
-}
+});
