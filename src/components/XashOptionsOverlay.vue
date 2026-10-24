@@ -140,6 +140,11 @@ function quitToWebUi() {
   if (document.pointerLockElement) {
     document.exitPointerLock?.();
   }
+  // Leave fullscreen as well: the landing page is a page to read and
+  // click, not something to stare at edge to edge.
+  if (document.fullscreenElement) {
+    document.exitFullscreen?.().catch(() => {});
+  }
   closeOverlay();
   window.location.href = '/';
 }
