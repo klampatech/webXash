@@ -116,6 +116,21 @@ export function installEscapeGate(): () => void {
   if ((window as unknown as Record<string, unknown>)[key]) return () => {};
   (window as unknown as Record<string, unknown>)[key] = true;
 
+  // The browser CONSUMES an Escape that leaves fullscreen: the keydown
+  // never reaches the page, so the state machine below would lose a step
+  // (the next Escape would be read as "release the mouse" when the mouse
+  // was released long ago). Leaving fullscreen means the same thing to
+  // the player as Escape #1 — let go of the mouse — so it is treated as
+  // one, from the signal the browser does deliver.
+  const onFullscreenChange = () => {
+    if (document.fullscreenElement) return;
+    if (document.pointerLockElement) {
+      document.exitPointerLock?.();
+    }
+    stage.value = 'released';
+    logDebug('[escape] left fullscreen; pointer released');
+  };
+
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.code !== 'Escape' && e.key !== 'Escape') return;
     // Stop the engine from seeing it. See the note at the top of the file.
@@ -125,10 +140,12 @@ export function installEscapeGate(): () => void {
   };
 
   window.addEventListener('keydown', onKeyDown, { capture: true });
+  document.addEventListener('fullscreenchange', onFullscreenChange);
   logDebug('[escape] gate installed');
 
   return () => {
     window.removeEventListener('keydown', onKeyDown, { capture: true });
+    document.removeEventListener('fullscreenchange', onFullscreenChange);
     (window as unknown as Record<string, unknown>)[key] = false;
   };
 }

@@ -45,6 +45,17 @@
         -->
         <p v-if="launchError" class="ts-landing__error">{{ launchError }}</p>
 
+        <!--
+          Fullscreen is on by default, and Escape leaves it. The toggle is
+          here because a browser fullscreen can only be entered from a
+          click: if a player wants the game in a window, they need a way
+          to say so BEFORE the game takes the screen.
+        -->
+        <label class="ts-landing__fullscreen">
+          <input v-model="browserFullscreen" type="checkbox" />
+          <span>Start full screen</span>
+        </label>
+
         <div class="ts-landing__progress" :class="{ 'is-active': isStarting }">
           <div class="ts-landing__progress-bar" :style="{ width: downloadProgress + '%' }" />
           <span class="ts-landing__progress-text">
@@ -111,6 +122,7 @@ import {
 import setCanvasLoading, { clearCanvasLoading } from '/@/utils/setCanvasLoading.ts';
 import TSServerList from '/@/components/TSServerList.vue';
 import TSHowToPlay from '/@/components/TSHowToPlay.vue';
+import { enterFullscreen } from '/@/services/fullscreen.ts';
 
 const tabs = [
   { id: 'servers', label: 'Servers' },
@@ -125,8 +137,16 @@ const isStarting = ref(false);
 const launchError = ref('');
 
 const store = useXashStore();
-const { xashCanvas, selectedGame, fullScreen, enableConsole, enableCheats, loadingProgress, customGameArg } =
-  storeToRefs(store);
+const {
+  xashCanvas,
+  selectedGame,
+  fullScreen,
+  browserFullscreen,
+  enableConsole,
+  enableCheats,
+  loadingProgress,
+  customGameArg,
+} = storeToRefs(store);
 const { onStartLoading, onEndLoading, onBootPhase, onLaunching, refreshSavesList } = store;
 
 const downloadProgress = computed(() => Math.round(loadingProgress.value));
@@ -138,6 +158,19 @@ const downloadProgress = computed(() => Math.round(loadingProgress.value));
  * how a server row targets its own address instead of the default target.
  */
 async function launch(options?: string) {
+  // Fullscreen is asked for HERE, at the top of the launch, before the
+  // first await. The browser only grants a fullscreen request while the
+  // click's user gesture is still live, and everything below this line is
+  // async: resolving the server, downloading 493 MB, booting the engine.
+  // A request made after an await is simply refused.
+  //
+  // A refusal is not a failure: the game is playable windowed, and the
+  // browser's own reason (no gesture, a policy) is not something the
+  // player can act on. The service logs it and moves on.
+  if (browserFullscreen.value) {
+    void enterFullscreen();
+  }
+
   if (!xashCanvas.value) {
     console.error('Canvas is not available');
     return;
@@ -286,6 +319,22 @@ onMounted(() => {
 
 <style scoped lang="scss">
 .ts-landing {
+  &__fullscreen {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.75rem;
+    font-size: 0.8rem;
+    color: var(--ts-muted, #8a9a8f);
+    cursor: pointer;
+    user-select: none;
+
+    input {
+      accent-color: var(--ts-signal, #7fd1a0);
+      cursor: pointer;
+    }
+  }
+
   &__error {
     margin: 1rem auto 0;
     max-width: 34rem;

@@ -111,6 +111,11 @@ export const useXashStore = defineStore(
     });
 
     const fullScreen = ref(false);
+    // The BROWSER's fullscreen, which is a different thing from
+    // `fullScreen` above: that one is the engine's -fullscreen/-windowed
+    // argument (the internal render mode), this one is whether the page
+    // takes over the screen when the player enters the game.
+    const browserFullscreen = ref(true);
     const enableConsole = ref(true);
     const enableCheats = ref(false);
 
@@ -252,6 +257,7 @@ export const useXashStore = defineStore(
       effectiveLaunchOptions,
       tsConfig,
       fullScreen,
+      browserFullscreen,
       enableConsole,
       enableCheats,
       // Computed
@@ -277,6 +283,7 @@ export const useXashStore = defineStore(
         // getting clobbered on every reload. Keeping it out of `pick`
         // means the URL (or the hardcoded default) always wins.
         'fullScreen',
+        'browserFullscreen',
         'enableConsole',
         'enableCheats',
       ],

@@ -17,6 +17,12 @@ import './assets/ts-theme.css';
 import { installEscapeGate } from './services/escape-gate';
 installEscapeGate();
 
+// The fullscreen watchdog: a canvas resize can lose the WebGL context,
+// and a lost context renders black. It only acts when the context is
+// actually lost, so it cannot make a working resize worse.
+import { installFullscreenWatchdog } from './services/fullscreen';
+installFullscreenWatchdog();
+
 const app = createApp(App);
 const pinia = createPinia();
 
