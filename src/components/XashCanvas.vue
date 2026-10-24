@@ -77,8 +77,15 @@
     // `autoplay=1` puts the player straight back into a game on reload.
     // A plain reload drops them on the landing page, which read
     // literally is not a reconnect — it is "click Play again", and if
-    // the thing that broke was the connect address, clicking Play again
-    // would break it again.
+    // the thing that broke was the connect address, clicking Play
+    // again would break it again.
+    //
+    // The app's "are you sure you want to leave?" guard has to come
+    // off first: it fires on this navigation too, and the browser's
+    // confirmation dialog would stand between the player and the
+    // recovery (and in some browsers it silently cancels the
+    // navigation, leaving them on the frozen screen).
+    XashLoader.allowUnload();
     const url = new URL(window.location.href);
     url.searchParams.set('autoplay', '1');
     window.location.href = url.toString();
