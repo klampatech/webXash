@@ -518,6 +518,34 @@ class XashLoader {
     }
   }
 
+  /**
+   * Drop the "are you sure you want to leave?" guard.
+   *
+   * WHY
+   * ---
+   * The app registers a `beforeunload` handler so a player cannot
+   * accidentally close the tab mid-game. That guard fires on EVERY
+   * navigation — including our OWN deliberate one: the CONNECTION LOST
+   * overlay's reconnect reloads the page to put the player back in.
+   *
+   * So the recovery puts a browser confirmation dialog in front of
+   * itself. A player staring at a frozen world then has to find and
+   * click "Leave" before the reload happens, and some browsers
+   * suppress the dialog entirely — in which case the reload never
+   * happens at all and the player sits on the dead screen with no way
+   * forward except closing the tab by hand.
+   *
+   * (Measured: the reload fired the handler, the dialog appeared, and
+   * the page never navigated.)
+   *
+   * So the deliberate reconnect removes the guard first. The player
+   * who closes the tab by hand still gets the prompt — that is what it
+   * is for.
+   */
+  public static allowUnload() {
+    window.removeEventListener('beforeunload', onBeforeUnload);
+  }
+
   private async _getXashInstance(
     launchOptions: string | null
   ): Promise<typeof Xash3D | typeof Xash3DWebRTC> {
