@@ -117,6 +117,21 @@ function parseIpPort(addr: string): { ip: [number, number, number, number]; port
  * and for `getsockname`.
  */
 class BridgeNet extends NetImpl {
+  /**
+   * Swap the package's lossy rolling buffer for our lossless queue.
+   *
+   * The package's `Net` constructor builds
+   * `this.incoming = new RollingBuffer({ maxSize: maxPackets })` and
+   * that buffer drops the OLDEST packet when it is full — which, in a
+   * protocol where every packet carries a sequence number, is a
+   * guaranteed "Connection Interrupted" freeze. See
+   * {@link LosslessPacketQueue} for the whole story.
+   */
+  constructor(sender: unknown, opts: Record<string, unknown> = {}) {
+    super(sender as never, opts as never);
+    (this as unknown as { incoming: unknown }).incoming = new LosslessPacketQueue();
+  }
+
   /** fd -> last peer address, for getsockname + diagnostics. */
   private peers = new Map<number, { ip: number[]; port: number }>();
   /** Count of recvfrom pulls — wrap-around so logs stay finite. */
@@ -208,6 +223,120 @@ class BridgeNet extends NetImpl {
   }
 }
 
+/**
+ * A LOSSLESS inbound packet queue.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * xash3d-fwgs's `Net` hands inbound datagrams to the engine through a
+ * `RollingBuffer` with `maxSize: maxPackets` — 128 by default — and
+ * that buffer's `push()` DROPS THE OLDEST PACKET when it is full:
+ *
+ *   push(item) {
+ *     if (this.isFull()) this.tail = (this.tail + 1) % this.opts.maxSize;
+ *     else this.count += 1;
+ *     ...
+ *   }
+ *
+ * Every GoldSrc packet carries a sequence number, so losing one leaves
+ * a GAP. The client cannot carry on across a gap: it discards the
+ * out-of-sequence packets that follow, asks the server to resend, and
+ * if the server is still bursting, the resends overflow the queue too.
+ * The visible result is the classic GoldSrc **"Connection
+ * Interrupted"** state — the HUD freezes, the connection timer starts
+ * counting, and the player is sitting in a dead world until they
+ * refresh.
+ *
+ * The bursts are exactly the events that matter:
+ *
+ *   - a client joining      → the server sends everyone a full update
+ *   - a bot leaving         → same (the entity set changed)
+ *   - a map change          → the whole new map's entities
+ *
+ * None of those fit in 128 packets when the browser drains them at
+ * frame rate and the tab is anything less than perfectly busy. This
+ * was reproduced against the dedicated server: a second client joined,
+ * and the first client's world froze for minutes — until the next map
+ * change re-synced the channel.
+ *
+ * SO: GROW INSTEAD OF DROP. The queue starts at the package's 128 and
+ * doubles as needed. The cap is a backstop against a runaway flood
+ * (and it logs when it is hit, because at that point the client is
+ * already in trouble); a GoldSrc packet is at most ~1400 bytes, so
+ * 16384 of them is ~23 MB — far more than any real burst.
+ */
+export class LosslessPacketQueue {
+  private items: unknown[] = [];
+  private head = 0;
+  /** The high-water mark of the queue depth, for diagnostics. */
+  highWater = 0;
+  /** How many packets have been enqueued in total. */
+  enqueued = 0;
+  /** How many have been pulled by the engine in total. */
+  pulled = 0;
+
+  constructor(
+    initial = 128,
+    private readonly cap = 16384
+  ) {
+    // Pre-size so the first burst does not reallocate a dozen times.
+    this.items = new Array(initial);
+    this.items.length = 0;
+  }
+
+  get length(): number {
+    return this.items.length - this.head;
+  }
+
+  /** The package's API: `push` and `enqueue` are the same thing. */
+  push(item: unknown): void {
+    this.enqueue(item);
+  }
+
+  enqueue(item: unknown): void {
+    this.items.push(item);
+    this.enqueued += 1;
+    const depth = this.length;
+    if (depth > this.highWater) this.highWater = depth;
+    if (depth > this.cap) {
+      // The backstop. Dropping the OLDEST is what the package does and
+      // it is what causes the freeze, so drop the NEWEST instead: the
+      // client then misses the tail of the stream rather than the
+      // middle of it, and a missing tail still leaves the sequence
+      // numbers before it intact.
+      this.items.splice(this.head, 1);
+      this.items.push(item);
+      console.warn(
+        `[bridge] inbound queue hit the ${this.cap}-packet cap — the client is falling behind the server`
+      );
+    }
+  }
+
+  pull(): unknown {
+    if (this.head >= this.items.length) return undefined;
+    const item = this.items[this.head++];
+    this.pulled += 1;
+    // Keep the backing array from growing without bound.
+    if (this.head > 1024 && this.head * 2 > this.items.length) {
+      this.items = this.items.slice(this.head);
+      this.head = 0;
+    }
+    return item;
+  }
+
+  peek(): unknown {
+    return this.head < this.items.length ? this.items[this.head] : undefined;
+  }
+
+  isEmpty(): boolean {
+    return this.head >= this.items.length;
+  }
+
+  isFull(): boolean {
+    return this.length >= this.cap;
+  }
+}
+
 export class Xash3DBridge extends Xash3D {
   private ws?: WebSocket;
   private readonly bridgeAddress: string;
@@ -230,6 +359,32 @@ export class Xash3DBridge extends Xash3D {
   // (see xash3d.js runEm), so we must build the Net in our constructor,
   // keyed to ourselves as the SendtoSender.
   declare public net: BridgeNet;
+
+  /**
+   * The inbound queue's statistics, for diagnostics.
+   *
+   * `highWater` is the number to watch: it is how deep the queue got.
+   * With the package's 128-packet rolling buffer, anything above 128
+   * means packets were being dropped, which is the freeze. It is
+   * exposed on the instance so a browser session can read it without a
+   * debugger attached.
+   */
+  get queueStats(): {
+    depth: number;
+    highWater: number;
+    enqueued: number;
+    pulled: number;
+    cap: number;
+  } {
+    const q = (this.net as unknown as { incoming: LosslessPacketQueue }).incoming;
+    return {
+      depth: q.length,
+      highWater: q.highWater,
+      enqueued: q.enqueued,
+      pulled: q.pulled,
+      cap: 16384,
+    };
+  }
 
   /**
    * Real server address (from `+connect <ip>:<port>`) attributed to
