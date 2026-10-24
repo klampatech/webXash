@@ -1,0 +1,25 @@
+<!--
+  BulletBallet — the favicon.
+
+  NOT the BB mark as drawn. The mark is two slender cartridges 6.8:1
+  tall; at 16px that is a pair of two-pixel bars, and its internal
+  cutouts vanish entirely, so it reads as a green blob. This is a
+  second drawing: one solid cartridge, no interior detail, chunky
+  enough to survive a 16px favicon, on the void ground so it holds its
+  contrast in any tab theme.
+
+  Silhouette taken from the mark's own language: a flat nose that
+  tapers out, a notch, a flare to the case, and a wider base rim.
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 32 32"
+  role="img"
+  aria-label="BulletBallet"
+>
+  <rect width="32" height="32" fill="#010A04" />
+  <path
+    fill="#00FF41"
+    d="M12 3H20L24 13L22 15L26 17V27H28V29H4V27H6V17L10 15L8 13Z"
+  />
+</svg>

@@ -1,13 +1,59 @@
 /**
- * The Specialists — theme foundation.
+ * BulletBallet — the shell theme.
  *
- * Every colour here was sampled from the actual TS 2.0 game package, not
+ * GREEN SHELL, AMBER GAME.
+ *
+ * The site chrome — landing page, boot screen, options overlay,
+ * disconnect panel — is a phosphor-green operator terminal. The GAME
+ * keeps TS's own amber, because TS's HUD, scoreboard and menus are
+ * amber in the original, and that amber is the nostalgia. A player sees
+ * a green terminal with an amber match playing inside it, and the seam
+ * reads as intentional.
+ *
+ * The shell speaks in three colours and nothing else:
+ *
+ *   --ts-signal  phosphor green   nominal, live, active, "this works"
+ *   --ts-warn    amber            warning, degraded, "not answering"
+ *   --ts-error   red              error, "this failed"
+ *
+ * ⚠️ THE SIGNAL RULE. `--ts-signal` is the accent, and it is used by the
+ * primary CTA, the progress ring, the live dot, the active tab underline
+ * and the reticle. It MUST NOT be used for an error surface: an error in
+ * green is a lie the player reads as success. Every error surface uses
+ * `--ts-error` explicitly. If you add one, use `--ts-error`.
+ *
+ * TOKEN NAMES ARE FROZEN. They keep the `--ts-` prefix even though the
+ * brand is no longer "The Specialists" — renaming them would mean
+ * touching every `var()` in every component, and redefining them means
+ * touching one file. The prefix is historical, not semantic.
+ *
+ * CONTRAST. Every text pair below was computed, not estimated, against
+ * the shipped values (docs/REBRAND-PLAN.md §3.1). `--ts-ink-dim` is the
+ * one exception: it measures 4.07:1 on the void, so it is decorative only
+ * and must never carry small UI text.
+ *
+ * ---------------------------------------------------------------------------
+ * PROVENANCE — why the GAME is amber, and two things that were never real.
+ * ---------------------------------------------------------------------------
+ *
+ * The shell used to be sampled from the actual TS 2.0 game package, not
  * eyeballed. Sources:
  *   - game/gfx/shell/btns_main.bmp     menu button art
  *   - game/gfx/shell/head_*.BMP       menu panel headers (27 tabs)
  *   - game/gfx/shell/splash.bmp        splash background
  *   - game/titles.txt                 intro text $color / $color2
  *   - game/TSManual/Images/Menu1-4.jpg in-game menu screenshots
+ *
+ * The accent was TS's `iTeamColors[0]` (0x10096974):
+ *
+ *     // crates/client/src/menus/widgets.rs
+ *     pub const TEAM_COLORS: [[u8;3];5] = [[255,170,0], ...];
+ *
+ * `iTeamColors[0]` drives the HUD status bar, the scoreboard and the team
+ * colour bars, so a live session is mostly amber. That is why the game's
+ * palette is still amber and why `--ts-warn` is amber too: the two are
+ * deliberately the same colour, so the warning in the shell and the game
+ * on screen read as one system.
  *
  * Two claims that LOOKED right and were not verified, so they are absent:
  *   - "MEMENTO MORI" as part of the emblem — grep over the whole tree
@@ -16,84 +62,84 @@
  *     yields a diagonal shard, not a ring. The reticle below is our own
  *     design in that spirit, not a reconstruction of their art.
  *
- * ACCENT — CORRECTED 2026-10-22. This was #f06e00, taken from
- * game/titles.txt `$color2 240 110 0`, which is the INTRO TEXT colour: a
- * real but incidental sample. The colour players actually see constantly
- * is amber, and it has far better provenance — TS's original team colour
- * table at `0x10096974`:
- *
- *     // crates/client/src/menus/widgets.rs
- *     pub const TEAM_COLORS: [[u8;3];5] = [[255,170,0], ...];
- *
- * `iTeamColors[0]` drives the HUD status bar, the scoreboard and the team
- * colour bars, so a live session is mostly amber. It also means the
- * handoff from landing page to game is amber-to-amber rather than a colour
- * change, and it harmonises with the gold/cream already in TSHud.vue
- * instead of adding a fourth palette.
- *
- * Typography: client.dll contains the literal "Arial" exactly once,
- * adjacent to the VGUI scheme parser. No Tahoma/Verdana/Times/Courier/
- * Impact. HUD text uses custom bitmap fonts from fonts.wad (FONT0/1/2).
- * So the authentic pairing is a plain grotesque plus bitmap glyphs —
- * which is why the display face below is a condensed grotesque and the
- * technical readouts are monospaced: neither tries to fake a bitmap font
- * we cannot ship.
+ * Typography, for the record: client.dll contains the literal "Arial"
+ * exactly once, adjacent to the VGUI scheme parser. No Tahoma/Verdana/
+ * Times/Courier/Impact. HUD text uses custom bitmap fonts from fonts.wad
+ * (FONT0/1/2). The shell is ours and is free to use louder faces; the
+ * game is not restyled at all.
  */
 
 :root {
   /* ---- surfaces, darkest to lightest -------------------------------- */
-  --ts-void: #000301; /* specialists.wad title1, dominant */
-  --ts-abyss: #060c14; /* splash.bmp */
-  --ts-panel: #292a22; /* TSManual Menu1.jpg panel bg */
-  --ts-panel-hi: #303129; /* Menu2.jpg panel bg, lighter */
-  --ts-raised: #333333; /* Menu4.jpg selection bg */
+  --ts-void: #010a04; /* the page ground */
+  --ts-abyss: #06150a;
+  --ts-panel: #06150a; /* panels, rows */
+  --ts-panel-hi: #0a1f0e; /* the top of the panel gradient */
+  --ts-raised: #0e2a13; /* selection */
 
-  /* ---- olive-khaki chrome (the menu-button family) ------------------ */
-  --ts-khaki: #ccc19a; /* btns_main.bmp button face */
-  --ts-khaki-dim: #b0a883; /* btns_main.bmp button midtone */
-  --ts-khaki-deep: #9e9574; /* btns_main.bmp button shadow */
-  --ts-header: #a69c7a; /* head_*.BMP header lettering */
-  --ts-edge: #2c2d24; /* btns_main.bmp button outline */
+  /* ---- the green family (the menu chrome used to be khaki) --------- */
+  --ts-khaki: #d8ffe2; /* ghost-white: the wordmark's first half */
+  --ts-khaki-dim: #a8e8b8;
+  --ts-khaki-deep: #6fa67c;
+  --ts-header: #9fd9ac; /* headings, small caps */
+  --ts-edge: #123a1c; /* 1px borders */
 
   /* ---- accents ------------------------------------------------------ */
-  /* THE accent: TS's iTeamColors[0] (0x10096974). HUD + scoreboard. */
-  --ts-signal: #ffaa00;
-  --ts-signal-hot: #ffc44d; /* lifted for hover */
-  /* TS green appears ONLY in the ts_logo mark. 0 pixels in a live game. */
-  --ts-green: #00a600;
-  --ts-lime: #e8ecbb; /* btns_main.bmp button highlight — the wordmark */
-  --ts-alert: #ffff00; /* head_single.BMP active tab */
+  /* THE accent: phosphor green. Nominal, live, active. */
+  --ts-signal: #00ff41;
+  --ts-signal-hot: #7cffa6; /* lifted for hover */
+  --ts-green: #00ff41; /* deprecated alias of --ts-signal */
+  --ts-lime: #d8ffe2; /* the wordmark colour */
+  --ts-alert: #ffc44d; /* warning */
+
+  /* ---- the three-colour signal language ---------------------------- */
+  --ts-ok: #00ff41; /* nominal */
+  --ts-warn: #ffc44d; /* warning / degraded */
+  --ts-error: #ff5c5c; /* error */
 
   /* ---- type --------------------------------------------------------- */
-  --ts-ink: #9e9daf; /* Menu1.jpg menu text, grey-lavender */
-  --ts-ink-bright: #e9e9e9; /* head_advanced.BMP header text highlight */
-  --ts-ink-dim: #646464; /* titles.txt $color 100 100 100 — decorative only:
-                            measures 3.50:1 on void, which is AA-large at
-                            best. Never use it for small UI text. */
-  --ts-ink-muted: #9696ab; /* AA-safe muted, same grey-lavender family as
-                             --ts-ink. Measured 6.6:1 on void. Use this
-                             for small labels that must stay readable. */
-  --ts-ink-faint: #3d3a2d; /* head_*.BMP header letter shadow */
+  --ts-ink: #d8ffe2; /* body text */
+  --ts-ink-bright: #eafff0;
+  --ts-ink-dim: #4e7a5a; /* DECORATIVE ONLY — 4.07:1 on void, AA-large only */
+  --ts-ink-muted: #6fa67c; /* small labels that must stay readable */
+  --ts-ink-faint: #2a4a31; /* letterpress shadow */
 
   /* ---- geometry ----------------------------------------------------- */
-  --ts-notch: 10px; /* chamfer depth — GoldSrc panels have angled edges */
+  /* Square corners. The chamfer was the GoldSrc panel language; the
+     terminal language is a square edge plus a phosphor left-rule. */
+  --ts-notch: 0px;
   --ts-edge-thin: 1px solid var(--ts-edge);
   --ts-edge-lit: 1px solid var(--ts-khaki-dim);
+  /* The 4px phosphor rule down a panel's leading edge. */
+  --ts-rule: 4px;
 
   /* ---- motion ------------------------------------------------------- */
   --ts-ease: cubic-bezier(0.2, 0.7, 0.3, 1);
   --ts-sweep: 240ms;
 
   /* ---- typefaces ---------------------------------------------------- */
-  /* Display: condensed grotesque, the shape of GoldSrc HUD lettering. */
-  --ts-font-display: 'Barlow Condensed', 'Arial Narrow', Arial, sans-serif;
+  /* Display: the loud, condensed poster face. */
+  --ts-font-display: 'Anton', 'Arial Narrow', Impact, sans-serif;
+  /* Body: a grotesque with room to breathe at small sizes. */
+  --ts-font-body: 'Space Grotesk', system-ui, -apple-system, sans-serif;
   /* Technical readouts: instrument-panel feel for map names and counts. */
-  --ts-font-mono: 'Share Tech Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --ts-font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 }
 
 /**
- * The chamfered panel. GoldSrc UI panels have cut corners; clip-path gives
- * us that without shipping their art. --ts-notch is the cut depth.
+ * The body face. Nothing set a body font-family before, so any text that
+ * did not opt into a display or mono face was rendering in the browser's
+ * default serif.
+ */
+body {
+  font-family: var(--ts-font-body);
+  background: var(--ts-void);
+  color: var(--ts-ink);
+}
+
+/**
+ * The panel. Square-cornered now — `--ts-notch` is 0, so the clip-path
+ * degenerates to a plain rectangle and every panel follows at once.
  */
 .ts-panel {
   position: relative;
@@ -111,9 +157,17 @@
 }
 
 /**
+ * The phosphor left-rule: a 4px accent bar down a panel's leading edge.
+ * The terminal equivalent of the chamfer we dropped.
+ */
+.ts-rule {
+  border-left: var(--ts-rule) solid var(--ts-signal);
+}
+
+/**
  * Corner ticks — the crosshair/reticle motif. Four L-shaped marks at the
  * corners of a container. Reads as a targeting overlay without pretending
- * to be their logo.
+ * to be TS's logo.
  */
 .ts-reticle::before,
 .ts-reticle::after {
@@ -155,13 +209,18 @@
   z-index: 1;
 }
 
-/** The letterpress text treatment the TS headers use: light face, hard shadow. */
+/**
+ * The letterpress text treatment the TS headers use: light face, hard
+ * shadow. One pixel, and black rather than the ink colour — at two
+ * pixels against a dark ground the offset reads as a misregistered
+ * double rather than a press.
+ */
 .ts-stamp {
   text-transform: uppercase;
   letter-spacing: 0.14em;
   font-family: var(--ts-font-display);
   font-weight: 700;
-  text-shadow: 2px 2px 0 var(--ts-ink-faint);
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.75);
 }
 
 @media (prefers-reduced-motion: reduce) {

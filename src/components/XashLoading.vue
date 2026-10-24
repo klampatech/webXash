@@ -214,8 +214,8 @@ const arcStyle = computed(() => ({
     position: absolute;
     inset: 0;
     background-image:
-      linear-gradient(rgba(240, 110, 0, 0.05) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(240, 110, 0, 0.05) 1px, transparent 1px);
+      linear-gradient(rgba(0, 255, 65, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 255, 65, 0.05) 1px, transparent 1px);
     background-size: 46px 46px;
     mask-image: radial-gradient(ellipse 70% 55% at 50% 42%, #000 20%, transparent 76%);
     pointer-events: none;
@@ -278,7 +278,7 @@ const arcStyle = computed(() => ({
   }
 
   &__ring.is-indeterminate &__ring-track {
-    stroke: rgba(166, 156, 122, 0.28);
+    stroke: rgba(0, 255, 65, 0.28);
   }
 
   &__ring-sweep.is-dim {
@@ -342,7 +342,7 @@ const arcStyle = computed(() => ({
     margin: 0;
     padding: 0.85rem 1rem;
     list-style: none;
-    background: rgba(0, 3, 1, 0.6);
+    background: rgba(1, 10, 4, 0.6);
     border: 1px solid var(--ts-edge);
   }
 
