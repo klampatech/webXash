@@ -1,6 +1,7 @@
 <template>
-  <div v-if="showLambda" class="lambda">
-    <p class="lambda__label">{{ lambdaLabel }}</p>
+  <div v-if="showConnecting" class="connecting">
+    <div class="connecting__mark" aria-hidden="true" />
+    <p class="connecting__label">{{ connectingLabel }}</p>
   </div>
   <canvas
     ref="xashCanvasElement"
@@ -124,11 +125,16 @@
     if (countdownTimer) clearInterval(countdownTimer);
   });
 
-// The lambda spinner shows only after the themed boot screen has handed
-// off, i.e. while the engine paints its first frames. It is ours, not the
-// engine's — hl-spin.svg is a frontend asset behind the WASM canvas.
-const showLambda = computed(() => !loading.value && launching.value);
-const lambdaLabel = computed(() => 'Connecting to server');
+// The connecting splash shows only after the themed boot screen has
+// handed off, i.e. while the engine paints its first frames.
+//
+// It used to be Valve's spinning Half-Life lambda. That was our own
+// frontend asset behind the WASM canvas, not the engine's — but it was
+// still Valve's logo in our product, and a fan project shipping the
+// publisher's mark is a licence-posture problem as well as a brand one.
+// It is the BulletBallet mark now.
+const showConnecting = computed(() => !loading.value && launching.value);
+const connectingLabel = computed(() => 'Connecting to server');
 
   // Data
 
@@ -289,27 +295,45 @@ const lambdaLabel = computed(() => 'Connecting to server');
     }
   }
 
-  .lambda {
+  .connecting {
     position: absolute;
     inset: 0;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 2.2rem;
     background: var(--ts-void, #010a04);
-    background-image: url('../assets/hl-spin.svg');
-    background-repeat: no-repeat;
-    background-position: center;
     z-index: 9;
 
+    /* The BB mark, masked so it takes the accent colour. */
+    &__mark {
+      height: clamp(96px, 18vh, 168px);
+      aspect-ratio: 200 / 460;
+      background-color: var(--ts-signal);
+      -webkit-mask: url('../assets/brand/bb-mark.svg') no-repeat center / contain;
+      mask: url('../assets/brand/bb-mark.svg') no-repeat center / contain;
+      animation: bb-breathe 2.8s var(--ts-ease) infinite;
+    }
+
     &__label {
-      position: absolute;
-      bottom: 14%;
       margin: 0;
       font-family: var(--ts-font-mono, monospace);
       font-size: 0.78rem;
-      letter-spacing: 0.16em;
+      letter-spacing: 0.22em;
       text-transform: uppercase;
       color: var(--ts-warn, #ffc44d);
     }
   }
+@keyframes bb-breathe {
+  0%,
+  100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 18px rgba(0, 255, 65, 0.55));
+  }
+  50% {
+    opacity: 0.55;
+    filter: drop-shadow(0 0 34px rgba(0, 255, 65, 0.25));
+  }
+}
 </style>

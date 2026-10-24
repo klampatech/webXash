@@ -11,6 +11,8 @@
     <div class="ts-boot__grid" aria-hidden="true" />
 
     <div class="ts-boot__stage">
+      <div class="ts-boot__mark" aria-hidden="true" />
+
       <div
         class="ts-boot__ring"
         :class="{ 'is-indeterminate': percent == null, 'is-done': done }"
@@ -48,7 +50,10 @@
         </div>
       </div>
 
-      <h1 class="ts-boot__title">The Specialists</h1>
+      <h1 class="ts-boot__title">
+        <span class="ts-boot__title-first">Bullet</span
+        ><span class="ts-boot__title-second">Ballet</span>
+      </h1>
       <p class="ts-boot__phase">{{ currentLabel }}</p>
     </div>
 
@@ -230,6 +235,17 @@ const arcStyle = computed(() => ({
     text-align: center;
   }
 
+  /* The BB mark, masked so it takes the accent colour. */
+  &__mark {
+    height: clamp(34px, 6vh, 48px);
+    aspect-ratio: 200 / 460;
+    margin-bottom: 1.1rem;
+    background-color: var(--ts-signal);
+    -webkit-mask: url('../assets/brand/bb-mark.svg') no-repeat center / contain;
+    mask: url('../assets/brand/bb-mark.svg') no-repeat center / contain;
+    filter: drop-shadow(0 0 16px rgba(0, 255, 65, 0.5));
+  }
+
   /* ---- the ring ---- */
   &__ring {
     position: relative;
@@ -237,7 +253,7 @@ const arcStyle = computed(() => ({
     aspect-ratio: 1;
     display: grid;
     place-items: center;
-    margin-bottom: 1.4rem;
+    margin-bottom: 1.2rem;
 
     svg {
       position: absolute;
@@ -318,11 +334,19 @@ const arcStyle = computed(() => ({
     margin: 0;
     font-family: var(--ts-font-display);
     font-size: clamp(1.5rem, 4.2vw, 2.1rem);
-    font-weight: 700;
-    letter-spacing: 0.2em;
+    font-weight: 400;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
+    text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.75);
+  }
+
+  /* BULLET in ghost-white, BALLET in phosphor — the mock's two-tone split. */
+  &__title-first {
     color: var(--ts-lime);
-    text-shadow: 2px 2px 0 var(--ts-ink-faint);
+  }
+
+  &__title-second {
+    color: var(--ts-signal);
   }
 
   &__phase {

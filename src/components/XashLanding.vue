@@ -14,12 +14,7 @@
     <!-- the stage: the code rain, the grid, the glow, the emblem -->
     <div class="ts-landing__bg" aria-hidden="true">
       <div class="ts-landing__rain">
-        <span
-          v-for="(column, i) in rainColumns"
-          :key="i"
-          :style="rainStyle(i)"
-          >{{ column }}</span
-        >
+        <span v-for="(strip, i) in rainStrips" :key="i" :style="rainStyle(strip, i)" />
       </div>
       <div class="ts-landing__grid" />
       <div class="ts-landing__glow" />
@@ -193,37 +188,72 @@ const launchError = ref('');
 /**
  * The code rain.
  *
- * ONE STRING PER COLUMN. The mock's rain is twelve columns of one
+ * ONE GLYPH STRIP PER COLUMN. The mock's rain is twelve columns of one
  * identical string, and its animation translates only -8% -> +8% of a
  * 120%-tall element, so the glyphs shimmer in place and never travel.
- * Each column here carries its own string and translates a full column
+ * Each column here carries its own strip and travels a full tile
  * height, so it actually rains.
  *
- * The strings are generated from a fixed seed on purpose: the rain must
+ * WHY A BACKGROUND AND NOT TEXT
+ * -----------------------------
+ * A seamless loop needs the pattern's period to equal the travel
+ * distance EXACTLY. With text, the period is the glyph count times the
+ * glyph advance — a number that depends on the font, the font size and
+ * the viewport. Get it slightly wrong and a gap opens at the end of the
+ * cycle and the next cycle POPS the top back in, which is exactly what
+ * was reported: "sometimes the lines just appear rather than always
+ * raining down from the top".
+ *
+ * A repeating background has no such problem. `background-size` fixes
+ * the tile at an exact pixel height, the travel is that same height in
+ * pixels, and the strip repeats forever underneath. It is seamless for
+ * ANY viewport, at any size, with no measurement anywhere.
+ *
+ * The strips are generated from a fixed seed on purpose: the rain must
  * be the same on every load, so the page never reflows under the
  * reader, and a screenshot of it is reproducible.
  */
 const RAIN_GLYPHS = '0123456789ｱｲｳｴｵABCDEFXYZ<>/\\|[]{}+=*#$%&@';
-const RAIN_LENGTH = 90;
+/** Glyphs per tile. 64 at 19px is a 1216px tile. */
+const RAIN_TILE_GLYPHS = 64;
+/** The tile's height in pixels. The travel is EXACTLY this. */
+const RAIN_TILE_PX = 1216;
+const RAIN_GLYPH_STEP = RAIN_TILE_PX / RAIN_TILE_GLYPHS;
 
-function rainColumn(seed: number): string {
-  let s = (seed + 1) * 48271;
-  let out = '';
-  for (let i = 0; i < RAIN_LENGTH; i++) {
-    s = (s * 48271) % 2147483647;
-    out += RAIN_GLYPHS[Math.floor((s / 2147483647) * RAIN_GLYPHS.length)];
-  }
-  return out;
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
-const rainColumns = Array.from({ length: 16 }, (_, i) => rainColumn(i));
+/** One column's glyph strip, as a repeating background image. */
+function rainStrip(seed: number): string {
+  let s = (seed + 1) * 48271;
+  const rows: string[] = [];
+  for (let i = 0; i < RAIN_TILE_GLYPHS; i++) {
+    s = (s * 48271) % 2147483647;
+    const g = RAIN_GLYPHS[Math.floor((s / 2147483647) * RAIN_GLYPHS.length)];
+    rows.push(
+      `<text x="10" y="${(14 + i * RAIN_GLYPH_STEP).toFixed(2)}" text-anchor="middle">${escapeXml(g)}</text>`,
+    );
+  }
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="${RAIN_TILE_PX}" ` +
+    `font-family="monospace" font-size="15" fill="#00ff41">${rows.join('')}</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
+
+const rainStrips = Array.from({ length: 16 }, (_, i) => rainStrip(i));
 
 /** Each column's position, phase and speed, so they do not march in step. */
-function rainStyle(i: number) {
+function rainStyle(strip: string, i: number) {
   return {
-    left: (i / rainColumns.length) * 100 + '%',
+    left: (i / rainStrips.length) * 100 + '%',
+    backgroundImage: strip,
     animationDelay: -(i * 0.83) + 's',
-    animationDuration: 9 + (i % 5) * 1.7 + 's',
+    animationDuration: 10 + (i % 5) * 1.6 + 's',
   };
 }
 
@@ -515,16 +545,15 @@ onMounted(() => {
 
     span {
       position: absolute;
-      top: 0;
-      height: 200%;
-      writing-mode: vertical-rl;
-      white-space: nowrap;
-      font-family: var(--ts-font-mono);
-      font-size: 0.92rem;
-      line-height: 1.3;
-      color: var(--ts-signal);
+      /* One tile above the window, and three tiles tall, so the column
+         is always in flight and always covers the window. */
+      top: -1216px;
+      height: 3648px;
+      width: 20px;
+      background-repeat: repeat-y;
+      background-size: 20px 1216px;
       opacity: 0.2;
-      animation: ts-rain 11s linear infinite;
+      animation: ts-rain 12s linear infinite;
       will-change: transform;
     }
   }
@@ -982,7 +1011,10 @@ onMounted(() => {
     transform: translateY(0);
   }
   to {
-    transform: translateY(50%);
+    /* EXACTLY one tile height — the same number as background-size. So
+       the strip slides down precisely one tile and the repeat underneath
+       takes its place. The loop has no seam and no pop. */
+    transform: translateY(1216px);
   }
 }
 
