@@ -14,8 +14,11 @@
 //
 // The engine's keydown listener DOES fire, DOES reach `HUD_Key_Event`, and
 // DOES run the engine's own bind table. The earlier conclusion — recorded in
-// the old header comment, in `sdl-key-inject.ts`, and in the how-to-play
-// copy — was wrong.
+// this file's own old header, and in the how-to-play copy — was wrong. The
+// probe built on that conclusion (`sdl-key-inject.ts`, which pushed
+// synthetic SDL events into the engine's queue) was deleted on 2026-10-24:
+// it was never imported, and its header still asserted the withdrawn
+// theory.
 //
 // The engine's bind table (ts/config.cfg) already covers everything:
 //
