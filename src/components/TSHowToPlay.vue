@@ -53,12 +53,12 @@ const items = [
   },
   {
     step: '03',
-    title: 'Keyboard events bypassed, deliberately',
+    title: 'Your keys go straight to the game',
     body:
-      'The published WASM engine never drains its SDL event queue, so no ' +
-      'keypress reaches the game. We route your keys as engine commands ' +
-      'instead. Movement, weapons, the scoreboard and spawning all work; ' +
-      'client-side menus drawn by key handlers still do not.',
+      'The engine binds them itself — W to move, X for third person, Y to ' +
+      'chat — so nothing is translated on the way in. We only open ' +
+      'The Specialists\u2019 anti-script gate, so a real keypress counts as ' +
+      'a real keypress instead of being filtered out as scripted input.',
   },
 ];
 
@@ -69,9 +69,10 @@ const controls = [
   { keys: ['LMB'], action: 'Fire — and spawn, when observing' },
   { keys: ['1', '…', '0'], action: 'Weapon slots' },
   { keys: ['R'], action: 'Reload' },
-  { keys: ['B'], action: 'Buy menu — while dead or observing' },
+  { keys: ['X'], action: 'Third person — while alive' },
+  { keys: ['Y'], action: 'Chat' },
   { keys: ['Tab'], action: 'Scoreboard (hold)' },
-  { keys: ['`'], action: 'Developer console' },
+  { keys: ['Esc'], action: 'Release the mouse, then open options' },
 ];
 </script>
 

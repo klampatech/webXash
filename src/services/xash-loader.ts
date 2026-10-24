@@ -8,6 +8,7 @@ import { getTsmodArchive } from '/@/services/ts-mod-assets';
 import SaveManager from '/@/services/save-manager.ts';
 import { tsPump } from '/@/services/ts-pump.ts';
 import { useXashStore } from '/@/stores/store.ts';
+import { logDebug } from '/@/services/debug-log.ts';
 import { delay } from '/@/utils/helpers.ts';
 import { DEFAULT_GAME_DIR } from '/@/services/save-manager.ts';
 
@@ -1250,6 +1251,28 @@ class XashLoader {
 
     if (options.enableCheats) {
       options.xash.Cmd_ExecuteString('sv_cheats 1');
+    }
+
+    // Take the keys we do not want away from the player.
+    //
+    // The engine's own bind table (ts/config.cfg) is the source of truth,
+    // and it binds all of these. Removing our own bindings is not enough:
+    // the engine would still run its own. So we clear them in the engine's
+    // bind table, which is the only place they exist now that keys reach
+    // the engine natively.
+    //
+    //   b       -> buy          the native buy menu, which has no DOM UI
+    //   ` and ~ -> toggleconsole  the console, and the way out of the server
+    //   ESCAPE  -> cancelselect   opens the GoldSrc main menu — the
+    //                             "dump out of the match" menu, whose Quit
+    //                             button ends on a black screen
+    //
+    // ESCAPE is handled in the page instead (services/escape-gate.ts): the
+    // first press releases the pointer lock, the second opens the options
+    // overlay. The rebind here is the belt to that braces.
+    for (const cmd of ['bind b ""', 'bind ` ""', 'bind ~ ""', 'bind ESCAPE ""']) {
+      logDebug(`[bind] ${cmd}`);
+      options.xash.Cmd_ExecuteString(cmd);
     }
   }
 
