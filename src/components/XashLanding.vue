@@ -119,7 +119,6 @@ import {
   resolveLaunchTarget,
   type TsServer,
 } from '/@/services/ts-server-list.ts';
-import setCanvasLoading, { clearCanvasLoading } from '/@/utils/setCanvasLoading.ts';
 import TSServerList from '/@/components/TSServerList.vue';
 import TSHowToPlay from '/@/components/TSHowToPlay.vue';
 import { enterFullscreen } from '/@/services/fullscreen.ts';
@@ -206,7 +205,6 @@ async function launch(options?: string) {
   launchError.value = '';
   isStarting.value = true;
   onLaunching(true);
-  setCanvasLoading();
 
   // Take over the screen BEFORE the zip download, not just for the
   // engine boot. onStartLoading is otherwise only called inside
@@ -276,10 +274,6 @@ async function launch(options?: string) {
   } finally {
     isStarting.value = false;
     onLaunching(false);
-    // The lambda spinner background was only ever added, never removed,
-    // so it stayed on the canvas for the whole session. Invisible in-game
-    // because the engine paints opaque pixels over it, but dead state.
-    clearCanvasLoading();
   }
 }
 
@@ -351,9 +345,12 @@ onMounted(() => {
   z-index: 10;
   overflow-y: auto;
   color: var(--ts-ink);
-  /* Opaque on purpose: the game canvas sits at z-index 9 and paints
-     hl.svg (the Half-Life lambda) as a centered background. Any alpha
-     here lets it show through and collide with the server list. */
+  /* Opaque on purpose: the game canvas sits at z-index 9 behind this
+     page. Any alpha here lets the canvas show through and collide with
+     the server list. (The canvas used to paint the Half-Life lambda as
+     a centered background, which is how a stray logo used to ghost
+     through the running game — that background is gone; see
+     src/assets/main.css.) */
   background: var(--ts-void);
   pointer-events: auto;
 

@@ -25,7 +25,27 @@ canvas {
     left: 0;
     width: 100vw;
     height: 100vh;
-    background-image: url("./hl.svg");
-    background-repeat: no-repeat;
-    background-position: center;
+    /*
+     * NO BACKGROUND IMAGE. READ THIS BEFORE ADDING ONE BACK.
+     *
+     * The engine's WebGL canvas is TRANSPARENT wherever its own pixels
+     * are not fully opaque, so whatever is painted on the canvas ELEMENT
+     * shows through the running game.
+     *
+     * That was the Half-Life lambda: `background-image: url("./hl.svg")`,
+     * centred. It ghosted through the game as a faint circle-and-lambda
+     * over the scene — visible only where the engine left the frame
+     * translucent, which made it read as a lighting artefact rather than
+     * a logo. Proven in a real browser: booting the game, then removing
+     * this background at runtime, made the logo disappear from the same
+     * scene.
+     *
+     * A solid ground is the fix. There is nothing to see through any
+     * more, and there is no Half-Life logo on our canvas.
+     *
+     * The boot screen and the "connecting to server" splash are DOM
+     * siblings of this canvas and cover it while the engine starts, so
+     * the pre-boot look comes from there — not from here.
+     */
+    background: var(--ts-void, #000301);
 }

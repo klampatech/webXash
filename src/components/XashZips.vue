@@ -21,7 +21,6 @@
   import zipList from '/@/config/games';
   import { useXashStore } from '/@/stores/store';
   import { storeToRefs } from 'pinia';
-  import setCanvasLoading from '/@/utils/setCanvasLoading.ts';
   import { XashLoader } from '/@/services';
 
   const store = useXashStore();
@@ -48,7 +47,6 @@
       return;
     }
 
-    setCanvasLoading();
     const zip = await XashLoader.downloadZip(
       selectedZip.value,
       selectedGame.value.publicDir,
