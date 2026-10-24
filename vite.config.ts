@@ -75,5 +75,41 @@ export default defineConfig({
       'Cross-Origin-Embedder-Policy': 'credentialless',
       'Cross-Origin-Opener-Policy': 'same-origin',
     },
+    // The dev page must reach the WebSocket↔UDP bridge the same way
+    // production does: on the page's own origin, at /bridge.
+    //
+    // WHY THIS EXISTS
+    // ---------------
+    // The client picks its bridge address from the launch options. In
+    // production `launchOptionsFor()` names the bridge explicitly
+    // (`+bridge bulletballet.dev:443`) and Caddy terminates TLS and
+    // proxies /bridge to the bridge process. In dev there is no Caddy:
+    // the page is served by Vite, and `launchOptionsFor()` still adds
+    // `+bridge <the dev server's own host:port>` — because the dev page
+    // is HTTPS too, and the condition that adds it is "the page is
+    // secure", not "this is production".
+    //
+    // The result was a WebSocket to `wss://<dev host>:5174/bridge`,
+    // where Vite has no such endpoint: the socket sat in CONNECTING
+    // forever, the engine's connect packets were dropped ("ws not
+    // open"), and the client showed nothing but
+    // `Connecting to <ip> (retry #N)` — a dev loop that could never
+    // reach a dedicated server.
+    //
+    // Proxying /bridge to the local bridge fixes it the same way
+    // production does, and it also means the browser only ever talks to
+    // its own origin (no mixed-content, no cross-origin WS).
+    proxy: {
+      '/bridge': {
+        target: 'ws://127.0.0.1:27017',
+        ws: true,
+        changeOrigin: true,
+      },
+      '/ws': {
+        target: 'ws://127.0.0.1:27017',
+        ws: true,
+        changeOrigin: true,
+      },
+    },
   },
 });
