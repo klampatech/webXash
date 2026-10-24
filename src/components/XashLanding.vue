@@ -1,22 +1,52 @@
 <template>
   <div class="ts-landing" :class="{ 'ts-landing--loading': isStarting }">
-    <!-- ambient backdrop -->
+    <!-- fixed top bar -->
+    <div class="ts-landing__topbar">
+      <span class="ts-landing__status">
+        <span class="ts-landing__status-dot" aria-hidden="true" />
+        {{ liveStatus }}
+      </span>
+      <span class="ts-landing__topbar-right">
+        <span class="ts-landing__topbar-live">Live</span>
+      </span>
+    </div>
+
+    <!-- the stage: the code rain, the grid, the glow, the emblem -->
     <div class="ts-landing__bg" aria-hidden="true">
+      <div class="ts-landing__rain">
+        <span
+          v-for="(column, i) in rainColumns"
+          :key="i"
+          :style="rainStyle(i)"
+          >{{ column }}</span
+        >
+      </div>
       <div class="ts-landing__grid" />
       <div class="ts-landing__glow" />
-      <!-- The circular emblem. wiki_logo.jpg carries a large circular
-           mass beneath the wordmark (verified by OCR); this rebuilds it
-           in CSS rather than shipping their art. Two concentric rings
-           plus radiating tick streaks — a targeting-dial reading. -->
       <div class="ts-landing__emblem" />
     </div>
 
     <div class="ts-landing__inner">
-      <!-- masthead -->
-      <header class="ts-landing__masthead">
+      <!-- nav -->
+      <nav class="ts-landing__nav">
+        <div class="ts-landing__brand">
+          <span class="ts-landing__brand-mark" aria-hidden="true" />
+          <span class="ts-landing__brand-name">
+            Bullet<span>Ballet</span>
+          </span>
+        </div>
+        <div class="ts-landing__nav-links">
+          <a href="https://www.tsmod.net/" target="_blank" rel="noreferrer noopener">TS Mod</a>
+          <a href="https://github.com/x8BitRain/webXash" target="_blank" rel="noreferrer noopener">webXash</a>
+          <a href="https://github.com/FWGS/xash3d-fwgs" target="_blank" rel="noreferrer noopener">Xash3D FWGS</a>
+        </div>
+      </nav>
+
+      <!-- hero -->
+      <header class="ts-landing__hero">
         <div class="ts-landing__eyebrow">
           <span class="ts-landing__dot" aria-hidden="true" />
-          Half-Life 1 · running in a browser
+          Scene 01 / Half-Life 1 · running in a browser
         </div>
 
         <div class="ts-landing__mark" aria-hidden="true" />
@@ -26,9 +56,24 @@
           ><span class="ts-landing__title-second">Ballet</span>
         </h1>
 
-        <p class="ts-landing__tagline">
+        <!-- the dashed rule: a phosphor scan line with a solid cap -->
+        <svg class="ts-landing__rule" viewBox="0 0 560 24" preserveAspectRatio="none" aria-hidden="true">
+          <line
+            x1="0"
+            y1="12"
+            x2="520"
+            y2="12"
+            stroke="currentColor"
+            stroke-width="3"
+            stroke-dasharray="2 10"
+            stroke-linecap="round"
+          />
+          <path d="M520 6h30v12h-30z" fill="var(--ts-lime)" />
+        </svg>
+
+        <p class="ts-landing__lede">
           Tactical deathmatch with the original ruleset — ported to
-          WebAssembly, served from a dedicated server.
+          WebAssembly, served from a dedicated server. No install.
         </p>
 
         <!-- the one big thing to do -->
@@ -44,8 +89,8 @@
         </button>
         <!--
           A launch that could not start says so, here. Failing silently
-          is what made the first production bug take so long to find:
-          the button did nothing visible and the reason was three layers
+          is what made the first production bug take a day to find: the
+          button did nothing visible and the reason was three layers
           down.
         -->
         <p v-if="launchError" class="ts-landing__error">{{ launchError }}</p>
@@ -67,7 +112,10 @@
             {{ isStarting ? `Loading game data · ${downloadProgress}%` : '' }}
           </span>
         </div>
+      </header>
 
+      <!-- panels -->
+      <div class="ts-landing__panel">
         <nav class="ts-landing__tabs" role="tablist">
           <button
             v-for="tab in tabs"
@@ -81,16 +129,13 @@
             {{ tab.label }}
           </button>
         </nav>
-      </header>
 
-      <!-- panels -->
-      <div class="ts-landing__panel">
         <section
           v-show="activeTab === 'servers'"
           role="tabpanel"
           class="ts-landing__section"
         >
-          <TSServerList @join="onJoinServer" />
+          <TSServerList @join="onJoinServer" @servers="onServers" />
         </section>
 
         <section
@@ -103,13 +148,18 @@
       </div>
 
       <footer class="ts-landing__foot">
-        <span>Fan project · not affiliated with Valve or Half-Life</span>
+        <span class="ts-landing__foot-label">BulletBallet</span>
         <span class="ts-landing__foot-links">
           <a href="https://www.tsmod.net/" target="_blank" rel="noreferrer noopener">TS Mod</a>
           <a href="https://github.com/x8BitRain/webXash" target="_blank" rel="noreferrer noopener">webXash</a>
           <a href="https://github.com/FWGS/xash3d-fwgs" target="_blank" rel="noreferrer noopener">Xash3D FWGS</a>
         </span>
       </footer>
+    </div>
+
+    <!-- fixed bottom bar -->
+    <div class="ts-landing__bottombar">
+      Fan project · not affiliated with Valve or Half-Life
     </div>
   </div>
 </template>
@@ -139,6 +189,64 @@ const isStarting = ref(false);
 // thrown away, because "nothing happened when I pressed Play" is the
 // least debuggable failure there is.
 const launchError = ref('');
+
+/**
+ * The code rain.
+ *
+ * ONE STRING PER COLUMN. The mock's rain is twelve columns of one
+ * identical string, and its animation translates only -8% -> +8% of a
+ * 120%-tall element, so the glyphs shimmer in place and never travel.
+ * Each column here carries its own string and translates a full column
+ * height, so it actually rains.
+ *
+ * The strings are generated from a fixed seed on purpose: the rain must
+ * be the same on every load, so the page never reflows under the
+ * reader, and a screenshot of it is reproducible.
+ */
+const RAIN_GLYPHS = '0123456789ｱｲｳｴｵABCDEFXYZ<>/\\|[]{}+=*#$%&@';
+const RAIN_LENGTH = 90;
+
+function rainColumn(seed: number): string {
+  let s = (seed + 1) * 48271;
+  let out = '';
+  for (let i = 0; i < RAIN_LENGTH; i++) {
+    s = (s * 48271) % 2147483647;
+    out += RAIN_GLYPHS[Math.floor((s / 2147483647) * RAIN_GLYPHS.length)];
+  }
+  return out;
+}
+
+const rainColumns = Array.from({ length: 16 }, (_, i) => rainColumn(i));
+
+/** Each column's position, phase and speed, so they do not march in step. */
+function rainStyle(i: number) {
+  return {
+    left: (i / rainColumns.length) * 100 + '%',
+    animationDelay: -(i * 0.83) + 's',
+    animationDuration: 9 + (i % 5) * 1.7 + 's',
+  };
+}
+
+/**
+ * The live status in the top bar.
+ *
+ * The registry already publishes the current map and the real human
+ * count, and the server list polls on a timer, so this is real data
+ * rather than a decorative string.
+ */
+const knownServers = ref<TsServer[]>([]);
+
+const liveStatus = computed(() => {
+  const s = knownServers.value[0];
+  if (!s) return 'Scanning for servers…';
+  const humans = s.humans ?? s.players ?? 0;
+  const who = humans === 1 ? '1 player' : `${humans} players`;
+  return `${s.map} · ${who}`;
+});
+
+function onServers(servers: TsServer[]) {
+  knownServers.value = servers;
+}
 
 const store = useXashStore();
 const {
@@ -318,33 +426,6 @@ onMounted(() => {
 
 <style scoped lang="scss">
 .ts-landing {
-  &__fullscreen {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    margin-top: 0.75rem;
-    font-size: 0.8rem;
-    color: var(--ts-ink-muted, #6fa67c);
-    cursor: pointer;
-    user-select: none;
-
-    input {
-      accent-color: var(--ts-signal, #00ff41);
-      cursor: pointer;
-    }
-  }
-
-  &__error {
-    margin: 1rem auto 0;
-    max-width: 34rem;
-    text-align: center;
-    font-family: var(--ts-font-mono, monospace);
-    font-size: 0.78rem;
-    line-height: 1.6;
-    letter-spacing: 0.04em;
-    color: var(--ts-error, #ff5c5c);
-  }
-
   position: absolute;
   inset: 0;
   z-index: 10;
@@ -359,12 +440,93 @@ onMounted(() => {
   background: var(--ts-void);
   pointer-events: auto;
 
-  /* ---- backdrop ---- */
+  /* ---- the fixed bars ------------------------------------------------ */
+  &__topbar,
+  &__bottombar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    z-index: 7;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 2.4rem;
+    padding: 0 1.5rem;
+    background: #000;
+    font-family: var(--ts-font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--ts-ink-muted);
+  }
+
+  &__topbar {
+    top: 0;
+  }
+
+  &__bottombar {
+    bottom: 0;
+    justify-content: center;
+  }
+
+  &__topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+  }
+
+  &__topbar-live {
+    color: var(--ts-signal);
+  }
+
+  &__status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+  }
+
+  &__status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--ts-signal);
+    box-shadow: 0 0 8px var(--ts-signal);
+    animation: ts-pulse 2.4s var(--ts-ease) infinite;
+  }
+
+  /* ---- the stage ----------------------------------------------------- */
   &__bg {
     position: absolute;
     inset: 0;
+    z-index: 0;
     overflow: hidden;
     pointer-events: none;
+  }
+
+  /* The code rain. One string per column, each travelling a full column
+     height — the mock's travels +/-8% of a 120%-tall element, so its
+     glyphs shimmer in place and never actually rain. */
+  &__rain {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(180deg, transparent, #000 14%, #000 76%, transparent);
+    mask-image: linear-gradient(180deg, transparent, #000 14%, #000 76%, transparent);
+
+    span {
+      position: absolute;
+      top: 0;
+      height: 200%;
+      writing-mode: vertical-rl;
+      white-space: nowrap;
+      font-family: var(--ts-font-mono);
+      font-size: 0.92rem;
+      line-height: 1.3;
+      color: var(--ts-signal);
+      opacity: 0.2;
+      animation: ts-rain 11s linear infinite;
+      will-change: transform;
+    }
   }
 
   /* faint tactical grid — reads as a targeting overlay */
@@ -375,10 +537,11 @@ onMounted(() => {
       linear-gradient(rgba(0, 255, 65, 0.055) 1px, transparent 1px),
       linear-gradient(90deg, rgba(0, 255, 65, 0.055) 1px, transparent 1px);
     background-size: 46px 46px;
+    -webkit-mask-image: radial-gradient(ellipse 80% 62% at 50% 34%, #000 25%, transparent 78%);
     mask-image: radial-gradient(ellipse 80% 62% at 50% 34%, #000 25%, transparent 78%);
   }
 
-  /* orange horizon glow behind the wordmark */
+  /* the phosphor horizon glow behind the wordmark */
   &__glow {
     position: absolute;
     top: -22vh;
@@ -394,6 +557,53 @@ onMounted(() => {
     );
   }
 
+  /* the emblem: concentric rings + radiating ticks, behind the wordmark */
+  &__emblem {
+    position: absolute;
+    top: 34%;
+    left: 50%;
+    width: min(760px, 96vw);
+    aspect-ratio: 1;
+    transform: translate(-50%, -50%);
+    border: 2px solid rgba(0, 255, 65, 0.17);
+    border-radius: 50%;
+    pointer-events: none;
+
+    /* inner ring, offset in rather than inset so it reads as depth */
+    &::before {
+      content: '';
+      position: absolute;
+      inset: 14px;
+      border: 1px solid rgba(216, 255, 226, 0.12);
+      border-radius: 50%;
+    }
+
+    /* radiating streaks — the tick marks on a dial */
+    &::after {
+      content: '';
+      position: absolute;
+      inset: -14px;
+      border-radius: 50%;
+      background: repeating-conic-gradient(
+        from 0deg,
+        rgba(0, 255, 65, 0.09) 0deg 1.2deg,
+        transparent 1.2deg 15deg
+      );
+      /* keep the streaks outside the rings */
+      -webkit-mask: radial-gradient(
+        circle at center,
+        transparent 0 49.6%,
+        #000 50.4% 100%
+      );
+      mask: radial-gradient(
+        circle at center,
+        transparent 0 49.6%,
+        #000 50.4% 100%
+      );
+    }
+  }
+
+  /* ---- the column ---------------------------------------------------- */
   &__inner {
     position: relative;
     z-index: 1;
@@ -408,58 +618,80 @@ onMounted(() => {
     & > * {
       flex-shrink: 0;
     }
-    justify-content: center;
-    gap: clamp(1rem, 2.6vh, 1.9rem);
+    /* `margin: auto 0` on the hero, NOT `justify-content: center` on the
+       parent: centring a scroll container's content with justify-content
+       pushes the overflow ABOVE the scroll origin, where it cannot be
+       scrolled back to. `margin: auto` centres in the free space and
+       leaves the content reachable when there is none. */
+    justify-content: flex-start;
+    gap: clamp(0.7rem, 1.7vh, 1.3rem);
     width: 100%;
     max-width: 820px;
     min-height: 100%;
     margin: 0 auto;
-    padding: clamp(1.5rem, 4vh, 3rem) 1.4rem 1.5rem;
+    /* clear the fixed bars */
+    padding: 2.9rem 1.4rem 4rem;
   }
 
-  /* the emblem: concentric rings + radiating ticks, behind the wordmark */
-  &__emblem {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: min(620px, 92vw);
-    aspect-ratio: 1;
-    transform: translate(-50%, -46%);
-    border: 2px solid rgba(0, 255, 65, 0.28);
-    border-radius: 50%;
-    pointer-events: none;
+  /* ---- nav ----------------------------------------------------------- */
+  &__nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    width: 100%;
+    max-width: 1120px;
+  }
 
-    /* inner ring, offset in rather than inset so it reads as depth */
-    &::before {
-      content: '';
-      position: absolute;
-      inset: 14px;
-      border: 1px solid rgba(216, 255, 226, 0.2);
-      border-radius: 50%;
-    }
+  &__brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
 
-    /* radiating streaks — the tick marks on a dial */
-    &::after {
-      content: '';
-      position: absolute;
-      inset: -14px;
-      border-radius: 50%;
-      background: repeating-conic-gradient(
-        from 0deg,
-        rgba(0, 255, 65, 0.16) 0deg 1.2deg,
-        transparent 1.2deg 15deg
-      );
-      /* keep the streaks outside the rings */
-      mask: radial-gradient(
-        circle at center,
-        transparent 0 49.6%,
-        #000 50.4% 100%
-      );
+  /* The mark, masked so it takes the accent colour like everything else. */
+  &__brand-mark {
+    width: 13px;
+    height: 30px;
+    flex: none;
+    background-color: var(--ts-signal);
+    -webkit-mask: url('../assets/brand/bb-mark.svg') no-repeat center / contain;
+    mask: url('../assets/brand/bb-mark.svg') no-repeat center / contain;
+  }
+
+  &__brand-name {
+    font-family: var(--ts-font-display);
+    font-size: 1.05rem;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--ts-lime);
+
+    span {
+      color: var(--ts-signal);
     }
   }
 
-  /* ---- masthead ---- */
-  &__masthead {
+  &__nav-links {
+    display: flex;
+    gap: 1.4rem;
+
+    a {
+      font-family: var(--ts-font-mono);
+      font-size: 0.66rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--ts-ink-muted);
+      text-decoration: none;
+      transition: color var(--ts-sweep) var(--ts-ease);
+
+      &:hover {
+        color: var(--ts-signal);
+      }
+    }
+  }
+
+  /* ---- hero ---------------------------------------------------------- */
+  &__hero {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -471,7 +703,7 @@ onMounted(() => {
     align-items: center;
     gap: 0.5rem;
     font-family: var(--ts-font-mono);
-    font-size: 0.72rem;
+    font-size: 0.66rem;
     letter-spacing: 0.22em;
     text-transform: uppercase;
     color: var(--ts-header);
@@ -488,27 +720,29 @@ onMounted(() => {
 
   /* The BB mark, masked rather than <img>-ed so it takes the accent
      colour like everything else. A relative URL, because Vite resolves
-     CSS urls relative to the file, not from the project root. */
+     CSS urls relative to the file, not from the project root.
+     Sized by HEIGHT: the mark is 200x460, so a width-based clamp would
+     make it three times taller than the mock's. */
   &__mark {
-    width: clamp(52px, 7.5vw, 88px);
+    height: clamp(84px, 15vh, 150px);
     aspect-ratio: 200 / 460;
-    margin: 0 auto;
+    margin: 0.55rem auto 0;
     background-color: var(--ts-signal);
     -webkit-mask: url('../assets/brand/bb-mark.svg') no-repeat center / contain;
     mask: url('../assets/brand/bb-mark.svg') no-repeat center / contain;
-    filter: drop-shadow(0 0 22px rgba(0, 255, 65, 0.5));
+    filter: drop-shadow(0 0 26px rgba(0, 255, 65, 0.5));
   }
 
   &__title {
-    margin: 0.5rem 0 0;
+    margin: 0.7rem 0 0;
     font-family: var(--ts-font-display);
-    font-size: clamp(3.1rem, 11vw, 5.6rem);
-    font-weight: 700;
-    line-height: 0.92;
-    letter-spacing: 0.06em;
+    font-size: clamp(48px, min(9vw, 10.5vh), 118px);
+    font-weight: 400;
+    line-height: 0.9;
+    letter-spacing: 0.02em;
     text-transform: uppercase;
     text-shadow:
-      0 0 34px rgba(0, 255, 65, 0.3),
+      0 0 40px rgba(0, 255, 65, 0.3),
       3px 3px 0 rgba(42, 74, 49, 0.9);
   }
 
@@ -521,26 +755,34 @@ onMounted(() => {
     color: var(--ts-signal);
   }
 
-  &__tagline {
-    max-width: 46ch;
-    margin: 0.85rem 0 0;
-    font-size: 0.94rem;
+  /* The dashed rule: a phosphor scan line with a solid cap. */
+  &__rule {
+    width: min(520px, 72vw);
+    height: 16px;
+    margin-top: 0.7rem;
+    color: var(--ts-signal);
+  }
+
+  &__lede {
+    max-width: 50ch;
+    margin: 0.6rem 0 0;
+    font-size: 0.96rem;
     line-height: 1.6;
     color: var(--ts-ink);
   }
 
-  /* ---- the big button ---- */
+  /* ---- the big button ------------------------------------------------ */
   &__play {
     position: relative;
     display: inline-flex;
     align-items: center;
     gap: 0.85rem;
-    margin-top: clamp(1.4rem, 3.5vh, 2.2rem);
-    padding: 1.05rem 4.4rem;
+    margin-top: 1.05rem;
+    padding: 0.8rem 3.4rem;
     font-family: var(--ts-font-display);
-    font-size: 1.65rem;
-    font-weight: 700;
-    letter-spacing: 0.2em;
+    font-size: 1.5rem;
+    font-weight: 400;
+    letter-spacing: 0.22em;
     text-transform: uppercase;
     color: var(--ts-void);
     background: linear-gradient(180deg, var(--ts-signal-hot) 0%, var(--ts-signal) 100%);
@@ -568,7 +810,7 @@ onMounted(() => {
   }
 
   &__play-glyph {
-    font-size: 1.15rem;
+    font-size: 0.9em;
     line-height: 1;
   }
 
@@ -577,14 +819,49 @@ onMounted(() => {
     margin-right: -0.2em;
   }
 
+  &__error {
+    margin: 0.9rem auto 0;
+    max-width: 34rem;
+    text-align: center;
+    font-family: var(--ts-font-mono, monospace);
+    font-size: 0.78rem;
+    line-height: 1.6;
+    letter-spacing: 0.04em;
+    color: var(--ts-error, #ff5c5c);
+  }
+
+  &__fullscreen {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.55rem;
+    font-size: 0.78rem;
+    color: var(--ts-ink-muted, #6fa67c);
+    cursor: pointer;
+    user-select: none;
+
+    input {
+      accent-color: var(--ts-signal, #00ff41);
+      cursor: pointer;
+    }
+  }
+
   /* ---- progress ---- */
   &__progress {
     width: min(340px, 80%);
-    margin-top: 1rem;
+    /* COLLAPSED when inactive. It is a div with a 3px bar and a line of
+       text, so it reserved ~37px below the PLAY button on every page
+       load, for a download that had not started. The fold criterion is
+       that the first server row is visible at 1280x720. */
+    height: 0;
+    margin-top: 0;
+    overflow: hidden;
     opacity: 0;
     transition: opacity var(--ts-sweep) var(--ts-ease);
 
     &.is-active {
+      height: auto;
+      margin-top: 0.8rem;
       opacity: 1;
     }
   }
@@ -605,23 +882,28 @@ onMounted(() => {
     color: var(--ts-ink-muted);
   }
 
-  /* ---- tabs ---- */
+  /* ---- panels ---- */
+  &__panel {
+    width: 100%;
+    /* absorbs the free space, so the footer sits at the bottom of the
+       page without the tab panel being pushed down the screen */
+    margin-bottom: auto;
+  }
+
   &__tabs {
     display: flex;
     gap: 0;
-    margin-top: clamp(1.2rem, 3vh, 2rem);
     border-bottom: 1px solid var(--ts-edge);
   }
 
   &__tab {
     position: relative;
-    padding: 0.6rem 1.5rem;
-    font-family: var(--ts-font-display);
-    font-size: 0.9rem;
-    font-weight: 700;
-    letter-spacing: 0.16em;
+    padding: 0.7rem 1.5rem;
+    font-family: var(--ts-font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.2em;
     text-transform: uppercase;
-    color: var(--ts-header);
+    color: var(--ts-ink-muted);
     background: transparent;
     border: none;
     cursor: pointer;
@@ -645,7 +927,7 @@ onMounted(() => {
     }
 
     &.is-active {
-      color: var(--ts-lime);
+      color: var(--ts-signal);
 
       &::after {
         width: 100%;
@@ -653,9 +935,8 @@ onMounted(() => {
     }
   }
 
-  /* ---- panels ---- */
-  &__panel {
-    width: 100%;
+  &__section {
+    padding-top: 0.9rem;
   }
 
   /* ---- footer ---- */
@@ -667,10 +948,17 @@ onMounted(() => {
     gap: 0.6rem 1.2rem;
     width: 100%;
     margin-top: 0.4rem;
-    padding-top: 1.2rem;
+    padding-top: 1.1rem;
     border-top: 1px solid var(--ts-edge);
-    font-size: 0.72rem;
-    color: var(--ts-ink-faint);
+    font-family: var(--ts-font-mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ts-ink-muted);
+  }
+
+  &__foot-label {
+    color: var(--ts-header);
   }
 
   &__foot-links {
@@ -689,6 +977,15 @@ onMounted(() => {
   }
 }
 
+@keyframes ts-rain {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(50%);
+  }
+}
+
 @keyframes ts-pulse {
   0%,
   100% {
@@ -696,6 +993,12 @@ onMounted(() => {
   }
   50% {
     opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ts-landing__rain span {
+    animation: none !important;
   }
 }
 </style>
