@@ -421,6 +421,17 @@ const FULLSCREEN_ARGS = ['-fullscreen', ...DEFAULT_ARGS];
 const CONSOLE_ARG = '-console';
 
 const onBeforeUnload = (event: Event) => {
+  // The deliberate reconnect sets this flag: it is navigating on
+  // purpose, and a confirmation dialog in front of the recovery is
+  // exactly what the player does not need. The flag lives on the
+  // window, not in this module, because the module can be loaded more
+  // than once (the dev server resolves '/@/services/xash-loader' and
+  // '/@/services/xash-loader.ts' to two instances, each with its own
+  // copy of this closure) and a window-level flag is the only thing
+  // all of them can see.
+  if ((window as unknown as { __xashUnloadAllowed?: boolean }).__xashUnloadAllowed) {
+    return;
+  }
   event.preventDefault();
   event.returnValue = false;
 };
@@ -543,6 +554,10 @@ class XashLoader {
    * is for.
    */
   public static allowUnload() {
+    // The window-level flag is what the guard checks — see
+    // `onBeforeUnload`. The listener is removed too, for the case
+    // where this module is the only copy.
+    (window as unknown as { __xashUnloadAllowed?: boolean }).__xashUnloadAllowed = true;
     window.removeEventListener('beforeunload', onBeforeUnload);
   }
 
