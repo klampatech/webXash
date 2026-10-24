@@ -10,6 +10,13 @@ import './assets/main.css';
 // to empty and every var() fallback silently renders as transparent.
 import './assets/ts-theme.css';
 
+// The escape gate has to be listening BEFORE the WASM engine boots and
+// registers its own keydown listener on `window`. Import-time is the only
+// place guaranteed to be early enough — the canvas mounts later, and by
+// then the engine may already own the key.
+import { installEscapeGate } from './services/escape-gate';
+installEscapeGate();
+
 const app = createApp(App);
 const pinia = createPinia();
 

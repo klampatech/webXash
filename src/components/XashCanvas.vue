@@ -18,6 +18,12 @@
   -->
   <TSHud v-if="showVueHud" />
   <!--
+    The options overlay: Escape #2 opens it. It is DOM, so the keyboard
+    inside it is real DOM keyboard — a text field here types, it does not
+    fire a game hotkey.
+  -->
+  <XashOptionsOverlay />
+  <!--
     Shown when the transport to the game server goes away.
 
     The engine does not notice this on its own: a closed WebSocket just
@@ -42,6 +48,8 @@
   import { useXashStore } from '/@/stores/store.ts';
   import {onMounted,onBeforeUnmount,ref, computed, watch } from 'vue';
   import TSHud from '/@/components/TSHud.vue';
+  import XashOptionsOverlay from '/@/components/XashOptionsOverlay.vue';
+  import { notePointerLocked } from '/@/services/escape-gate';
   import {
     startKeyboardBridge,
     tryAttachMouseBridge,
@@ -152,6 +160,9 @@ const lambdaLabel = computed(() => 'Connecting to server');
     const canvas = xashCanvasElement.value
     if (!canvas) return
     canvas.focus()
+    // Re-engaging the game restarts the Escape sequence: the next Escape
+    // releases the mouse again rather than opening the overlay.
+    notePointerLocked()
     if (document.pointerLockElement !== canvas) {
       canvas.requestPointerLock?.().catch(() => {
         // Rejection just means the next click will do it.

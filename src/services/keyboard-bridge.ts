@@ -1,33 +1,52 @@
-// D.7.31 — Keyboard→command bridge.
+// D.7.31 — Keyboard bridge.
 //
-// WHY THIS EXISTS
-// ---------------
-// The engine WASM's SDL2 keyboard listener is registered on `window`
-// (WASM calls `emscripten_set_keydown_callback(2, ...)`; in
-// xash3d-fwgs's runtime `specialHTMLTargets = [0, document, window]`,
-// so target index 2 == window). Kyle's `[KEY]` diagnostic log proves
-// keydown events DO reach `window` in real Chrome (target=BODY,
-// active=BODY, bubbling up). Yet the engine never acts on them.
+// WHAT CHANGED, AND WHY
+// ---------------------
+// This file used to translate DOM keys into engine commands (`+forward`,
+// `messagemode`, `thirdperson`, …) because the engine's own keyboard path
+// was believed to be dead. It is not.
 //
-// So the event reaches the same window the engine listens on, and the
-// engine ignores it. That's an SDL2-internal issue we can't fix from
-// the launcher. The `_Mem_Alloc: pool == NULL` failure during
-// `SDL_KeyboardInit` is the likely culprit — SDL's internal keymap
-// never finishes building, so the callback never matches a scancode.
+// Measured in a real Chromium against a live local server (2026-10-24),
+// with the client's own `ts_dev_keylog 1`:
 //
-// WORKAROUND
-// ----------
-// We already have a proven command channel: `Cmd_ExecuteString`.
-// The engine accepts every movement command without error (verified:
-// `+forward`, `-forward`, `+back`, `+moveleft`, `+moveright`, `+jump`,
-// `+duck`, `+attack`, `impulse`, `weapon`, `slot1` — all "ok").
+//   [ts key] HUD_Key_Event escape down=1 binding="cancelselect" -> 1
+//   [ts key] cancelselect: escape
 //
-// So: bridge keydown/keyup to the equivalent engine commands.
-// `+cmd` on keydown, `-cmd` on keyup, exactly like a real bind.
+// The engine's keydown listener DOES fire, DOES reach `HUD_Key_Event`, and
+// DOES run the engine's own bind table. The earlier conclusion — recorded in
+// the old header comment, in `sdl-key-inject.ts`, and in the how-to-play
+// copy — was wrong.
+//
+// The engine's bind table (ts/config.cfg) already covers everything:
+//
+//   bind "w" "+forward"      bind "s" "+back"
+//   bind "a" "+moveleft"     bind "d" "+moveright"
+//   bind "SPACE" "+jump"     bind "CTRL" "+duck"
+//   bind "1".."0" "slot1".."slot10"
+//   bind "r" "+reload"       bind "e" "+use"
+//   bind "x" "thirdperson"   bind "y" "messagemode"
+//   bind "b" "buy"           bind "`" "toggleconsole"
+//   bind "ESCAPE" "cancelselect"
+//
+// Translating keys as well meant every one of those keys ran TWICE: once
+// from the engine's bind table and once from us. That is the whole of the
+// reported "in game typing triggers hot keys AND types at the same time"
+// bug (Y opened the chat twice — the engine's `messagemode` and ours), and
+// it is why third person appeared broken: X ran `thirdperson` twice, so it
+// toggled on and straight back off.
+//
+// So this bridge no longer sends commands. It does one thing: open TS's
+// anti-script gate for the keys whose native binding is gated, because the
+// gate only opens on a real key event and the engine runs the binding
+// itself.
+//
+// The DOM→SDL injection is gone too. It never worked: `SDL_PushEvent` puts
+// the event IN the queue and the drain probe then asks whether the queue is
+// empty, so the probe could never pass and the service disabled itself. The
+// log said `REFUSED by SDL` on every key.
 
 import XashLoader from '/@/services/xash-loader';
 import { logDebug } from './debug-log';
-import { injectKey, scancodeFor } from './sdl-key-inject';
 
 export type BridgeKey =
   | 'KeyW' | 'KeyA' | 'KeyS' | 'KeyD'
@@ -36,90 +55,7 @@ export type BridgeKey =
   | 'KeyQ' | 'KeyE' | 'KeyR' | 'Digit1' | 'Digit2' | 'Digit3' | 'Digit4'
   | 'KeyF' | 'KeyC';
 
-/** Key code → engine command. Value is the `+cmd` form; we append `-`. */
-/**
- * Keys we translate into an engine command, because the engine's native
- * keyboard path is dead in the WASM build.
- *
- * Split by kind, because the engine treats them differently:
- *
- *  - HELD (`+cmd` on down, `-cmd` on up): movement and the fire buttons.
- *    The engine needs both edges to set and clear the button state.
- *  - INSTANT (`cmd` once, on down only): `slot1`, `use`, `reload`,
- *    `impulse`. These are not buttons. Sending them as `+slot1` makes the
- *    engine wait for a matching `-slot1`, and it ignores the command
- *    entirely — which is exactly the "unknown keybind" symptom: the
- *    weapon never switches.
- *
- * Anything NOT listed here is passed to the engine as a real key event,
- * so the ENGINE's own bindings run (the console toggle, and anything the
- * port registers that we have not mapped).
- */
-const KEY_HELD_CMD: Record<string, string> = {
-  // Movement
-  KeyW: 'forward', ArrowUp: 'forward',
-  KeyS: 'back', ArrowDown: 'back',
-  KeyA: 'moveleft', ArrowLeft: 'moveleft',
-  KeyD: 'moveright', ArrowRight: 'moveright',
-  // Buttons
-  Space: 'jump',
-  ControlLeft: 'duck', ControlRight: 'duck',
-  // Scoreboard. Held, not instant: the engine binds it `+showscores` /
-  // `-showscores`, and sending only `showscores` opens it and never closes.
-  Tab: 'showscores',
-  // Reload is a +button in TS (it is in GATED_BINDINGS), not an instant
-  // command. Sending the bare name `reload` runs a command with no real
-  // weapon behind it, which is what OOM'd the wasm heap.
-  KeyR: 'reload',
-};
-
-/** Instant commands: fired once on keydown, never negated. */
-const KEY_INSTANT_CMD: Record<string, string> = {
-  KeyQ: 'lastinv',
-  KeyE: 'use',
-  Digit1: 'slot1', Digit2: 'slot2', Digit3: 'slot3', Digit4: 'slot4',
-  Digit5: 'slot5', Digit6: 'slot6', Digit7: 'slot7', Digit8: 'slot8',
-  Digit9: 'slot9', Digit0: 'slot10',
-  KeyF: 'impulse 100', // flashlight
-  KeyB: 'buy',
-  // NOTE: send this BARE, not as `+toggleconsole`. The engine registers
-  // toggleconsole as a plain command, not a button, so the + form is a
-  // literal name lookup and the engine prints "Unknown command:
-  // +toggleconsole". Contrast +forward / +duck, which are real buttons
-  // and must keep the +.
-  Backquote: 'toggleconsole',
-  // Console toggle and the TS-specific client-DLL menus. These are plain
-  // engine commands (both symbols are present in the client WASM), so they
-  // go through the command channel rather than needing HUD_Key_Event.
-  KeyM: 'messagemode2', // open mic
-  KeyY: 'messagemode',  // team chat
-  KeyX: 'thirdperson',
-  KeyZ: 'usepowerup',
-  KeyG: 'useitems',   // toggle attachments
-  KeyT: 'drop',
-  KeyH: 'impulse 201', // taunt
-  BracketLeft: 'invprev', BracketRight: 'invnext',
-};
-
-/**
- * True when we translate this key ourselves. Everything else is passed to
- * the engine as a real key event so its own bindings run.
- */
-function isMapped(code: string): boolean {
-  return code in KEY_HELD_CMD || code in KEY_INSTANT_CMD;
-}
-
-/**
- * Install the bridge. Returns a stop function.
- *
- * Uses keydown/keyup on window with capture=false so we coexist with
- * the engine's own (broken) listener rather than pre-empting it. If the
- * engine's handler ever starts working, we simply become redundant —
- * the engine would see both the real key and our injected command,
- * which is harmless for movement (the command is what the key is bound
- * to anyway).
- */
-// Mouse buttons we want to bridge through Cmd_ExecuteString.
+// Mouse buttons we still bridge through Cmd_ExecuteString.
 const MOUSE_BUTTON_TO_CMD: Record<string, string> = {
   '0': 'attack',     // left: fire
   '2': 'attack2',    // right: alt-fire / firemode
@@ -128,9 +64,8 @@ const MOUSE_BUTTON_TO_CMD: Record<string, string> = {
 /** If non-null, install the mouse bridge at the next possible moment. */
 let mouseListener: ((e: MouseEvent) => void) | null = null;
 
-// D.7.36 — while a DOM modal owns the keyboard (the buy menu), the
-// bridge must stay quiet. Otherwise pressing "2" to switch category
-// also sends `+slot2` to the engine and switches your weapon.
+// D.7.36 — while a DOM modal owns the keyboard (the options overlay), the
+// bridge must stay quiet.
 let bridgeSuspended = false;
 
 export function setBridgeSuspended(v: boolean) {
@@ -138,7 +73,7 @@ export function setBridgeSuspended(v: boolean) {
   if (v) {
     // Release anything currently held so nothing sticks.
     for (const code of Array.from(heldKeys)) {
-      const held = KEY_HELD_CMD[code];
+      const held = GATED_KEYS[code];
       if (held) XashLoader.exec(`-${held}`);
     }
     heldKeys.clear();
@@ -181,60 +116,33 @@ export function tryAttachMouseBridge() {
   if (c) attachMouseBridge(c);
 }
 
-
 /**
- * TS's anti-script gate: only a real keypress opens it, and the WASM engine never delivers a
- * key event, so every gated `+` command (`+attack`, `+jump`, `+duck`, `+forward`, ...) is
- * silently dropped. `ts_gate` holds it for the frame the bridge is about to use. 200ms is the
- * same lifetime a held key gives it before `HUD_Frame` re-arms the gate.
+ * TS's anti-script gate: only a real keypress opens it, and every gated `+`
+ * command (`+attack`, `+jump`, `+duck`, `+forward`, ...) is silently dropped
+ * without it.
+ *
+ * The engine's own binding is what runs the command; we only hold the gate
+ * open for the frame it lands in. 200ms is the same lifetime a held key
+ * gives it before `HUD_Frame` re-arms the gate.
+ *
+ * The value is the command the ENGINE will run for that key — used to decide
+ * whether the gate is needed, and to release the matching button on keyup.
  */
-const GATED_COMMANDS = new Set([
-  'attack', 'attack2', 'alt2', 'reload',
-  'forward', 'back', 'moveleft', 'moveright', 'jump',
-]);
-
-function needsGate(cmd: string): boolean {
-  return GATED_COMMANDS.has(cmd.replace(/^[+-]/, ''));
-}
+const GATED_KEYS: Record<string, string> = {
+  KeyW: 'forward', ArrowUp: 'forward',
+  KeyS: 'back', ArrowDown: 'back',
+  KeyA: 'moveleft', ArrowLeft: 'moveleft',
+  KeyD: 'moveright', ArrowRight: 'moveright',
+  Space: 'jump',
+  ControlLeft: 'duck', ControlRight: 'duck',
+  KeyR: 'reload',
+};
 
 /** Fire a held `+` command, opening TS's anti-script gate first if it needs it. */
 function execHeld(cmd: string): void {
-  if (needsGate(cmd)) {
-    logDebug(`[gate] opening for +${cmd}`);
-    XashLoader.exec('ts_gate 200');
-  }
+  logDebug(`[gate] opening for +${cmd}`);
+  XashLoader.exec('ts_gate 200');
   XashLoader.exec(`+${cmd}`);
-}
-
-/**
- * Hand a key to the engine as a real key press, so the ENGINE's own
- * bindings run.
- *
- * The engine's native keyboard path is dead in the WASM build (nothing
- * drains its SDL event queue), so we translate the DOM `code` to an SDL
- * scancode and push an `SDL_KeyboardEvent`. If the engine's event pump
- * is fixed upstream, this becomes a no-op fallback rather than a
- * dependency.
- *
- * Keys WE map (movement, fire) deliberately do not come through here:
- * those are exec'd as `+cmd` instead, because a command is unambiguous
- * and does not depend on the engine's bind table.
- */
-function sendKey(code: string, down: boolean): void {
-  const scancode = scancodeFor(code);
-  if (scancode === undefined) {
-    logDebug(`[key] ${code}: no SDL scancode; nothing sent`);
-    return;
-  }
-  try {
-    const ok = injectKey(code, down);
-    logDebug(
-      `[key] ${down ? 'DOWN' : 'UP  '} ${code} scancode=${scancode} -> ` +
-        `${ok ? 'pushed to SDL queue' : 'REFUSED by SDL'}`
-    );
-  } catch (err) {
-    logDebug(`[key] ${code}: inject failed: ${(err as Error).message}`);
-  }
 }
 
 /** Keys currently mapped-to-engine-command and held down. */
@@ -248,49 +156,36 @@ export function startKeyboardBridge(): () => void {
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
       return;
     }
-    const held = KEY_HELD_CMD[e.code];
-    const instant = KEY_INSTANT_CMD[e.code];
+    const gated = GATED_KEYS[e.code];
     logDebug(
       `[key] DOWN code=${e.code} key=${e.key} repeat=${e.repeat} ` +
-        `held=${held ?? '-'} instant=${instant ?? '-'}` +
-        (isMapped(e.code) ? '' : ' -> passing to engine') +
+        `gated=${gated ?? '-'}` +
         (bridgeSuspended ? ' [SUSPENDED]' : '')
     );
     if (e.repeat) return;
-    if (held) {
-      // A button: the engine needs both edges.
-      if (heldKeys.has(e.code)) return;
-      heldKeys.add(e.code);
-      logDebug(`[key] ${e.code} -> exec +${held}`);
-      execHeld(held);
+    if (bridgeSuspended) return;
+    if (!gated) {
+      // Not a gated key: the engine's own bind table runs it. Nothing to do.
       return;
     }
-    if (instant) {
-      // Not a button: fire once, on keydown only.
-      logDebug(`[key] ${e.code} -> exec ${instant} (once)`);
-      XashLoader.exec(instant);
-      return;
-    }
-    // No mapping: hand it to the engine as a real key press so the
-    // ENGINE's own bindings run (the console toggle, and anything the
-    // client DLL registers that we have not mapped).
+    if (heldKeys.has(e.code)) return;
     heldKeys.add(e.code);
-    sendKey(e.code, true);
+    // Open the gate, then let the engine run its own binding. We do NOT send
+    // the command ourselves — sending it as well is what made every key
+    // fire twice.
+    execHeld(gated);
   };
 
   const onKeyUp = (e: KeyboardEvent) => {
-    const held = KEY_HELD_CMD[e.code];
+    const gated = GATED_KEYS[e.code];
     if (!heldKeys.has(e.code)) {
       logDebug(`[key] UP   code=${e.code} (not held; ignoring)`);
       return;
     }
     heldKeys.delete(e.code);
-    if (held) {
-      logDebug(`[key] ${e.code} -> exec -${held}`);
-      XashLoader.exec(`-${held}`);
-    } else {
-      logDebug(`[key] UP   ${e.code} -> release to engine`);
-      sendKey(e.code, false);
+    if (gated) {
+      logDebug(`[key] ${e.code} -> exec -${gated}`);
+      XashLoader.exec(`-${gated}`);
     }
   };
 
@@ -298,8 +193,8 @@ export function startKeyboardBridge(): () => void {
   // "still moving" state. Release everything on blur.
   const onBlur = () => {
     for (const code of heldKeys) {
-      const held = KEY_HELD_CMD[code];
-      if (held) XashLoader.exec(`-${held}`);
+      const gated = GATED_KEYS[code];
+      if (gated) XashLoader.exec(`-${gated}`);
     }
     heldKeys.clear();
   };
