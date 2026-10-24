@@ -1322,6 +1322,9 @@ class XashLoader {
   public setLiveInstance(inst: Xash3D | Xash3DWebRTC | null) {
     XashLoader.setLiveInstance(inst);
   }
+  public allowUnload() {
+    XashLoader.allowUnload();
+  }
 }
 
 export default new XashLoader();
