@@ -45,6 +45,16 @@ export interface TsServer {
    * but have not timed out yet. The registry reports the true count.
    */
   humans?: number;
+  /** Bots on the server. `players` is humans PLUS bots. */
+  bots?: number;
+  /** Engine tickrate, as the registry measured it. */
+  tickrate?: number;
+  /** The registry got an answer from this server recently. */
+  responsive?: boolean;
+  /** The server answers, but badly. */
+  degrading?: boolean;
+  /** The registry's own data for this server is old. */
+  stale?: boolean;
 }
 
 /** Distinguishes a transport failure from a genuinely empty server list. */

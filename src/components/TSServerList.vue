@@ -31,7 +31,7 @@
     </p>
 
     <ul v-else class="ts-servers__list" role="list">
-      <li v-for="server in servers" :key="server.id" class="ts-panel ts-reticle ts-server">
+      <li v-for="server in servers" :key="server.id" class="ts-panel ts-rule ts-server">
         <div class="ts-server__main">
           <h3 class="ts-server__name">{{ server.name }}</h3>
           <div class="ts-server__meta">
@@ -40,14 +40,41 @@
           </div>
         </div>
 
-        <div class="ts-server__right">
-          <!-- A2S_PLAYERCOUNT / A2S_MAXPLAYERS, or "—" until wired. -->
-          <div class="ts-server__count" :title="`${server.players} of ${server.maxPlayers} players`">
-            <span class="ts-server__count-now">{{ server.players }}</span>
-            <span class="ts-server__count-slash">/</span>
-            <span class="ts-server__count-max">{{ server.maxPlayers }}</span>
+        <!--
+          The count, split.
+
+          A2S reports `players` as humans PLUS bots, so "18 / 32" on the
+          old row read as 18 players when it was really 16 bots and two
+          people. The registry knows the real human count, so show both.
+        -->
+        <div class="ts-server__counts">
+          <div class="ts-server__count">
+            <span class="ts-server__count-value ts-server__count-value--humans">{{
+              humansOf(server)
+            }}</span>
+            <span class="ts-server__count-label">human{{ humansOf(server) === 1 ? '' : 's' }}</span>
           </div>
-          <div class="ts-server__count-label">players</div>
+          <div class="ts-server__count">
+            <span class="ts-server__count-value ts-server__count-value--bots">{{
+              botsOf(server)
+            }}</span>
+            <span class="ts-server__count-label">bots</span>
+          </div>
+          <div class="ts-server__count">
+            <span class="ts-server__count-value ts-server__count-value--max">{{
+              server.maxPlayers
+            }}</span>
+            <span class="ts-server__count-label">slots</span>
+          </div>
+        </div>
+
+        <div class="ts-server__right">
+          <span v-if="server.tickrate" class="ts-server__tick">
+            {{ server.tickrate }}<i>tick</i>
+          </span>
+          <span class="ts-server__health" :class="healthClass(server)">
+            {{ healthLabel(server) }}
+          </span>
         </div>
 
         <button class="ts-server__join" @click="$emit('join', server)">
@@ -59,22 +86,67 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import { fetchServerList } from '/@/services/ts-server-list.ts';
 import type { TsServer } from '/@/services/ts-server-list.ts';
 
-defineEmits<{ (e: 'join', server: TsServer): void }>();
+const emit = defineEmits<{
+  (e: 'join', server: TsServer): void;
+  (e: 'servers', servers: TsServer[]): void;
+}>();
 
 const servers = ref<TsServer[]>([]);
 const loading = ref(true);
 const refreshing = ref(false);
 const error = ref('');
 
+/**
+ * How often the list refreshes itself.
+ *
+ * The landing page's top bar shows the live map and player count, and
+ * that only works if the list is polled rather than fetched once.
+ */
+const POLL_MS = 20_000;
+let poll: ReturnType<typeof setInterval> | undefined;
+
+/** Real humans on the server. The registry knows; A2S does not. */
+function humansOf(server: TsServer): number {
+  return server.humans ?? server.players ?? 0;
+}
+
+/** Bots on the server. `players` is humans PLUS bots. */
+function botsOf(server: TsServer): number {
+  if (typeof server.bots === 'number') return server.bots;
+  return Math.max(0, (server.players ?? 0) - humansOf(server));
+}
+
+/**
+ * The health chip.
+ *
+ * Three different facts, and they must not collapse into one: a server
+ * that is not answering is not the same as one that is answering badly,
+ * and neither is the same as the registry's own data being stale.
+ */
+function healthClass(server: TsServer): string {
+  if (server.stale) return 'is-stale';
+  if (server.degrading) return 'is-degrading';
+  if (server.responsive === false) return 'is-dead';
+  return 'is-ok';
+}
+
+function healthLabel(server: TsServer): string {
+  if (server.stale) return 'Stale';
+  if (server.degrading) return 'Degraded';
+  if (server.responsive === false) return 'No reply';
+  return 'Ok';
+}
+
 async function refresh() {
   refreshing.value = true;
   error.value = '';
   try {
     servers.value = await fetchServerList();
+    emit('servers', servers.value);
   } catch (e) {
     // Never fall back to placeholder rows here. A fabricated server that
     // a visitor can click is worse than an honest empty panel.
@@ -86,7 +158,14 @@ async function refresh() {
   }
 }
 
-onMounted(refresh);
+onMounted(async () => {
+  await refresh();
+  poll = setInterval(refresh, POLL_MS);
+});
+
+onUnmounted(() => {
+  if (poll) clearInterval(poll);
+});
 </script>
 
 <style scoped lang="scss">
@@ -96,7 +175,7 @@ onMounted(refresh);
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    margin-bottom: 0.9rem;
+    margin-bottom: 0.7rem;
   }
 
   h2 {
@@ -173,7 +252,7 @@ onMounted(refresh);
 
 .ts-server {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto auto auto;
   align-items: center;
   gap: 1.1rem;
   padding: 0.85rem 1.1rem;
@@ -208,37 +287,94 @@ onMounted(refresh);
     border: 1px solid var(--ts-edge);
   }
 
-  &__right {
-    text-align: right;
+  /* ---- the split count ------------------------------------------------ */
+  &__counts {
+    display: flex;
+    gap: 1.1rem;
   }
 
   &__count {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    min-width: 3.1rem;
+  }
+
+  &__count-value {
     font-family: var(--ts-font-mono);
-    line-height: 1;
+    font-size: 1.3rem;
+    line-height: 1.1;
 
-    &-now {
-      font-size: 1.5rem;
-      color: var(--ts-lime);
+    /* Humans are the thing a visitor is here for, so they get the
+       phosphor; the bots are context, so they stay muted. */
+    &--humans {
+      color: var(--ts-signal);
     }
 
-    &-slash {
-      margin: 0 0.1rem;
+    &--bots {
       color: var(--ts-ink-muted);
     }
 
-    &-max {
-      font-size: 0.95rem;
-      color: var(--ts-ink-muted);
+    &--max {
+      color: var(--ts-khaki-dim);
     }
   }
 
   &__count-label {
-    margin-top: 0.2rem;
+    margin-top: 0.15rem;
     font-family: var(--ts-font-mono);
-    font-size: 0.6rem;
-    letter-spacing: 0.18em;
+    font-size: 0.58rem;
+    letter-spacing: 0.16em;
     text-transform: uppercase;
-    color: var(--ts-ink-muted);
+    color: var(--ts-ink-faint);
+  }
+
+  /* ---- tickrate + health --------------------------------------------- */
+  &__right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.35rem;
+  }
+
+  &__tick {
+    font-family: var(--ts-font-mono);
+    font-size: 0.72rem;
+    color: var(--ts-header);
+
+    i {
+      font-style: normal;
+      margin-left: 0.28rem;
+      font-size: 0.56rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--ts-ink-faint);
+    }
+  }
+
+  &__health {
+    padding: 0.08rem 0.4rem;
+    font-family: var(--ts-font-mono);
+    font-size: 0.58rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    border: 1px solid var(--ts-edge);
+
+    &.is-ok {
+      color: var(--ts-signal);
+      border-color: rgba(0, 255, 65, 0.35);
+    }
+
+    &.is-degrading {
+      color: var(--ts-warn);
+      border-color: rgba(255, 196, 77, 0.4);
+    }
+
+    &.is-dead,
+    &.is-stale {
+      color: var(--ts-error);
+      border-color: rgba(255, 92, 92, 0.4);
+    }
   }
 
   &__join {
@@ -262,6 +398,21 @@ onMounted(refresh);
 
     &:active {
       transform: translateY(1px);
+    }
+  }
+}
+
+@media (max-width: 720px) {
+  .ts-server {
+    grid-template-columns: 1fr auto;
+    row-gap: 0.8rem;
+
+    &__main {
+      grid-column: 1 / -1;
+    }
+
+    &__right {
+      align-items: flex-start;
     }
   }
 }
