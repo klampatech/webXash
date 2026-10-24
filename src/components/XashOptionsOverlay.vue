@@ -2,7 +2,10 @@
   <div v-if="open" class="opts" role="dialog" aria-label="Game options">
     <div class="opts__panel">
       <header class="opts__head">
-        <h2 class="opts__title">Options</h2>
+        <div class="opts__brand">
+          <span class="opts__brand-mark" aria-hidden="true" />
+          <h2 class="opts__title">Options</h2>
+        </div>
         <button class="opts__close" type="button" aria-label="Close" @click="closeOverlay">✕</button>
       </header>
 
@@ -177,6 +180,22 @@ function quitToWebUi() {
     margin-bottom: 0.9rem;
   }
 
+  &__brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+  }
+
+  /* The BB mark, masked so it takes the accent colour. */
+  &__brand-mark {
+    width: 9px;
+    height: 21px;
+    flex: none;
+    background-color: var(--ts-signal);
+    -webkit-mask: url('../assets/brand/bb-mark.svg') no-repeat center / contain;
+    mask: url('../assets/brand/bb-mark.svg') no-repeat center / contain;
+  }
+
   &__title {
     margin: 0;
     font-family: var(--ts-font-display);
@@ -196,6 +215,12 @@ function quitToWebUi() {
     &:hover {
       border-color: var(--ts-lime);
       color: var(--ts-lime);
+    }
+
+    &:focus-visible {
+      outline: none;
+      border-color: var(--ts-signal);
+      box-shadow: 0 0 0 1px var(--ts-signal);
     }
   }
 
@@ -230,14 +255,17 @@ function quitToWebUi() {
     width: 9rem;
     padding: 0.28rem 0.45rem;
     background: rgba(0, 0, 0, 0.45);
-    border: 1px solid rgba(204, 255, 51, 0.25);
+    border: 1px solid rgba(0, 255, 65, 0.25);
     color: var(--ts-ink-bright);
     font-family: var(--ts-font-mono);
     font-size: 0.82rem;
 
+    /* A phosphor focus ring: the field's own colour plus a halo, so the
+       focus is unmistakable without a browser-default blue outline. */
     &:focus {
       outline: none;
-      border-color: var(--ts-lime);
+      border-color: var(--ts-signal);
+      box-shadow: 0 0 0 1px var(--ts-signal), 0 0 12px rgba(0, 255, 65, 0.3);
     }
 
     &--num {
