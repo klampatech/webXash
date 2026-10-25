@@ -1032,28 +1032,31 @@ class XashLoader {
    * client turns into Effect::OpenBuyMenu) and never again: close it and
    * nothing brings it back.
    *
-   * WHY THE CONFIG'S OWN LINE DOES NOT STICK
-   * ----------------------------------------
-   * The engine executes the game's config AFTER the client library has
-   * initialised, and TS's config starts with `unbindall`, so whatever was
-   * bound before it is wiped. Every one of the config's own binds then
-   * takes -- x -> thirdperson, f -> firemode, t -> drop, z -> usepowerup,
-   * g -> useitems, 0 -> slot10, MOUSE3 -> +alt1 -- except its
-   * `bind "b" "buy"`, which does not. Asking the engine afterwards says
-   * `"b" = ""`, and re-executing the config does not set it either.
+   * WHY IT WAS MISSING
+   * ------------------
+   * Not because the game's config failed to bind it. The config DOES bind
+   * "b" to "buy" -- and the engine executed that file: every one of TS's
+   * binds was in the engine's bind table (x -> thirdperson, f ->
+   * firemode, t -> drop, z -> usepowerup, g -> useitems, 0 -> slot10,
+   * MOUSE3 -> +alt1), and asking the engine said `"b" = ""`.
    *
-   * (What the engine does with that one line is not established. It does
-   * not drop binds to commands it does not know -- "g" -> "useitems"
-   * survives and nothing implements "useitems" -- and nobody ever unbound
-   * it: there is no `unbind` in the client or the frontend, in any
-   * commit.)
+   * The bind was removed by US: this loader used to run `bind b ""` at
+   * boot, a leftover from the "stop sending every key twice" fix, when
+   * the frontend sent "buy" itself and the engine's own bind had to be
+   * cleared so the menu did not open twice. That unbind outlived the
+   * command map it belonged to.
    *
    * THE FIX
    * -------
-   * Bind it here, after the engine has run its config, so the config's
-   * `unbindall` cannot wipe it. `Cmd_ExecuteString` is the engine's LOCAL
-   * command buffer -- the client's `client_cmd` would send it to the
-   * SERVER instead, which is how the first attempt at this fix failed.
+   * Two parts, and the second is the belt to the first's braces:
+   *
+   *  1. The loader no longer clears "b" (see the list above). The game's
+   *     own config is the source of truth for its own keys.
+   *  2. It is also bound here explicitly, on the frame after the engine
+   *     starts, so the key works even if the config's line is ever
+   *     disturbed. `Cmd_ExecuteString` is the engine's LOCAL command
+   *     buffer -- the client's `client_cmd` would send it to the SERVER
+   *     instead, which is how the first attempt at this fix failed.
    *
    * It is bound on the frame after the engine starts rather than the
    * instant `main()` returns, because the engine's own first frame is
@@ -1367,7 +1370,6 @@ class XashLoader {
     // bind table, which is the only place they exist now that keys reach
     // the engine natively.
     //
-    //   b       -> buy          the native buy menu, which has no DOM UI
     //   ` and ~ -> toggleconsole  the console, and the way out of the server
     //   ESCAPE  -> cancelselect   opens the GoldSrc main menu — the
     //                             "dump out of the match" menu, whose Quit
@@ -1376,7 +1378,22 @@ class XashLoader {
     // ESCAPE is handled in the page instead (services/escape-gate.ts): the
     // first press releases the pointer lock, the second opens the options
     // overlay. The rebind here is the belt to that braces.
-    for (const cmd of ['bind b ""', 'bind ` ""', 'bind ~ ""', 'bind ESCAPE ""']) {
+    // "b" -> "buy" WAS in this list, and it was WRONG (2026-10-24).
+    //
+    // It was here because the frontend used to SEND "buy" itself (the
+    // command map that also sent every other key a second time), so
+    // clearing the engine's bind stopped the menu opening twice. When that
+    // command map was deleted -- the "stop sending every key twice" fix --
+    // the unbind was left behind, and the buy menu lost its key: the
+    // server opens it when you become an observer, "0 Cancel" closes it,
+    // and afterwards NOTHING could bring it back. Kyle's report, verbatim:
+    // "while dead, after you accidentally close the buy menu it doesn't
+    // reopen."
+    //
+    // The engine's own ts/config.cfg binds "b" to "buy", and that bind is
+    // the source of truth -- the page's job is to stop BREAKING it, not to
+    // manage it. So "b" is no longer cleared here.
+    for (const cmd of ['bind ` ""', 'bind ~ ""', 'bind ESCAPE ""']) {
       logDebug(`[bind] ${cmd}`);
       options.xash.Cmd_ExecuteString(cmd);
     }
