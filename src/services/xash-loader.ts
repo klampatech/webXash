@@ -949,6 +949,12 @@ class XashLoader {
 
     await this.writeExtras(xash, extrasBuffer);
     xash.main();
+    // The engine runs its config on its first frame, so the bind has to
+    // wait for that frame or the config's `unbindall` wipes it. The
+    // second bind is belt and braces: if the config somehow ran after
+    // the first frame, this one is the one that sticks.
+    requestAnimationFrame(() => XashLoader.bindTsKeys(xash));
+    setTimeout(() => XashLoader.bindTsKeys(xash), 2000);
     return xash;
   }
 
@@ -972,6 +978,12 @@ class XashLoader {
     await this.writeExtras(xash, extrasBuffer);
     onPhase?.({ phase: 'starting', percent: null });
     xash.main();
+    // The engine runs its config on its first frame, so the bind has to
+    // wait for that frame or the config's `unbindall` wipes it. The
+    // second bind is belt and braces: if the config somehow ran after
+    // the first frame, this one is the one that sticks.
+    requestAnimationFrame(() => XashLoader.bindTsKeys(xash));
+    setTimeout(() => XashLoader.bindTsKeys(xash), 2000);
     // D.7.56 — start the TS game-loop pump. The engine's loopback
     // connect never completes in webXash, so its server frame loop
     // never dispatches g_pGameRules->Think(). The pump issues
@@ -1004,6 +1016,55 @@ class XashLoader {
       (p) => onProgress?.(p.percent),
       { bypassCache: opts?.bypassCache },
     );
+  }
+
+
+  /**
+   * Bind the keys TS's own config.cfg binds, which the engine's config
+   * does not end up carrying.
+   *
+   * THE BUG
+   * -------
+   * TS's config.cfg binds "b" to "buy" -- the key that opens the buy
+   * menu AGAIN after the player has closed it ("0 Cancel"). That bind is
+   * missing from the engine's bind table, so the buy menu could be
+   * opened when the server opened it (the Spectator message, which the
+   * client turns into Effect::OpenBuyMenu) and never again: close it and
+   * nothing brings it back.
+   *
+   * WHY THE CONFIG'S OWN LINE DOES NOT STICK
+   * ----------------------------------------
+   * The engine executes the game's config AFTER the client library has
+   * initialised, and TS's config starts with `unbindall`, so whatever was
+   * bound before it is wiped. Every one of the config's own binds then
+   * takes -- x -> thirdperson, f -> firemode, t -> drop, z -> usepowerup,
+   * g -> useitems, 0 -> slot10, MOUSE3 -> +alt1 -- except its
+   * `bind "b" "buy"`, which does not. Asking the engine afterwards says
+   * `"b" = ""`, and re-executing the config does not set it either.
+   *
+   * (What the engine does with that one line is not established. It does
+   * not drop binds to commands it does not know -- "g" -> "useitems"
+   * survives and nothing implements "useitems" -- and nobody ever unbound
+   * it: there is no `unbind` in the client or the frontend, in any
+   * commit.)
+   *
+   * THE FIX
+   * -------
+   * Bind it here, after the engine has run its config, so the config's
+   * `unbindall` cannot wipe it. `Cmd_ExecuteString` is the engine's LOCAL
+   * command buffer -- the client's `client_cmd` would send it to the
+   * SERVER instead, which is how the first attempt at this fix failed.
+   *
+   * It is bound on the frame after the engine starts rather than the
+   * instant `main()` returns, because the engine's own first frame is
+   * what runs its config.
+   */
+  private static bindTsKeys(xash: Xash3D): void {
+    try {
+      xash.Cmd_ExecuteString('bind b buy');
+    } catch (e) {
+      console.warn('[xash] could not bind the TS keys:', e);
+    }
   }
 
   public async fetchExtras(): Promise<ArrayBuffer> {
@@ -1102,6 +1163,12 @@ class XashLoader {
       await this.writeExtras(xash, extrasBuffer);
       options.onPhase?.({ phase: 'starting', percent: null });
       xash.main();
+      // The engine runs its config on its first frame, so the bind has to
+      // wait for that frame or the config's `unbindall` wipes it. The
+      // second bind is belt and braces: if the config somehow ran after
+      // the first frame, this one is the one that sticks.
+      requestAnimationFrame(() => XashLoader.bindTsKeys(xash));
+      setTimeout(() => XashLoader.bindTsKeys(xash), 2000);
 
       options.onEndLoading?.();
       return xash;
