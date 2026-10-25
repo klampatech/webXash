@@ -10,7 +10,20 @@
       >
         <div class="ts-about__num" aria-hidden="true">{{ item.step }}</div>
         <h3 class="ts-about__title">{{ item.title }}</h3>
-        <p class="ts-about__body">{{ item.body }}</p>
+        <!--
+          Bullets, not paragraphs. A paragraph of four sentences asks a
+          reader to hold it all in their head; a list of four points lets
+          them take one at a time, and the highlighted words carry the
+          part that is worth remembering.
+        -->
+        <ul class="ts-about__points">
+          <li v-for="(point, pi) in item.points" :key="pi" class="ts-about__point">
+            <template v-for="(seg, si) in segments(point)" :key="si">
+              <b v-if="seg.hi" class="ts-about__hl">{{ seg.text }}</b>
+              <template v-else>{{ seg.text }}</template>
+            </template>
+          </li>
+        </ul>
       </article>
     </div>
 
@@ -33,32 +46,55 @@
  * command bridge (input). Kept in that order because that is the order
  * the player experiences it — not because the docs are ordered that way.
  */
+
+/** A piece of text, split into highlighted and plain segments. */
+type Segment = { text: string; hi: boolean };
+
+/**
+ * Split a bullet on `**…**` into highlighted and plain segments.
+ *
+ * The markers stay in the source so the copy is still readable and
+ * still editable as plain text — no markup in a string literal.
+ */
+function segments(text: string): Segment[] {
+  return text
+    .split(/(\*\*[^*]+\*\*)/g)
+    .filter((part) => part.length)
+    .map((part) =>
+      part.startsWith('**') && part.endsWith('**')
+        ? { text: part.slice(2, -2), hi: true }
+        : { text: part, hi: false },
+    );
+}
+
 const items = [
   {
     step: '01',
     title: 'Real game code, not a remake',
-    body:
-      'The Specialists’ rules are a Rust reimplementation compiled to a ' +
-      'WebAssembly module the Xash3D engine loads like any other game DLL. ' +
-      'The same build also runs headless as the dedicated server, so what ' +
-      'you play against is the real ruleset — not a JavaScript approximation.',
+    points: [
+      'A **Rust reimplementation** of The Specialists’ rules, compiled to **WebAssembly**.',
+      'The engine loads it like any other **game DLL** — the same shape as a native one.',
+      'The **same build** also runs headless as the **dedicated server**.',
+      'So what you play against is the **real ruleset**, not a JavaScript approximation.',
+    ],
   },
   {
     step: '02',
     title: 'A browser can’t speak UDP. So we added a bridge.',
-    body:
-      'Browsers cannot emit UDP, and GoldSrc servers speak it natively. A ' +
-      'small WebSocket↔UDP proxy sits in the middle and forwards packets ' +
-      'byte-for-byte. Game traffic is ordinary UDP once it leaves the bridge.',
+    points: [
+      'Browsers **cannot emit UDP**, and GoldSrc servers speak it natively.',
+      'A small **WebSocket↔UDP proxy** sits in the middle and forwards packets **byte-for-byte**.',
+      'Game traffic is ordinary UDP once it leaves the bridge.',
+    ],
   },
   {
     step: '03',
     title: 'Your keys go straight to the game',
-    body:
-      'The engine binds them itself — W to move, X for third person, Y to ' +
-      'chat — so nothing is translated on the way in. We only open ' +
-      'The Specialists\u2019 anti-script gate, so a real keypress counts as ' +
-      'a real keypress instead of being filtered out as scripted input.',
+    points: [
+      'The engine **binds them itself** — W to move, X for third person, Y to chat.',
+      '**Nothing is translated** on the way in.',
+      'We only open The Specialists’ **anti-script gate**, so a real keypress counts as a real keypress.',
+    ],
   },
 ];
 
@@ -102,7 +138,7 @@ const controls = [
   }
 
   &__title {
-    margin: 0.4rem 0 0.5rem;
+    margin: 0.4rem 0 0.7rem;
     font-family: var(--ts-font-display);
     font-size: 1.02rem;
     font-weight: 700;
@@ -110,15 +146,45 @@ const controls = [
     color: var(--ts-ink-bright);
   }
 
-  &__body {
+  /* ---- the bullets ---- */
+  &__points {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
     margin: 0;
-    font-size: 0.83rem;
-    line-height: 1.55;
+    padding: 0;
+    list-style: none;
+  }
+
+  &__point {
+    position: relative;
+    padding-left: 0.95rem;
+    font-size: 0.82rem;
+    line-height: 1.5;
     color: var(--ts-ink);
   }
 
+  /* The same ▸ the boot screen uses for its active step. One marker
+     language across the product. */
+  &__point::before {
+    content: '▸';
+    position: absolute;
+    left: 0;
+    top: 0.06rem;
+    font-size: 0.68rem;
+    line-height: 1.7;
+    color: var(--ts-signal);
+  }
+
+  /* The word worth remembering. Phosphor, because phosphor is the
+     colour of "this is the operative fact" in this shell. */
+  &__hl {
+    color: var(--ts-signal);
+    font-weight: 700;
+  }
+
   &__controls {
-    margin-top: 1.1rem;
+    margin-top: 1.2rem;
   }
 
   &__controls-head {

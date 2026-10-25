@@ -41,7 +41,7 @@
       <header class="ts-landing__hero">
         <div class="ts-landing__eyebrow">
           <span class="ts-landing__dot" aria-hidden="true" />
-          Scene 01 / Half-Life 1 · running in a browser
+          The Specialists Mod / Half-Life 1 · running in a browser
         </div>
 
         <div class="ts-landing__mark" aria-hidden="true" />
@@ -67,7 +67,7 @@
         </svg>
 
         <p class="ts-landing__lede">
-          Tactical deathmatch with the original ruleset — ported to
+          The Specialists Mod 3.0 with the original ruleset — ported to
           WebAssembly, served from a dedicated server. No install.
         </p>
 
@@ -213,7 +213,19 @@ const launchError = ref('');
  * be the same on every load, so the page never reflows under the
  * reader, and a screenshot of it is reproducible.
  */
-const RAIN_GLYPHS = '0123456789ｱｲｳｴｵABCDEFXYZ<>/\\|[]{}+=*#$%&@';
+/**
+ * The glyph set.
+ *
+ * Weighted towards half-width katakana, because that is what the CRT
+ * matrix look is made of: a column of dense, angular, half-width
+ * characters reads as terminal output, where a column of Latin letters
+ * reads as a spreadsheet.
+ */
+const RAIN_GLYPHS =
+  'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿ' +
+  '0123456789' +
+  'ABCDEFXYZ' +
+  '<>/\\|[]{}+=*#$%&@';
 /** Glyphs per tile. 64 at 19px is a 1216px tile. */
 const RAIN_TILE_GLYPHS = 64;
 /** The tile's height in pixels. The travel is EXACTLY this. */
@@ -253,7 +265,11 @@ function rainStyle(strip: string, i: number) {
     left: (i / rainStrips.length) * 100 + '%',
     backgroundImage: strip,
     animationDelay: -(i * 0.83) + 's',
-    animationDuration: 10 + (i % 5) * 1.6 + 's',
+    // 18-31s for one 1216px tile, so 39-67px/second. It was 10-16s,
+    // which is 76-121px/second: a full screen of glyphs moving at a
+    // hundred pixels a second is what gives a motion-sickness vibe, and
+    // nothing about the effect needed to be that fast.
+    animationDuration: 18 + (i % 5) * 3.4 + 's',
   };
 }
 
@@ -540,8 +556,31 @@ onMounted(() => {
     position: absolute;
     inset: 0;
     overflow: hidden;
-    -webkit-mask-image: linear-gradient(180deg, transparent, #000 14%, #000 76%, transparent);
-    mask-image: linear-gradient(180deg, transparent, #000 14%, #000 76%, transparent);
+    /* Fade hard from the top down.
+       The old mask was fully opaque from 14% to 76% of the screen, so
+       the rain hit the hero at full strength with nothing between. The
+       rain now falls away as it descends, which leaves the wordmark,
+       the lede and the PLAY button sitting on a calm field, and it is
+       the lower half of the screen that a moving eye is worst served
+       by. */
+    -webkit-mask-image: linear-gradient(
+      180deg,
+      transparent 0%,
+      #000 4%,
+      rgba(0, 0, 0, 0.55) 20%,
+      rgba(0, 0, 0, 0.3) 45%,
+      rgba(0, 0, 0, 0.12) 70%,
+      transparent 92%
+    );
+    mask-image: linear-gradient(
+      180deg,
+      transparent 0%,
+      #000 4%,
+      rgba(0, 0, 0, 0.55) 20%,
+      rgba(0, 0, 0, 0.3) 45%,
+      rgba(0, 0, 0, 0.12) 70%,
+      transparent 92%
+    );
 
     span {
       position: absolute;
@@ -552,8 +591,12 @@ onMounted(() => {
       width: 20px;
       background-repeat: repeat-y;
       background-size: 20px 1216px;
-      opacity: 0.2;
-      animation: ts-rain 12s linear infinite;
+      opacity: 0.17;
+      /* The CRT phosphor glow: a soft halo around each glyph with the
+         core left crisp, which is what a real phosphor does and what
+         flat text does not. */
+      filter: drop-shadow(0 0 3px rgba(0, 255, 65, 0.4));
+      animation: ts-rain 18s linear infinite;
       will-change: transform;
     }
   }
