@@ -69,12 +69,37 @@
         </div>
 
         <div class="ts-server__right">
-          <span v-if="server.tickrate" class="ts-server__tick">
-            {{ server.tickrate }}<i>tick</i>
-          </span>
-          <span class="ts-server__health" :class="healthClass(server)">
-            {{ healthLabel(server) }}
-          </span>
+          <div class="ts-server__line">
+            <span v-if="server.tickrate" class="ts-server__tick">
+              {{ server.tickrate }}<i>tick</i>
+            </span>
+            <!--
+              The PLAYER's ping, not the server's. The registry queries
+              the game server over loopback, so an A2S round trip measured
+              there is always ~0ms and says nothing about how far the
+              reader is from the machine. This is the time for the list
+              itself to come back — the same origin, the same proxy, the
+              same path the game traffic takes.
+            -->
+            <span v-if="pingMs !== null" class="ts-server__ping">
+              ping {{ pingMs }}<i>ms</i>
+            </span>
+          </div>
+          <div class="ts-server__line">
+            <span class="ts-server__health" :class="healthClass(server)">
+              {{ healthLabel(server) }}
+            </span>
+            <!--
+              The time until the server rotates to the next map. The
+              server counts it (`mp_timeleft`), the registry reads it from
+              the console, and the countdown runs locally from the moment
+              the payload arrived — so it ticks down smoothly instead of
+              jumping once per poll.
+            -->
+            <span v-if="mapCountdown(server) !== null" class="ts-server__map">
+              next map {{ mapCountdown(server) }}
+            </span>
+          </div>
         </div>
 
         <button class="ts-server__join" @click="$emit('join', server)">
@@ -99,6 +124,29 @@ const servers = ref<TsServer[]>([]);
 const loading = ref(true);
 const refreshing = ref(false);
 const error = ref('');
+
+/** The player's round-trip time to this machine, in milliseconds. */
+const pingMs = ref<number | null>(null);
+/**
+ * When the current payload arrived.
+ *
+ * The map countdown is counted down from HERE, not from the server's
+ * clock: the browser's clock and the server's clock are not the same
+ * clock, and a countdown computed from the server's timestamp would be
+ * wrong by however much the two disagree.
+ */
+const fetchedAt = ref(Date.now());
+
+/**
+ * A clock that ticks, so the countdown actually counts down.
+ *
+ * Without this the countdown is computed once per render and the
+ * component renders only when the server list changes — which is every
+ * twenty seconds — so the timer sat frozen at whatever it was when the
+ * payload arrived.
+ */
+const now = ref(Date.now());
+let ticker: ReturnType<typeof setInterval> | undefined;
 
 /**
  * How often the list refreshes itself.
@@ -141,11 +189,30 @@ function healthLabel(server: TsServer): string {
   return 'Ok';
 }
 
+/**
+ * The time until the server changes map, as mm:ss.
+ *
+ * The server's `mp_timeleft` is a snapshot taken when the payload was
+ * built, so the seconds that have passed since it arrived are subtracted
+ * from it. Null when the server did not report one.
+ */
+function mapCountdown(server: TsServer): string | null {
+  if (typeof server.mapSecondsLeft !== 'number') return null;
+  const elapsed = Math.floor((now.value - fetchedAt.value) / 1000);
+  const left = Math.max(0, server.mapSecondsLeft - elapsed);
+  const m = Math.floor(left / 60);
+  const s = left % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 async function refresh() {
   refreshing.value = true;
   error.value = '';
   try {
-    servers.value = await fetchServerList();
+    const list = await fetchServerList();
+    servers.value = list.servers;
+    pingMs.value = list.pingMs;
+    fetchedAt.value = Date.now();
     emit('servers', servers.value);
   } catch (e) {
     // Never fall back to placeholder rows here. A fabricated server that
@@ -161,10 +228,14 @@ async function refresh() {
 onMounted(async () => {
   await refresh();
   poll = setInterval(refresh, POLL_MS);
+  ticker = setInterval(() => {
+    now.value = Date.now();
+  }, 1000);
 });
 
 onUnmounted(() => {
   if (poll) clearInterval(poll);
+  if (ticker) clearInterval(ticker);
 });
 </script>
 
@@ -329,12 +400,21 @@ onUnmounted(() => {
     color: var(--ts-ink-faint);
   }
 
-  /* ---- tickrate + health --------------------------------------------- */
+  /* ---- tickrate, ping, health, map timer ------------------------------ */
   &__right {
     display: flex;
     flex-direction: column;
     align-items: flex-end;
     gap: 0.35rem;
+  }
+
+  /* Two lines, each a pair: the engine's numbers on the first, the
+     server's condition and its map timer on the second. */
+  &__line {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    white-space: nowrap;
   }
 
   &__tick {
@@ -350,6 +430,32 @@ onUnmounted(() => {
       text-transform: uppercase;
       color: var(--ts-ink-faint);
     }
+  }
+
+  /* The player's ping. Phosphor, because it is the one number on this row
+     that is about the reader rather than about the server. */
+  &__ping {
+    font-family: var(--ts-font-mono);
+    font-size: 0.72rem;
+    color: var(--ts-signal);
+
+    i {
+      font-style: normal;
+      margin-left: 0.28rem;
+      font-size: 0.56rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--ts-ink-faint);
+    }
+  }
+
+  /* The time until the next map. Muted: it is context, not a condition. */
+  &__map {
+    font-family: var(--ts-font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.06em;
+    color: var(--ts-ink-muted);
+    white-space: nowrap;
   }
 
   &__health {

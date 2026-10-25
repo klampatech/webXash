@@ -49,6 +49,16 @@ export interface TsServer {
   bots?: number;
   /** Engine tickrate, as the registry measured it. */
   tickrate?: number;
+  /**
+   * Seconds left on the current map, as the server itself counts them.
+   *
+   * The registry reads the TS server's `mp_timeleft` cvar from its console
+   * — the same way it reads the tickrate — and publishes it with the
+   * timestamp it was measured at. The browser counts it down locally from
+   * the moment it received the payload, so a twenty-second poll does not
+   * make the countdown jump in twenty-second steps.
+   */
+  mapSecondsLeft?: number;
   /** The registry got an answer from this server recently. */
   responsive?: boolean;
   /** The server answers, but badly. */
@@ -62,18 +72,52 @@ export class ServerListError extends Error {}
 
 const ENDPOINT = 'api/servers';
 
-export async function fetchServerList(): Promise<TsServer[]> {
+/** The server list, and how long it took to arrive. */
+export interface ServerList {
+  servers: TsServer[];
+  /**
+   * The user's round-trip time to the machine that runs the game server,
+   * in milliseconds.
+   *
+   * WHY THE BROWSER MEASURES IT AND NOT THE SERVER
+   * ----------------------------------------------
+   * The obvious source is the A2S query, which is where a "ping" normally
+   * comes from. But the registry queries the server over LOOPBACK — the
+   * game server is on the same host as the registry — so an A2S round trip
+   * measured there is always about a tenth of a millisecond and says
+   * nothing about how far the player is from the machine.
+   *
+   * What the player actually wants to know is how far THEY are. And the
+   * page is already talking to that machine: it fetches this very list
+   * from it, over the same origin, through the same reverse proxy the
+   * game traffic goes through. So the time for that fetch to come back is
+   * the player's ping, measured for the player.
+   *
+   * It is the time to the response HEADERS, so the server's own work is
+   * included — a few milliseconds on the registry, which is honest.
+   */
+  pingMs: number | null;
+}
+
+export async function fetchServerList(): Promise<ServerList> {
   let res: Response;
+  const started = performance.now();
   try {
     res = await fetch(ENDPOINT, { cache: 'no-store' });
   } catch {
     throw new ServerListError('Could not reach the server list endpoint');
   }
+  // Measured here, not after the body is parsed: `fetch` resolves when the
+  // response headers arrive, so this is the round trip and nothing else.
+  const pingMs = Math.round(performance.now() - started);
   if (!res.ok) {
     throw new ServerListError(`Server list failed (HTTP ${res.status})`);
   }
   const body = (await res.json()) as { servers?: TsServer[] };
-  return Array.isArray(body.servers) ? body.servers : [];
+  return {
+    servers: Array.isArray(body.servers) ? body.servers : [],
+    pingMs,
+  };
 }
 
 /**
@@ -126,7 +170,7 @@ export function bridgeAddress(): string {
  * empty servers, so spreading them thin is the wrong default.
  */
 export async function resolveLaunchTarget(): Promise<TsServer | null> {
-  const servers = await fetchServerList();
+  const { servers } = await fetchServerList();
   if (!servers.length) return null;
   return [...servers].sort((a, b) => {
     const humansA = a.humans ?? a.players ?? 0;
