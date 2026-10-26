@@ -17,6 +17,17 @@ import './assets/ts-theme.css';
 import { installEscapeGate } from './services/escape-gate';
 installEscapeGate();
 
+// The browser chord gate. Chromium reserves Ctrl+W (close tab) and a few
+// neighbours — the keydown never reaches the page, so the browser tries
+// to close the tab and the app's own unload guard turns that into a
+// "Leave site?" dialog while the player is only trying to crouch. The
+// gate swallows those chords during a match. Installed at import time for
+// the same reason as the escape gate above: it has to be listening
+// before the launch click asks for fullscreen, because that request is
+// what the keyboard lock hangs off.
+import { installBrowserChordGate } from './services/browser-chord-gate';
+installBrowserChordGate();
+
 // The fullscreen watchdog: a canvas resize can lose the WebGL context,
 // and a lost context renders black. It only acts when the context is
 // actually lost, so it cannot make a working resize worse.

@@ -9,6 +9,7 @@ import SaveManager from '/@/services/save-manager.ts';
 import { tsPump } from '/@/services/ts-pump.ts';
 import { useXashStore } from '/@/stores/store.ts';
 import { logDebug } from '/@/services/debug-log.ts';
+import { armBrowserChordGate, disarmBrowserChordGate } from '/@/services/browser-chord-gate.ts';
 import { delay } from '/@/utils/helpers.ts';
 import { DEFAULT_GAME_DIR } from '/@/services/save-manager.ts';
 
@@ -557,6 +558,9 @@ class XashLoader {
     // where this module is the only copy.
     (window as unknown as { __xashUnloadAllowed?: boolean }).__xashUnloadAllowed = true;
     window.removeEventListener('beforeunload', onBeforeUnload);
+    // The chord gate goes with it: it exists to defuse the chords that
+    // would trip this guard, and this guard is coming off.
+    disarmBrowserChordGate();
   }
 
   private async _getXashInstance(
@@ -1345,6 +1349,14 @@ class XashLoader {
 
   public async onAfterLoad(options: PostLoadOptions): Promise<void> {
     window.addEventListener('beforeunload', onBeforeUnload);
+    // The unload guard above is what turns the browser's Ctrl+W ("close
+    // this tab") into a "Leave site?" dialog, and Chromium reserves that
+    // chord — the keydown never reaches the page, so no DOM handler can
+    // cancel it. The chord gate swallows it (and its neighbours) for the
+    // length of the match, so a player who is only crouching does not
+    // get a modal thrown at them. Armed here, in the same place as the
+    // guard it exists to defuse.
+    armBrowserChordGate();
 
     await delay(500); // Wait for xash to fully load first
 
@@ -1401,6 +1413,9 @@ class XashLoader {
 
   public static removeReloadListener() {
     window.removeEventListener('beforeunload', onBeforeUnload);
+    // The match is over (or never started): give the browser its own
+    // shortcuts back, so the landing page behaves like a normal web page.
+    disarmBrowserChordGate();
   }
 
   public static onExit() {
