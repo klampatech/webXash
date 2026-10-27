@@ -10,6 +10,15 @@ import { tsPump } from '/@/services/ts-pump.ts';
 import { useXashStore } from '/@/stores/store.ts';
 import { logDebug } from '/@/services/debug-log.ts';
 import { armBrowserChordGate, disarmBrowserChordGate } from '/@/services/browser-chord-gate.ts';
+import {
+  applyRenderResolution,
+  armRenderResolution,
+  detectDisplay,
+  renderResolutionArgs,
+  resolveRenderResolution,
+  setRenderResolutionTarget,
+  type RenderResolution,
+} from '/@/services/video-settings.ts';
 import { delay } from '/@/utils/helpers.ts';
 import { DEFAULT_GAME_DIR } from '/@/services/save-manager.ts';
 
@@ -519,12 +528,22 @@ class XashLoader {
     XashLoader.liveInstance = inst;
   }
 
-  /** Run an engine console command (no-op if not booted). */
-  public static exec(cmd: string) {
+  /**
+   * Run an engine console command (no-op if not booted).
+   *
+   * Returns true when the engine took it. The engine's command system
+   * does not exist until its first frame, and a command sent before
+   * that makes the engine raise a fatal error of its own — so the
+   * caller needs to know whether the command landed.
+   */
+  public static exec(cmd: string): boolean {
     try {
-      XashLoader.liveInstance?.Cmd_ExecuteString(cmd);
+      if (!XashLoader.liveInstance) return false;
+      XashLoader.liveInstance.Cmd_ExecuteString(cmd);
+      return true;
     } catch (e) {
       console.warn('[xash-exec] failed:', cmd, e);
+      return false;
     }
   }
 
@@ -1219,9 +1238,45 @@ class XashLoader {
     );
   }
 
+  /**
+   * The render resolution this session will use.
+   *
+   * The player's choice comes from the store; the display comes from the
+   * browser; the policy that turns one into the other is in
+   * services/video-settings.ts.
+   *
+   * The result is ALSO parked in that module, because the resize
+   * watchdog needs it later and the watchdog is installed at import
+   * time — before the Vue app, and therefore before the store, exists.
+   */
+  private _resolveRenderResolution(): RenderResolution {
+    const store = useXashStore();
+    const resolution = resolveRenderResolution(
+      store.renderResolution,
+      detectDisplay(),
+    );
+    setRenderResolutionTarget(resolution);
+    return resolution;
+  }
+
   private _buildLaunchArgs(options: FullStartOptions): string[] {
     const baseArgs = options.fullScreen ? FULLSCREEN_ARGS : WINDOW_ARGS;
     const rawLaunch = options.launchOptions?.split(' ').filter(Boolean) || [];
+
+    // The render resolution goes on the command line too.
+    //
+    // `-width`/`-height` are the engine's own switches, and the engine
+    // creates its window at that size during renderer init — so the very
+    // first frame is already at the right resolution instead of the
+    // viewport's, which on a 1440p display is four times the pixels.
+    //
+    // It is not the load-bearing half. The engine re-syncs its render
+    // resolution to the browser viewport on every resize (SDL's resize
+    // event -> VID_SaveWindowSize -> R_SaveVideoMode), so going
+    // fullscreen throws this away; onAfterLoad re-applies it, and the
+    // resize watchdog re-applies it after that.
+    const video = this._resolveRenderResolution();
+    const videoArgs = renderResolutionArgs(video);
 
     // 2026-10-21: strip -noip / -noip6 whenever the user is asking to
     // connect to a remote server. FWGS net_ws.c:2018 does
@@ -1243,7 +1298,7 @@ class XashLoader {
       );
     }
 
-    const launch = [...baseArgs, ...args];
+    const launch = [...baseArgs, ...videoArgs, ...args];
 
     if (options.enableConsole) {
       launch.push(CONSOLE_ARG);
@@ -1409,6 +1464,62 @@ class XashLoader {
       logDebug(`[bind] ${cmd}`);
       options.xash.Cmd_ExecuteString(cmd);
     }
+
+    // THE RENDER RESOLUTION.
+    //
+    // The engine renders at the browser viewport's resolution, and the
+    // frame cost is the pixel count — measured against production:
+    //
+    //     viewport      engine render res   engine frames/s
+    //     640x480       640x480             69.5
+    //     1280x720      1280x720            30.2
+    //     1920x1080     1920x1080            8.6
+    //     2560x1440     2560x1440            4.5
+    //
+    // So going fullscreen on a 1440p display is a 4x hit, and the
+    // "150 ms" the 2026-10-27 capacity report could not explain is
+    // this: the engine's own frame time, during which the page's main
+    // thread is blocked. It was never server latency.
+    //
+    // The command line set the initial size; this sets it again, because
+    // the engine re-syncs to the viewport on every resize and the page
+    // has been fullscreen since before the engine booted.
+    this._resolveRenderResolution();
+
+    // The engine's command system is up by now — the loader's own apply
+    // is the first command the engine ever takes, and it has never
+    // failed. That matters, because the RESIZE WATCHDOG is installed at
+    // import time and hears the resize events that happen while the
+    // engine is still booting. A command sent then lands in an
+    // uninitialised command pool and the engine answers it with its own
+    // fatal error (measured: `_Mem_Alloc: pool == NULL`, thrown at the
+    // JavaScript side as the bare value `Infinity`).
+    //
+    // So the watchdog stays disarmed until this point.
+    armRenderResolution();
+
+    const applyVideo = (force: boolean) =>
+      applyRenderResolution(
+        (cmd) => {
+          options.xash.Cmd_ExecuteString(cmd);
+          return true;
+        },
+        logDebug,
+        force,
+      );
+
+    // `force` on the first call, deliberately: the launch arguments set
+    // the canvas's backing store, but the engine's own `vid_width`/
+    // `vid_height` cvars can still be sitting at the viewport's size.
+    // The engine's own `vid_setmode` path is what leaves the two
+    // agreeing, and only the engine can do that.
+    applyVideo(true);
+
+    // The engine may still have been starting when the line above ran
+    // — the video system is not up until the renderer has initialised.
+    // Try again shortly after; the check is free (it reads the canvas
+    // backing store) and does nothing if the resolution already took.
+    setTimeout(() => applyVideo(false), 1500);
   }
 
   public static removeReloadListener() {

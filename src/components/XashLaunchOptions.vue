@@ -29,6 +29,42 @@
           />
           Console
         </label>
+
+        <!--
+          THE RENDER RESOLUTION.
+
+          The engine draws at the browser viewport's resolution, and the
+          frame cost is the pixel count. Measured against production on
+          2026-10-28:
+
+              viewport      engine render res   engine frames/s
+              640x480       640x480             69.5
+              1280x720      1280x720            30.2
+              1920x1080     1920x1080            8.6
+              2560x1440     2560x1440            4.5
+
+          So going fullscreen on a 1440p display is a 4x hit. The
+          browser upscales the canvas for free (the canvas is
+          `width: 100vw; height: 100vh`), so rendering smaller and
+          letting the browser scale it up is the trade every modern
+          game makes.
+        -->
+        <label class="opt-resolution" for="render-resolution">
+          <span class="opt-label">Render resolution</span>
+          <select
+            id="render-resolution"
+            v-model="renderResolution"
+            name="render-resolution"
+          >
+            <option v-for="choice in choices" :key="choice" :value="choice">
+              {{ labelFor(choice) }}
+            </option>
+          </select>
+          <span class="opt-help">
+            Engine draws {{ effectiveRender }}; the browser scales it to
+            the window.
+          </span>
+        </label>
       </div>
       <input v-model="launchOptions" class="xash-launch-options" type="text" />
 
@@ -111,6 +147,13 @@
   import { computed } from 'vue';
   import { storeToRefs } from 'pinia';
   import { useXashStore } from '/@/stores/store';
+  import {
+    RESOLUTION_CHOICES,
+    describeResolutionChoice,
+    detectDisplay,
+    resolveRenderResolution,
+    type ResolutionChoice,
+  } from '/@/services/video-settings.ts';
 
   const store = useXashStore();
   const {
@@ -118,9 +161,24 @@
     fullScreen,
     enableConsole,
     enableCheats,
+    renderResolution,
     selectedGameKey,
     tsConfig,
   } = storeToRefs(store);
+
+  // The display, read once: it cannot change without the player moving
+  // the window to another monitor, and re-reading it on every render
+  // would be noise.
+  const display = detectDisplay();
+  const choices = RESOLUTION_CHOICES;
+
+  const labelFor = (choice: ResolutionChoice) =>
+    describeResolutionChoice(choice, display);
+
+  const effectiveRender = computed(() => {
+    const res = resolveRenderResolution(renderResolution.value, display);
+    return `${res.width}\u00d7${res.height}`;
+  });
 
   // Build the effective launch string by splicing TS cvars into the base
   // options. The cvar splice happens BEFORE +map so the engine's argv
@@ -154,6 +212,24 @@
 
     label {
       cursor: pointer;
+    }
+
+    .opt-resolution {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+      margin-top: 10px;
+    }
+
+    select {
+      background: rgba(0, 0, 0, 0.5);
+      color: #f4e3b0;
+      border: 1px solid rgba(190, 140, 40, 0.55);
+      border-radius: 3px;
+      padding: 3px 6px;
+      font-family: var(--ts-font-mono, monospace);
+      font-size: 11px;
     }
   }
 
