@@ -134,6 +134,14 @@
         </section>
 
         <section
+          v-show="activeTab === 'leaderboard'"
+          role="tabpanel"
+          class="ts-landing__section"
+        >
+          <TSLeaderboard />
+        </section>
+
+        <section
           v-show="activeTab === 'how'"
           role="tabpanel"
           class="ts-landing__section"
@@ -184,6 +192,7 @@ import {
 } from '/@/services/ts-server-list.ts';
 import TSServerList from '/@/components/TSServerList.vue';
 import TSHowToPlay from '/@/components/TSHowToPlay.vue';
+import TSLeaderboard from '/@/components/TSLeaderboard.vue';
 import PlayerIdentityModal from '/@/components/PlayerIdentityModal.vue';
 import { enterFullscreen } from '/@/services/fullscreen.ts';
 import {
@@ -193,6 +202,7 @@ import {
 
 const tabs = [
   { id: 'servers', label: 'Servers' },
+  { id: 'leaderboard', label: 'Leaderboard' },
   { id: 'how', label: 'How It Works' },
 ] as const;
 
