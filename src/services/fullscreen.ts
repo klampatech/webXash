@@ -137,8 +137,30 @@ export function recoverLostContext(): boolean {
  * Watch for the resize that a fullscreen transition causes, and recover a
  * lost context if that is what went black.
  *
+ * It also re-applies the render resolution, because the engine throws it
+ * away on every resize: SDL's resize event calls `VID_SaveWindowSize`,
+ * which calls `R_SaveVideoMode`, which rewrites the engine's `width`,
+ * `height`, `vid_width` and `vid_height` from the new window size. So a
+ * forced 1280x720 does not survive the viewport growing to 2560x1440 —
+ * measured: the engine went back to 2560x1440 and the frame rate fell
+ * from 16.2/s to 0.4/s.
+ *
+ * THIS WATCHDOG IS INSTALLED AT IMPORT TIME, before the Vue app exists,
+ * so it hears the resize events that happen while the engine is still
+ * booting. It must not send the engine a command then: the engine's
+ * command pool does not exist until its first frame, and a command sent
+ * early makes the engine raise a fatal error of its own (measured:
+ * `_Mem_Alloc: pool == NULL`, thrown at the JavaScript side as the bare
+ * value `Infinity`). The render-resolution module stays DISARMED until
+ * the loader says the engine is up, and `applyRenderResolution` refuses
+ * to act while it is.
+ *
  * Idempotent: installing it twice installs one watcher.
  */
+import XashLoader from '/@/services/xash-loader';
+import { applyRenderResolution } from '/@/services/video-settings.ts';
+import { logDebug } from '/@/services/debug-log.ts';
+
 export function installFullscreenWatchdog(): () => void {
   if (typeof window === 'undefined') return () => {};
   const key = '__xashFullscreenWatchdogInstalled';
@@ -150,6 +172,10 @@ export function installFullscreenWatchdog(): () => void {
   const check = () => {
     timer = null;
     recoverLostContext();
+    // The render resolution is a consequence of the resize, so it is
+    // repaired here too. The check reads the canvas backing store, so
+    // it costs nothing when the engine has not drifted.
+    applyRenderResolution((cmd) => XashLoader.exec(cmd), logDebug);
   };
   // Debounced: a fullscreen transition fires a burst of resize events,
   // and a context that is being restored must not be poked again while it

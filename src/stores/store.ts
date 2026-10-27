@@ -4,6 +4,7 @@ import { defineStore } from 'pinia';
 import { type SaveEntry } from '/@/services/save-manager.ts';
 import { DEFAULT_GAME_DIR } from '/@/services/save-manager.ts';
 import { GAME_SETTINGS } from '/@/services/xash-loader.ts';
+import type { ResolutionChoice } from '/@/services/video-settings.ts';
 import type { BootPhase } from '/@/services/xash-loader.ts';
 
 export const useXashStore = defineStore(
@@ -118,6 +119,26 @@ export const useXashStore = defineStore(
     const browserFullscreen = ref(true);
     const enableConsole = ref(true);
     const enableCheats = ref(false);
+
+    // The render resolution the engine will draw at.
+    //
+    // 'auto' is the default and the reason this exists: the engine
+    // renders at the browser viewport's resolution, and the frame cost
+    // is the pixel count. Measured against production on 2026-10-28:
+    //
+    //     viewport      engine render res   engine frames/s
+    //     640x480       640x480             69.5
+    //     1280x720      1280x720            30.2
+    //     1920x1080     1920x1080            8.6
+    //     2560x1440     2560x1440            4.5
+    //
+    // So going fullscreen on a 1440p display is a 4x hit. 'auto' caps
+    // the render at 1080p and lets the browser upscale the canvas; the
+    // player can override it, including with the display's own
+    // resolution.
+    //
+    // The policy itself lives in services/video-settings.ts.
+    const renderResolution = ref<ResolutionChoice>('auto');
 
     // Methods
 
@@ -260,6 +281,7 @@ export const useXashStore = defineStore(
       browserFullscreen,
       enableConsole,
       enableCheats,
+      renderResolution,
       // Computed
       selectedGame,
       customGameArg,
@@ -286,6 +308,11 @@ export const useXashStore = defineStore(
         'browserFullscreen',
         'enableConsole',
         'enableCheats',
+        // The render resolution is a per-player preference, not a
+        // per-session one: the same display wants the same cap every
+        // time, and re-deriving it on every load is how it ends up
+        // inconsistent with what the player chose.
+        'renderResolution',
       ],
     },
   },
