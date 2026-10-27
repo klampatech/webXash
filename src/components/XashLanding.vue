@@ -239,8 +239,35 @@ const pendingLaunch = ref<string | undefined>(undefined);
  */
 const identityRequired = ref(true);
 
+/**
+ * The player confirmed their identity, so the launch goes ahead.
+ *
+ * The guard has to be cleared HERE, and this is the whole reason this
+ * function exists.
+ *
+ * `launch()` re-checks `identityRequired` before it connects, and
+ * that check is what opens the modal in the first place. So the
+ * sequence used to be:
+ *
+ *   Play -> launch() -> identityRequired is true -> open the modal
+ *   confirm -> onIdentityConfirm() -> launch() again
+ *          -> identityRequired is STILL true -> open the modal AGAIN
+ *
+ * and the player could never get into the game. The modal re-opened
+ * on top of itself, forever, and the only way out was to tick
+ * "remember me" on a page reload — which is not what "remember me"
+ * is supposed to mean, and which a first-time player has no reason
+ * to know about.
+ *
+ * The flag is only recomputed in `onMounted`, from what is in
+ * localStorage, so within a session it never changed.
+ *
+ * Clearing it here means "the player has been asked, and answered" —
+ * which is the actual condition the guard is meant to express.
+ */
 function onIdentityConfirm() {
   identityOpen.value = false;
+  identityRequired.value = false;
   const options = pendingLaunch.value;
   pendingLaunch.value = undefined;
   void launch(options);
