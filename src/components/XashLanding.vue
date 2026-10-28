@@ -364,11 +364,11 @@ const RAIN_GLYPHS =
 /** Glyphs per tile. 64 rows of the row pitch. */
 const RAIN_TILE_GLYPHS = 64;
 /**
- * THE REFERENCE.
+ * THE REFERENCE, AND HOW FAR OFF IT THIS IS.
  *
  * Wikipedia's "digital rain" article carries a 500x400 screensaver
- * capture of the effect, and that is the thing this is tuned to look
- * like. Measured off the GIF itself:
+ * capture of the effect, and it is the right reference for how the
+ * thing MOVES and how it is put together. Measured off the GIF:
  *
  *   the row pitch     27.5px on a 400px screen  = 6.9% of the height
  *   the glyph         22px, which is 80% of the row
@@ -376,35 +376,43 @@ const RAIN_TILE_GLYPHS = 64;
  *   the trail         uniformly bright green, (0,195-246,0), blooming
  *   the head          ONE glyph, pure white, and it changes EVERY
  *                     frame — ten times a second
- *   the fall          33px per 100ms frame = 0.85 screens a second,
- *                     so the glyphs stream past at about twelve a
- *                     second
+ *   the fall          33px per 100ms frame, which is 12 ROWS a second
  *
- * The sizes are in vh so the rain keeps its proportions on any window
- * instead of being a 400px screensaver on a 1440p screen.
+ * But the reference is rain on a black screen with nothing in front of
+ * it, and this is a background behind a title. Matched to the
+ * reference's sizes it is a wall of characters: the glyphs came out
+ * at 85% of the height of the wordmark, which is not a background,
+ * it is wallpaper.
+ *
+ * So the proportions are the reference's and the SCALE is not. The
+ * glyphs are a quarter of the size — a background texture rather than
+ * a row of characters — and the whole thing is dimmed to match.
  */
-const RAIN_ROW_VH = 6.9;
-const RAIN_FONT_VH = 6.35;
+const RAIN_ROW_VH = 2.82;
+const RAIN_FONT_VH = 2.6;
 /**
  * How fast it falls.
  *
- * The reference crosses its screen in 1.2 seconds. The tile is 64 rows
- * of 6.9% of the screen, so it is 4.42 screens, and at 0.85 screens a
- * second one tile takes 5.2 seconds. That number is the same at every
- * window size, because both the tile and the screen scale with it.
+ * In ROWS a second, which is the scale-free version of the
+ * reference's 33px per 100ms frame: the reference's rows are 27.5px
+ * and it moves 33px a frame, so 1.2 rows a frame, 12 rows a second.
+ *
+ * The tile is 64 rows, so one tile takes 5.3 seconds — the same at
+ * every window size, because the rows are a fixed fraction of it.
  */
-const RAIN_SCREENS_PER_SECOND = 0.85;
-const RAIN_TILE_SECONDS =
-  (RAIN_TILE_GLYPHS * RAIN_ROW_VH) / 100 / RAIN_SCREENS_PER_SECOND;
+const RAIN_ROWS_PER_SECOND = 12;
+const RAIN_TILE_SECONDS = RAIN_TILE_GLYPHS / RAIN_ROWS_PER_SECOND;
 /**
  * Tiles of content per column. Three: one above the window, one in it,
  * one below, so the column is always in flight and always covers the
  * window however tall it is.
  */
 const RAIN_TILES = 3;
-/** Columns. Fourteen: one every 7% of the width, which is the reference's
- *  column pitch. */
-const RAIN_COLUMNS = 14;
+/** Columns. Twenty: the reference has one every 35px on a 500px screen,
+ *  and its glyphs are a fifth of the size of this page's, so this
+ *  keeps the same amount of green on the screen rather than twice as
+ *  much. */
+const RAIN_COLUMNS = 20;
 
 /**
  * One column's TRAIL: the fixed glyphs of one tile.
@@ -433,7 +441,7 @@ function rainTile(seed: number): { trail: string; slots: number[] } {
     s = (s * 48271) % 2147483647;
     return s / 2147483647;
   };
-  const slots = [8 + Math.floor(next() * 48), RAIN_TILE_GLYPHS - 2];
+  const slots = [RAIN_TILE_GLYPHS - 2];
   const rows: string[] = [];
   for (let i = 0; i < RAIN_TILE_GLYPHS; i++) {
     if (slots.includes(i)) {
@@ -971,8 +979,13 @@ onMounted(() => {
 
            So the trail is one colour, the brand's phosphor green, and
            the only thing that changes about a glyph is the one at the
-           head. */
-        color: var(--ts-signal);
+           head.
+
+           It is at HALF strength, though. The reference's green is
+           (0,195-246,0) on a black screen, which is as bright as a
+           character can be; here it is a background behind a title, and
+           the wordmark has to stay the brightest thing on the page. */
+        color: rgba(0, 255, 65, 0.42);
 
         animation: ts-rain 18s linear infinite;
         will-change: transform;
@@ -995,7 +1008,7 @@ onMounted(() => {
            times a second, is constantly. Filtered, the rain ran at 54
            frames a second; as a text-shadow it runs at 60, and the glow
            is the same glow. */
-        text-shadow: 0 0 1.4vh rgba(0, 255, 65, 0.55);
+        text-shadow: 0 0 0.8vh rgba(0, 255, 65, 0.22);
       }
 
       /* THE HEAD.
@@ -1020,12 +1033,14 @@ onMounted(() => {
            heads of the second and third tiles are 64 and 128 rows down. */
         top: calc((var(--head-row) - var(--ts-rain-glyphs)) * var(--ts-rain-line));
         width: var(--ts-rain-font);
-        /* PURE WHITE, which is what the reference's head is: rgb(255,255,255)
-           in every frame, against a trail of rgb(0,195-246,0). */
-        color: #fff;
+        /* WHITE, which is what the reference's head is: rgb(255,255,255)
+           in every frame, against a trail of rgb(0,195-246,0). Not
+           quite full white — the head is the brightest thing in the
+           rain, but the wordmark has to stay brighter than that. */
+        color: rgba(255, 255, 255, 0.8);
         text-shadow:
-          0 0 1.4vh rgba(255, 255, 255, 0.95),
-          0 0 3vh rgba(0, 255, 65, 0.55);
+          0 0 0.9vh rgba(255, 255, 255, 0.7),
+          0 0 2vh rgba(0, 255, 65, 0.35);
         animation: ts-rain 18s linear infinite;
         will-change: transform;
       }
