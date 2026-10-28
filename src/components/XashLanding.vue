@@ -361,53 +361,91 @@ function onIdentityConfirm() {
 const RAIN_GLYPHS =
   'モエヤキオカ7ケサスz152ヨタワ4ネヌナ98ヒ0ホア3ウ セ¦:"꞊ミラリ╌ツテニハソ▪—<>|+*コシマムメ';
 
-/** Glyphs per tile. 64 at 16px is a 1024px tile. */
+/** Glyphs per tile. 64 rows of the row pitch. */
 const RAIN_TILE_GLYPHS = 64;
 /**
- * The tile's height in pixels. The travel is EXACTLY this.
+ * THE REFERENCE.
  *
- * It is also the line height times the glyph count, and the line height
- * is what makes the rows TOUCH. The Matrix font's glyphs are 87 units
- * of ink in a 1000-unit em, so at an 18px font they are 15.7px tall —
- * and a row of 16px puts the next glyph 0.3px below the last one's
- * baseline, which is touching. The old row was 19px, which left a 4px
- * hole between every pair of glyphs, and a column of glyphs with holes
- * in it reads as a list of characters rather than as rain.
+ * Wikipedia's "digital rain" article carries a 500x400 screensaver
+ * capture of the effect, and that is the thing this is tuned to look
+ * like. Measured off the GIF itself:
  *
- * So the tile is 1024px and the line height is 16px.
+ *   the row pitch     27.5px on a 400px screen  = 6.9% of the height
+ *   the glyph         22px, which is 80% of the row
+ *   the column pitch  ~35px on a 500px screen   = 7% of the width
+ *   the trail         uniformly bright green, (0,195-246,0), blooming
+ *   the head          ONE glyph, pure white, and it changes EVERY
+ *                     frame — ten times a second
+ *   the fall          33px per 100ms frame = 0.85 screens a second,
+ *                     so the glyphs stream past at about twelve a
+ *                     second
+ *
+ * The sizes are in vh so the rain keeps its proportions on any window
+ * instead of being a 400px screensaver on a 1440p screen.
  */
-const RAIN_TILE_PX = 1024;
+const RAIN_ROW_VH = 6.9;
+const RAIN_FONT_VH = 6.35;
+/**
+ * How fast it falls.
+ *
+ * The reference crosses its screen in 1.2 seconds. The tile is 64 rows
+ * of 6.9% of the screen, so it is 4.42 screens, and at 0.85 screens a
+ * second one tile takes 5.2 seconds. That number is the same at every
+ * window size, because both the tile and the screen scale with it.
+ */
+const RAIN_SCREENS_PER_SECOND = 0.85;
+const RAIN_TILE_SECONDS =
+  (RAIN_TILE_GLYPHS * RAIN_ROW_VH) / 100 / RAIN_SCREENS_PER_SECOND;
 /**
  * Tiles of content per column. Three: one above the window, one in it,
  * one below, so the column is always in flight and always covers the
  * window however tall it is.
  */
 const RAIN_TILES = 3;
-/** Columns. Twenty-four: one every 53px across a 1280px window. */
-const RAIN_COLUMNS = 24;
+/** Columns. Fourteen: one every 7% of the width, which is the reference's
+ *  column pitch. */
+const RAIN_COLUMNS = 14;
 
 /**
  * One column's TRAIL: the fixed glyphs of one tile.
  *
- * The tile is 64 lines and its LAST line is left EMPTY — that is where
- * the head goes. The head is a separate element, so the trail has to
- * leave the space; otherwise the live head would be drawn on top of a
- * trail glyph and the two would read as a smudge.
+ * 64 rows, of which two are EMPTY — the slots the heads occupy.
+ *
+ * The LAST slot is the leading edge of the column's rain. In the
+ * reference the white character is the last character of a run, with
+ * nothing below it in that column, and the row after it is empty.
+ *
+ * The other slot is at a random row, because the reference has more
+ * than one white character in a column at a time and they are not in
+ * step from one column to the next. And the reason there are two at
+ * all is visibility: with one head per 64 rows, and 64 rows being
+ * four screens of rain, a head would be on screen a fifth of the time.
+ * The reference has one on screen essentially always.
  *
  * Every glyph is followed by a newline. The trailing one matters:
  * without it the last glyph of one tile and the first of the next
  * would land on the same line, and the tile would be 63 lines tall —
  * which is not the height the travel is.
  */
-function rainTileTrail(seed: number): string {
+function rainTile(seed: number): { trail: string; slots: number[] } {
   let s = (seed + 1) * 48271;
-  let out = '';
-  for (let i = 0; i < RAIN_TILE_GLYPHS - 1; i++) {
+  const next = () => {
     s = (s * 48271) % 2147483647;
-    out += RAIN_GLYPHS[Math.floor((s / 2147483647) * RAIN_GLYPHS.length)] + '\n';
+    return s / 2147483647;
+  };
+  const slots = [8 + Math.floor(next() * 48), RAIN_TILE_GLYPHS - 2];
+  const rows: string[] = [];
+  for (let i = 0; i < RAIN_TILE_GLYPHS; i++) {
+    if (slots.includes(i)) {
+      rows.push('');
+    } else if (i === RAIN_TILE_GLYPHS - 1) {
+      // The gap below the leading head: the run stops at the head.
+      rows.push('');
+    } else {
+      rows.push(RAIN_GLYPHS[Math.floor(next() * RAIN_GLYPHS.length)]);
+    }
   }
-  // The empty line the head occupies.
-  return out + '\n';
+  return { trail: rows.join('\n') + '\n', slots };
 }
 
 function randomRainGlyph(): string {
@@ -415,9 +453,15 @@ function randomRainGlyph(): string {
 }
 
 /** The columns' trails. These never change. */
-const rainColumns = Array.from({ length: RAIN_COLUMNS }, (_, i) => ({
-  trail: rainTileTrail(i).repeat(RAIN_TILES),
-}));
+const rainColumns = Array.from({ length: RAIN_COLUMNS }, (_, i) => {
+  const tile = rainTile(i);
+  return {
+    // Three copies of the same tile, so the column's pattern repeats
+    // exactly every 64 rows. The empty lines come with it.
+    trail: tile.trail.repeat(RAIN_TILES),
+    slots: tile.slots,
+  };
+});
 
 /**
  * THE HEAD.
@@ -453,29 +497,36 @@ const rainColumns = Array.from({ length: RAIN_COLUMNS }, (_, i) => ({
  * is left alone.
  */
 const rainHeads = ref(
-  Array.from({ length: RAIN_COLUMNS * RAIN_TILES }, (_, k) => {
-    const column = Math.floor(k / RAIN_TILES);
-    const tile = (k % RAIN_TILES) + 1;
-    return {
-      char: randomRainGlyph(),
-      style: { ...rainStyle(column), '--head-tile': tile },
-    };
-  }),
+  rainColumns.flatMap((col, ci) =>
+    col.slots.flatMap((slot) =>
+      Array.from({ length: RAIN_TILES }, (_, t) => {
+        // The row of the strip this head sits on.
+        const row = t * RAIN_TILE_GLYPHS + slot;
+        return {
+          char: randomRainGlyph(),
+          style: { ...rainStyle(ci), '--head-row': row },
+        };
+      }),
+    ),
+  ),
 );
 
 /**
  * How often the head changes, and how likely a given column changes on
  * any one tick.
  *
- * The film's head flickers fast. A column that changed on EVERY tick
- * would make all of them change in step, which reads as a flash
- * across the screen rather than as independent columns decoding; so
- * each tick changes only some of the columns and no column is on a
- * fixed beat. The mean interval per column is about 80ms, which is
- * about twelve changes a second.
+ * The reference's head changes EVERY FRAME — the GIF is ten frames a
+ * second and the head's glyph was identical to the previous frame in
+ * none of the eleven frames measured. So the head changes about ten
+ * times a second here too.
+ *
+ * A column that changed on EVERY tick would make all of them change
+ * in step, which reads as a flash across the screen rather than as
+ * independent columns decoding; so each tick changes only some of the
+ * columns and no column is on a fixed beat.
  */
-const RAIN_HEAD_TICK_MS = 45;
-const RAIN_HEAD_CHANCE = 0.55;
+const RAIN_HEAD_TICK_MS = 60;
+const RAIN_HEAD_CHANCE = 0.6;
 
 let rainHeadTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -504,21 +555,21 @@ function scrambleRainHeads(): void {
  * line.
  */
 const rainVars = [
-  `--ts-rain-tile: ${RAIN_TILE_PX}px`,
+  `--ts-rain-tile: ${RAIN_TILE_GLYPHS * RAIN_ROW_VH}vh`,
   `--ts-rain-glyphs: ${RAIN_TILE_GLYPHS}`,
-  `--ts-rain-line: ${RAIN_TILE_PX / RAIN_TILE_GLYPHS}px`,
+  `--ts-rain-line: ${RAIN_ROW_VH}vh`,
+  `--ts-rain-font: ${RAIN_FONT_VH}vh`,
 ].join('; ');
 
 /** Each column's position, phase and speed, so they do not march in step. */
 function rainStyle(i: number) {
   return {
     left: (i / RAIN_COLUMNS) * 100 + '%',
-    animationDelay: -(i * 0.83) + 's',
-    // 18-31s for one 1216px tile, so 39-67px/second. It was 10-16s,
-    // which is 76-121px/second: a full screen of glyphs moving at a
-    // hundred pixels a second is what gives a motion-sickness vibe, and
-    // nothing about the effect needed to be that fast.
-    animationDuration: 18 + (i % 5) * 3.4 + 's',
+    // The reference's columns all fall at the SAME speed and are spread
+    // evenly over one cycle, so the delay is a fraction of the cycle
+    // rather than a fixed number of seconds.
+    animationDelay: -((i / RAIN_COLUMNS) * RAIN_TILE_SECONDS) + 's',
+    animationDuration: RAIN_TILE_SECONDS + 's',
   };
 }
 
@@ -895,16 +946,10 @@ onMounted(() => {
          share it — the heads are outside the columns, so they cannot
          inherit it from them. */
       font-family: 'Matrix Code', monospace;
-      font-size: 18px;
-      /* The line height IS the tile: 64 lines of 16px is the 1024px the
-         column travels, so the pattern's period and the travel are the
-         same number and the loop cannot open a seam.
-
-         It is also what makes the rows touch. The glyphs are 87 units
-         of ink in a 1000-unit em, so at 18px they are 15.7px tall and
-         a 16px row leaves a third of a pixel between them. A 19px row
-         left four, and a column of glyphs with four-pixel holes in it
-         reads as a list of characters, not as rain. */
+      font-size: var(--ts-rain-font);
+      /* The row pitch, which is the reference's: 6.9% of the screen, and
+         the glyph is 80% of it, so there is the reference's 20% of air
+         between one glyph and the next. */
       line-height: var(--ts-rain-line);
       text-align: center;
 
@@ -914,44 +959,34 @@ onMounted(() => {
            is always in flight and always covers the window. */
         top: calc(-1 * var(--ts-rain-tile));
         height: calc(var(--ts-rain-tile) * 3);
-        width: 18px;
+        /* The font's widest advance is one em, so this is the width the
+           glyphs need. */
+        width: var(--ts-rain-font);
 
-        /* THE HEAD.
-           The column is painted with a gradient whose period is exactly
-           one tile, and the glyphs are filled with it. The bottom of
-           every tile is the bright end and the top is the dim end, so
-           the bright band is the HEAD of the column and the dim glyphs
-           above it are the trail it has already rained through. It
-           falls, so the head leads and the trail follows above it — the
-           same order the real effect has.
+        /* THE TRAIL.
+           The reference's columns are UNIFORMLY bright — there is no
+           ramp down the column, no dimming tail. What makes the leading
+           edge read as the leading edge is the white head, and the head
+           is white in every frame of the reference.
 
-           The gradient is clipped to the glyphs, which is why the text is
-           transparent: the text is not coloured, it is FILLED with the
-           gradient. */
-        color: transparent;
-        background-image: repeating-linear-gradient(
-          to bottom,
-          rgba(0, 255, 65, 0.14) 0,
-          rgba(0, 255, 65, 0.14) calc(var(--ts-rain-tile) * 0.62),
-          rgba(0, 255, 65, 0.4) calc(var(--ts-rain-tile) * 0.78),
-          rgba(150, 255, 190, 0.85) calc(var(--ts-rain-tile) * 0.92),
-          rgba(226, 255, 235, 1) var(--ts-rain-tile)
-        );
-        background-clip: text;
-        -webkit-background-clip: text;
+           So the trail is one colour, the brand's phosphor green, and
+           the only thing that changes about a glyph is the one at the
+           head. */
+        color: var(--ts-signal);
 
         animation: ts-rain 18s linear infinite;
         will-change: transform;
-        }
+      }
 
-        .ts-landing__rain-trail {
+      .ts-landing__rain-trail {
         display: block;
         /* The strip is 192 newlines. Without this they are spaces. */
         white-space: pre;
 
         /* The CRT phosphor glow: a soft halo around each glyph with the
            core left crisp, which is what a real phosphor does and what
-           flat text does not.
+           flat text does not. The reference's bloom is wide — about a
+           third of the glyph's own height.
 
            It is a TEXT-SHADOW and not a filter on the column, and that
            is not a detail. A filter is a composited layer, and a layer
@@ -960,8 +995,8 @@ onMounted(() => {
            times a second, is constantly. Filtered, the rain ran at 54
            frames a second; as a text-shadow it runs at 60, and the glow
            is the same glow. */
-        text-shadow: 0 0 3px rgba(0, 255, 65, 0.4);
-        }
+        text-shadow: 0 0 1.4vh rgba(0, 255, 65, 0.55);
+      }
 
       /* THE HEAD.
          The one character at the leading edge of the column, and the
@@ -981,12 +1016,16 @@ onMounted(() => {
          starting offset. */
       .ts-landing__rain-head {
         position: absolute;
-        top: calc((var(--head-tile) - 1) * var(--ts-rain-tile) - var(--ts-rain-line));
-        width: 18px;
-        color: #eaffef;
+        /* The row of the strip it sits on. The tile is 64 rows, so the
+           heads of the second and third tiles are 64 and 128 rows down. */
+        top: calc((var(--head-row) - var(--ts-rain-glyphs)) * var(--ts-rain-line));
+        width: var(--ts-rain-font);
+        /* PURE WHITE, which is what the reference's head is: rgb(255,255,255)
+           in every frame, against a trail of rgb(0,195-246,0). */
+        color: #fff;
         text-shadow:
-          0 0 6px rgba(214, 255, 228, 0.9),
-          0 0 16px rgba(0, 255, 65, 0.55);
+          0 0 1.4vh rgba(255, 255, 255, 0.95),
+          0 0 3vh rgba(0, 255, 65, 0.55);
         animation: ts-rain 18s linear infinite;
         will-change: transform;
       }
