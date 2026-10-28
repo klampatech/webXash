@@ -1,15 +1,35 @@
 <!--
   BulletBallet — the favicon.
 
-  NOT the BB mark as drawn. The mark is two slender cartridges 6.8:1
-  tall; at 16px that is a pair of two-pixel bars, and its internal
-  cutouts vanish entirely, so it reads as a green blob. This is a
-  second drawing: one solid cartridge, no interior detail, chunky
-  enough to survive a 16px favicon, on the void ground so it holds its
-  contrast in any tab theme.
+  "BB", in the wordmark's two-tone: the first B in the ghost-white the
+  wordmark's BULLET is drawn in, the second in the phosphor green
+  BALLET is drawn in. On the void ground, so it holds its contrast in a
+  dark tab and in a light one.
 
-  Silhouette taken from the mark's own language: a flat nose that
-  tapers out, a notch, a flare to the case, and a wider base rim.
+  THE B's ARE ANTON'S B's
+  ========================
+  The wordmark on the site is set in Anton, so the favicon's B's are
+  Anton's B's — the outlines, converted from the font and baked into
+  this file as paths.
+
+  Not as <text font-family="Anton">: an SVG loaded as an icon is an
+  isolated document and cannot use the page's webfonts, so it would
+  silently fall back to Arial Narrow or Impact and the favicon would be
+  a different letterform on every machine. And not as an embedded font
+  either: this is 1.6 KB of paths instead of 15 KB of base64.
+
+  The outlines are a snapshot of Anton as of 2026-10-28. If Anton is
+  updated, re-run webxash/tools/make-favicon.py.
+
+  WHY LETTERS AND NOT THE MARK
+  =============================
+  The mark is two slender cartridges with internal cutouts. At 16px the
+  cutouts vanish and what is left is a pair of green blobs — which is
+  what this file used to be, and what it read as.
+
+  The counters are Anton's own, which are small at this size: a B is
+  eight pixels wide at 16px and Anton's counters are a fraction of that.
+  It is legible as a pair of letterforms, which is what a tab needs.
 -->
 <svg
   xmlns="http://www.w3.org/2000/svg"
@@ -17,9 +37,9 @@
   role="img"
   aria-label="BulletBallet"
 >
-  <rect width="32" height="32" fill="#010A04" />
-  <path
-    fill="#00FF41"
-    d="M12 3H20L24 13L22 15L26 17V27H28V29H4V27H6V17L10 15L8 13Z"
-  />
+  <rect width="32" height="32" fill="#010a04" />
+  <g transform="translate(0.5227 29.6200) scale(0.0154773 -0.0154773)">
+    <path fill="#d8ffe2" d="M78 0V1760H555Q747 1760 834.5 1666.5Q922 1573 922 1358V1281Q922 1157 877.5 1080.0Q833 1003 742 979Q861 949 901.5 838.5Q942 728 942 569Q942 398 910.0 270.0Q878 142 794.0 71.0Q710 0 555 0ZM422 1097H494Q543 1097 557.0 1135.0Q571 1173 571 1226V1403Q571 1488 496 1488H422ZM457 310Q594 310 594 440V660Q594 735 571.5 778.5Q549 822 487 822H422V312Q444 310 457 310Z" />
+    <path fill="#00ff41" d="M78 0V1760H555Q747 1760 834.5 1666.5Q922 1573 922 1358V1281Q922 1157 877.5 1080.0Q833 1003 742 979Q861 949 901.5 838.5Q942 728 942 569Q942 398 910.0 270.0Q878 142 794.0 71.0Q710 0 555 0ZM422 1097H494Q543 1097 557.0 1135.0Q571 1173 571 1226V1403Q571 1488 496 1488H422ZM457 310Q594 310 594 440V660Q594 735 571.5 778.5Q549 822 487 822H422V312Q444 310 457 310Z" transform="translate(980 0)" />
+  </g>
 </svg>

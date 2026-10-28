@@ -11,14 +11,18 @@
       </span>
     </div>
 
-    <!-- the stage: the code rain, the grid, the glow, the emblem -->
+    <!-- the stage: the grid, the glow, the emblem -->
     <div class="ts-landing__bg" aria-hidden="true">
-      <div class="ts-landing__rain">
-        <span v-for="(strip, i) in rainStrips" :key="i" :style="rainStyle(strip, i)" />
-      </div>
       <div class="ts-landing__grid" />
       <div class="ts-landing__glow" />
-      <div class="ts-landing__emblem" />
+      <!--
+        The emblem: a dial that turns. The circle carries the tick
+        marks on its rim, so the whole thing reads as one object, and
+        the marks inside it turn the other way.
+      -->
+      <div class="ts-landing__emblem">
+        <span class="ts-landing__emblem-rays" />
+      </div>
     </div>
 
     <div class="ts-landing__inner">
@@ -29,11 +33,6 @@
           <span class="ts-landing__brand-name">
             Bullet<span>Ballet</span>
           </span>
-        </div>
-        <div class="ts-landing__nav-links">
-          <a href="https://www.tsmod.net/" target="_blank" rel="noreferrer noopener">TS Mod</a>
-          <a href="https://github.com/x8BitRain/webXash" target="_blank" rel="noreferrer noopener">webXash</a>
-          <a href="https://github.com/FWGS/xash3d-fwgs" target="_blank" rel="noreferrer noopener">Xash3D FWGS</a>
         </div>
       </nav>
 
@@ -271,94 +270,6 @@ function onIdentityConfirm() {
   const options = pendingLaunch.value;
   pendingLaunch.value = undefined;
   void launch(options);
-}
-
-/**
- * The code rain.
- *
- * ONE GLYPH STRIP PER COLUMN. The mock's rain is twelve columns of one
- * identical string, and its animation translates only -8% -> +8% of a
- * 120%-tall element, so the glyphs shimmer in place and never travel.
- * Each column here carries its own strip and travels a full tile
- * height, so it actually rains.
- *
- * WHY A BACKGROUND AND NOT TEXT
- * -----------------------------
- * A seamless loop needs the pattern's period to equal the travel
- * distance EXACTLY. With text, the period is the glyph count times the
- * glyph advance — a number that depends on the font, the font size and
- * the viewport. Get it slightly wrong and a gap opens at the end of the
- * cycle and the next cycle POPS the top back in, which is exactly what
- * was reported: "sometimes the lines just appear rather than always
- * raining down from the top".
- *
- * A repeating background has no such problem. `background-size` fixes
- * the tile at an exact pixel height, the travel is that same height in
- * pixels, and the strip repeats forever underneath. It is seamless for
- * ANY viewport, at any size, with no measurement anywhere.
- *
- * The strips are generated from a fixed seed on purpose: the rain must
- * be the same on every load, so the page never reflows under the
- * reader, and a screenshot of it is reproducible.
- */
-/**
- * The glyph set.
- *
- * Weighted towards half-width katakana, because that is what the CRT
- * matrix look is made of: a column of dense, angular, half-width
- * characters reads as terminal output, where a column of Latin letters
- * reads as a spreadsheet.
- */
-const RAIN_GLYPHS =
-  'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿ' +
-  '0123456789' +
-  'ABCDEFXYZ' +
-  '<>/\\|[]{}+=*#$%&@';
-/** Glyphs per tile. 64 at 19px is a 1216px tile. */
-const RAIN_TILE_GLYPHS = 64;
-/** The tile's height in pixels. The travel is EXACTLY this. */
-const RAIN_TILE_PX = 1216;
-const RAIN_GLYPH_STEP = RAIN_TILE_PX / RAIN_TILE_GLYPHS;
-
-function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-/** One column's glyph strip, as a repeating background image. */
-function rainStrip(seed: number): string {
-  let s = (seed + 1) * 48271;
-  const rows: string[] = [];
-  for (let i = 0; i < RAIN_TILE_GLYPHS; i++) {
-    s = (s * 48271) % 2147483647;
-    const g = RAIN_GLYPHS[Math.floor((s / 2147483647) * RAIN_GLYPHS.length)];
-    rows.push(
-      `<text x="10" y="${(14 + i * RAIN_GLYPH_STEP).toFixed(2)}" text-anchor="middle">${escapeXml(g)}</text>`,
-    );
-  }
-  const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="${RAIN_TILE_PX}" ` +
-    `font-family="monospace" font-size="15" fill="#00ff41">${rows.join('')}</svg>`;
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
-}
-
-const rainStrips = Array.from({ length: 16 }, (_, i) => rainStrip(i));
-
-/** Each column's position, phase and speed, so they do not march in step. */
-function rainStyle(strip: string, i: number) {
-  return {
-    left: (i / rainStrips.length) * 100 + '%',
-    backgroundImage: strip,
-    animationDelay: -(i * 0.83) + 's',
-    // 18-31s for one 1216px tile, so 39-67px/second. It was 10-16s,
-    // which is 76-121px/second: a full screen of glyphs moving at a
-    // hundred pixels a second is what gives a motion-sickness vibe, and
-    // nothing about the effect needed to be that fast.
-    animationDuration: 18 + (i % 5) * 3.4 + 's',
-  };
 }
 
 /**
@@ -680,58 +591,6 @@ onMounted(() => {
     pointer-events: none;
   }
 
-  /* The code rain. One string per column, each travelling a full column
-     height — the mock's travels +/-8% of a 120%-tall element, so its
-     glyphs shimmer in place and never actually rain. */
-  &__rain {
-    position: absolute;
-    inset: 0;
-    overflow: hidden;
-    /* Fade hard from the top down.
-       The old mask was fully opaque from 14% to 76% of the screen, so
-       the rain hit the hero at full strength with nothing between. The
-       rain now falls away as it descends, which leaves the wordmark,
-       the lede and the PLAY button sitting on a calm field, and it is
-       the lower half of the screen that a moving eye is worst served
-       by. */
-    -webkit-mask-image: linear-gradient(
-      180deg,
-      transparent 0%,
-      #000 4%,
-      rgba(0, 0, 0, 0.55) 20%,
-      rgba(0, 0, 0, 0.3) 45%,
-      rgba(0, 0, 0, 0.12) 70%,
-      transparent 92%
-    );
-    mask-image: linear-gradient(
-      180deg,
-      transparent 0%,
-      #000 4%,
-      rgba(0, 0, 0, 0.55) 20%,
-      rgba(0, 0, 0, 0.3) 45%,
-      rgba(0, 0, 0, 0.12) 70%,
-      transparent 92%
-    );
-
-    span {
-      position: absolute;
-      /* One tile above the window, and three tiles tall, so the column
-         is always in flight and always covers the window. */
-      top: -1216px;
-      height: 3648px;
-      width: 20px;
-      background-repeat: repeat-y;
-      background-size: 20px 1216px;
-      opacity: 0.17;
-      /* The CRT phosphor glow: a soft halo around each glyph with the
-         core left crisp, which is what a real phosphor does and what
-         flat text does not. */
-      filter: drop-shadow(0 0 3px rgba(0, 255, 65, 0.4));
-      animation: ts-rain 18s linear infinite;
-      will-change: transform;
-    }
-  }
-
   /* faint tactical grid — reads as a targeting overlay */
   &__grid {
     position: absolute;
@@ -772,6 +631,17 @@ onMounted(() => {
     border-radius: 50%;
     pointer-events: none;
 
+    /* THE CIRCLE TURNS, CLOCKWISE.
+       A perfect circle is the same circle at every angle, so on its own
+       the turn would be invisible — which is exactly why the tick
+       marks on its rim belong to it. They travel with the ring, and
+       they are what makes the turn legible.
+
+       180 seconds a revolution: slow enough to be ambience rather than
+       motion, and slow enough that a moving eye never locks onto one
+       tick and follows it round. */
+    animation: ts-emblem-turn 180s linear infinite;
+
     /* inner ring, offset in rather than inset so it reads as depth */
     &::before {
       content: '';
@@ -804,6 +674,48 @@ onMounted(() => {
         #000 50.4% 100%
       );
     }
+  }
+
+  /**
+   * THE LINES ON THE INSIDE, TURNING THE OTHER WAY.
+   *
+   * A second set of marks, in a band well inside the rim and clear of
+   * the outer ticks, turning anticlockwise while the circle they sit
+   * inside turns clockwise. The two sets cross and pass through each
+   * other, which is the whole point — it reads as a dial with a sweep
+   * running against its rim rather than as decoration that turns.
+   *
+   * The band is at 30%-49% of the gradient's radius, which puts it
+   * inside the white ring and clear of the outer ticks, and leaves the
+   * centre of the dial empty for the wordmark.
+   */
+  &__emblem-rays {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: repeating-conic-gradient(
+      from 7.5deg,
+      rgba(0, 255, 65, 0.075) 0deg 0.9deg,
+      transparent 0.9deg 15deg
+    );
+    /* A band well inside the rim, with a clear gap between it and the
+       outer ticks — the two sets have to read as two sets, or the
+       counter-rotation is not visible as counter-rotation. */
+    -webkit-mask: radial-gradient(
+      circle at center,
+      transparent 0 23%,
+      #000 24% 42%,
+      transparent 43% 100%
+    );
+    mask: radial-gradient(
+      circle at center,
+      transparent 0 23%,
+      #000 24% 42%,
+      transparent 43% 100%
+    );
+    /* Anticlockwise, and at twice the circle's rate — see the keyframes
+       for why it is 90s and not 180s. */
+    animation: ts-emblem-turn-rev 90s linear infinite;
   }
 
   /* ---- the column ---------------------------------------------------- */
@@ -871,25 +783,6 @@ onMounted(() => {
 
     span {
       color: var(--ts-signal);
-    }
-  }
-
-  &__nav-links {
-    display: flex;
-    gap: 1.4rem;
-
-    a {
-      font-family: var(--ts-font-mono);
-      font-size: 0.66rem;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-      color: var(--ts-ink-muted);
-      text-decoration: none;
-      transition: color var(--ts-sweep) var(--ts-ease);
-
-      &:hover {
-        color: var(--ts-signal);
-      }
     }
   }
 
@@ -1180,15 +1073,36 @@ onMounted(() => {
   }
 }
 
-@keyframes ts-rain {
+/**
+ * THE DIAL.
+ *
+ * The circle turns clockwise, and the lines inside it turn the other
+ * way. Two rates, so the lines come out at the same speed as the rim
+ * against the page while turning twice as fast against the circle
+ * they sit inside:
+ *
+ *   the circle           180s a turn, clockwise
+ *   the lines             90s a turn, anticlockwise
+ *
+ * The lines' own 90s is inside the circle's 180s, so the net against
+ * the page is 360/90 - 360/180 = 4 - 2 = 2 degrees a second the
+ * other way — the same rate as the rim, in the opposite direction.
+ */
+@keyframes ts-emblem-turn {
   from {
-    transform: translateY(0);
+    transform: translate(-50%, -50%) rotate(0deg);
   }
   to {
-    /* EXACTLY one tile height — the same number as background-size. So
-       the strip slides down precisely one tile and the repeat underneath
-       takes its place. The loop has no seam and no pop. */
-    transform: translateY(1216px);
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+@keyframes ts-emblem-turn-rev {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(-360deg);
   }
 }
 
@@ -1203,7 +1117,8 @@ onMounted(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ts-landing__rain span {
+  .ts-landing__emblem,
+  .ts-landing__emblem-rays {
     animation: none !important;
   }
 }
