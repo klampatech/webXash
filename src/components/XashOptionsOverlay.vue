@@ -1,6 +1,30 @@
 <template>
   <div v-if="open" class="opts" role="dialog" aria-label="Game options">
-    <div class="opts__panel">
+    <!--
+      @keydown.stop / @keyup.stop — keep the keyboard away from the GAME.
+
+      The engine registers its key listener on `window` in the BUBBLE
+      phase (measured with CDP's DOMDebugger.getEventListeners). A key
+      typed into the name field bubbles up to `window` and the engine's
+      HUD_Key_Event runs its bind table: typing "seal" would walk the
+      player forward on the "s", reload on the "e" and duck on the "l".
+
+      `stopPropagation()` (not `preventDefault`) is the right tool: it
+      stops the event BEFORE it reaches `window`, so the engine never
+      sees it, and the input's own default action — putting the
+      character in the field — still happens. `preventDefault()` would
+      stop the character from being typed at all.
+
+      The capture-phase `keydown` on the panel is the belt to that
+      braces: a key pressed while the panel has focus but not in a
+      field must not reach the engine either.
+    -->
+    <div
+      class="opts__panel"
+      @keydown.stop
+      @keyup.stop
+      @keypress.stop
+    >
       <header class="opts__head">
         <div class="opts__brand">
           <span class="opts__brand-mark" aria-hidden="true" />
@@ -9,22 +33,90 @@
         <button class="opts__close" type="button" aria-label="Close" @click="closeOverlay">✕</button>
       </header>
 
+      <!--
+        THE FOCUS FIX (the bug: "typing in the input is not captured by
+        the input").
+
+        Measured against production on 2026-10-27: the DOM input was
+        fine, and typing into it worked — but only AFTER a click. Open
+        the overlay and type without clicking, and every keystroke went
+        to <body> instead: the input never had focus, so the text went
+        nowhere and the ENGINE ate the keys as game commands (a name
+        containing "w" would walk the player forward).
+
+        So the input is focused when the overlay opens, and the engine's
+        view of the keyboard is suspended while it is open. The second
+        half matters as much as the first: the engine's key listeners
+        are on `window` (measured with CDP's DOMDebugger.getEventListeners
+        — the engine registers keydown/keyup/keypress there), so a
+        focused input does NOT stop the game from receiving the keys.
+        `setBridgeSuspended` already exists for exactly this.
+      -->
       <section class="opts__group">
         <h3 class="opts__legend">Identity</h3>
         <label class="opts__row">
           <span class="opts__label">Name</span>
           <input
+            ref="nameInput"
             v-model="name"
             class="opts__input"
             type="text"
             maxlength="24"
             spellcheck="false"
+            autocomplete="off"
             @keyup.enter="applyName"
           />
         </label>
         <button class="opts__btn" type="button" :disabled="!name.trim()" @click="applyName">
           Set name
         </button>
+
+        <!--
+          The character picker. TS's own options menu has one (the
+          screenshot Kyle sent), and the models are the server's
+          `mp_teammodels` list — see player-identity.ts for how the
+          server treats a chosen model.
+        -->
+        <div class="opts__row opts__row--models">
+          <span class="opts__label">Character</span>
+          <div class="opts__models" role="group" aria-label="Character model">
+            <button
+              v-for="m in models"
+              :key="m"
+              class="opts__model"
+              type="button"
+              :class="{ 'opts__model--on': model === m }"
+              :aria-pressed="model === m"
+              @click="chooseModel(m)"
+            >
+              <!--
+                The picture is the GAME'S OWN PORTRAIT: the .bmp that
+                ships beside the model, with its flat backdrop made
+                transparent so the character sits on the panel.
+
+                It was a 3D render once. The renderer applied each
+                bone's bind-pose world matrix to vertices that already
+                carried their bind position, so the position was added
+                twice: one gordon vertex moved 67.7 units on a 22-unit
+                character, and the heads floated with the hands detached
+                from the arms. The portrait is correct and it is free.
+              -->
+              <img
+                class="opts__model-img"
+                :src="`/models/${m}.png`"
+                :alt="`${m} character preview`"
+                width="72"
+                height="72"
+                loading="lazy"
+              />
+              <span class="opts__model-name">{{ m }}</span>
+            </button>
+          </div>
+        </div>
+        <p class="opts__note">
+          The server picks the final model from your team's list — it is
+          the one that decides who you spawn as.
+        </p>
       </section>
 
       <section class="opts__group">
@@ -85,17 +177,30 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { ref, watch, nextTick } from 'vue';
 import { overlayOpen, closeOverlay } from '/@/services/escape-gate';
 import { readCvar, writeCvar, runCommand } from '/@/services/engine-cvars';
 import { logDebug } from '/@/services/debug-log';
+import { setBridgeSuspended } from '/@/services/keyboard-bridge';
+import {
+  TS_MODELS,
+  applyModel,
+  applyName as applyEngineName,
+  displayName,
+  engineModel,
+  refreshIdentity,
+} from '/@/services/player-identity';
 
 const open = overlayOpen;
 
 const name = ref('');
+const model = ref('');
 const sensitivity = ref<number | null>(null);
 const fov = ref<number | null>(null);
 const volume = ref<number | null>(null);
+
+const models = TS_MODELS;
+const nameInput = ref<HTMLInputElement | null>(null);
 
 /** Load the current values from the engine when the overlay opens. */
 async function refresh() {
@@ -108,12 +213,35 @@ async function refresh() {
   if (f !== null) fov.value = Number(f);
   if (v !== null) volume.value = Number(v);
   logDebug(`[opts] loaded sensitivity=${s} fov=${f} volume=${v}`);
+
+  // The identity, too: the field starts with the name the player is
+  // actually playing under, and the picker shows the current model.
+  await refreshIdentity();
+  name.value = displayName.value;
+  model.value = engineModel.value;
 }
 
-watch(open, (isOpen) => {
-  if (isOpen) {
-    void refresh();
+/**
+ * Open the overlay with the keyboard in the right place.
+ *
+ * The focus is the fix for "typing in the input is not captured by the
+ * input" (measured: without a click, every keystroke went to <body>).
+ * `nextTick` waits for the field to exist before focusing it.
+ */
+watch(open, async (isOpen) => {
+  if (!isOpen) {
+    // Hand the keyboard back to the game.
+    setBridgeSuspended(false);
+    return;
   }
+  // Take the keyboard away from the game: the engine's key listeners
+  // are on `window`, so a focused DOM input does NOT stop the engine
+  // from receiving the keys.
+  setBridgeSuspended(true);
+  void refresh();
+  await nextTick();
+  nameInput.value?.focus();
+  nameInput.value?.select();
 });
 
 function applySettings() {
@@ -122,14 +250,23 @@ function applySettings() {
   if (volume.value !== null) writeCvar('volume', volume.value);
 }
 
+function toggleThirdPerson() {
+  runCommand('thirdperson');
+}
+
 function applyName() {
   const n = name.value.trim();
   if (!n) return;
-  runCommand(`name "${n.replace(/"/g, '')}"`);
+  if (applyEngineName(n)) {
+    logDebug(`[opts] name set to "${n}"`);
+  }
 }
 
-function toggleThirdPerson() {
-  runCommand('thirdperson');
+function chooseModel(m: string) {
+  if (applyModel(m)) {
+    model.value = m;
+    logDebug(`[opts] model set to "${m}"`);
+  }
 }
 
 /**
@@ -140,6 +277,7 @@ function toggleThirdPerson() {
  * it. The landing page is the site root.
  */
 function quitToWebUi() {
+  setBridgeSuspended(false);
   if (document.pointerLockElement) {
     document.exitPointerLock?.();
   }
@@ -244,6 +382,13 @@ function quitToWebUi() {
     justify-content: space-between;
     gap: 0.8rem;
     margin-bottom: 0.45rem;
+
+    &--models {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 0.4rem;
+      margin-top: 0.7rem;
+    }
   }
 
   &__label {
@@ -271,6 +416,71 @@ function quitToWebUi() {
     &--num {
       width: 6rem;
     }
+  }
+
+  /* The character picker. A wrapped row of small buttons, so all seven
+     models are visible without a dropdown that hides them. */
+  &__models {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+
+  &__model {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.22rem 0.5rem;
+    background: rgba(0, 255, 65, 0.06);
+    border: 1px solid rgba(0, 255, 65, 0.28);
+    color: var(--ts-ink-muted);
+    font-family: var(--ts-font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+
+    &:hover {
+      border-color: var(--ts-lime);
+      color: var(--ts-ink);
+    }
+
+    &:focus-visible {
+      outline: none;
+      border-color: var(--ts-signal);
+      box-shadow: 0 0 0 1px var(--ts-signal);
+    }
+
+    &--on {
+      background: rgba(0, 255, 65, 0.16);
+      border-color: var(--ts-signal);
+      color: var(--ts-ink-bright);
+    }
+  }
+
+  // The character's own portrait, on transparent pixels.
+  //
+  // The game's portrait art has a flat grey backdrop, which is removed
+  // so the character sits on the panel rather than on a grey card.
+  // It is sized to the button, and `contain` keeps its aspect.
+  //
+  // `image-rendering` is `auto`, not `pixelated`: the portrait is
+  // 164x200 and the box is 72px, so the nearest-neighbour downscale
+  // threw away two thirds of it. The 3D render it replaced was square
+  // and scaled cleanly, which is why it was `pixelated` then.
+  &__model-img {
+    display: block;
+    width: 72px;
+    height: 72px;
+    object-fit: contain;
+    image-rendering: auto;
+    background: rgba(0, 0, 0, 0.35);
+    border-radius: 2px;
+  }
+
+  &__model-name {
+    line-height: 1;
   }
 
   &__btn {

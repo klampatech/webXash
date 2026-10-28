@@ -134,6 +134,14 @@
         </section>
 
         <section
+          v-show="activeTab === 'leaderboard'"
+          role="tabpanel"
+          class="ts-landing__section"
+        >
+          <TSLeaderboard />
+        </section>
+
+        <section
           v-show="activeTab === 'how'"
           role="tabpanel"
           class="ts-landing__section"
@@ -156,6 +164,19 @@
     <div class="ts-landing__bottombar">
       Fan project · not affiliated with Valve or Half-Life
     </div>
+
+    <!--
+      The pre-join identity step. It sits in front of the launch, so the
+      name and character are decided BEFORE the engine connects — which
+      is the only way the server ever learns about them (a change after
+      the connect is a different code path on the server, and under TS
+      3.0's ruleset a different outcome).
+    -->
+    <PlayerIdentityModal
+      :open="identityOpen"
+      @confirm="onIdentityConfirm"
+      @close="identityOpen = false"
+    />
   </div>
 </template>
 
@@ -171,10 +192,17 @@ import {
 } from '/@/services/ts-server-list.ts';
 import TSServerList from '/@/components/TSServerList.vue';
 import TSHowToPlay from '/@/components/TSHowToPlay.vue';
+import TSLeaderboard from '/@/components/TSLeaderboard.vue';
+import PlayerIdentityModal from '/@/components/PlayerIdentityModal.vue';
 import { enterFullscreen } from '/@/services/fullscreen.ts';
+import {
+  identityLaunchArgs,
+  loadSavedIdentity,
+} from '/@/services/player-identity';
 
 const tabs = [
   { id: 'servers', label: 'Servers' },
+  { id: 'leaderboard', label: 'Leaderboard' },
   { id: 'how', label: 'How It Works' },
 ] as const;
 
@@ -184,6 +212,66 @@ const isStarting = ref(false);
 // thrown away, because "nothing happened when I pressed Play" is the
 // least debuggable failure there is.
 const launchError = ref('');
+
+// The pre-join identity step.
+//
+// WHY A MODAL AND NOT A LANDING-PAGE SECTION
+// ------------------------------------------
+// Kyle asked which is better. The modal wins for one reason: the
+// identity is a per-join decision, and a section on the landing page
+// is a per-visit decision that people walk past. A modal interrupts
+// exactly once (the "remember me" checkbox makes it exactly once ever)
+// and is impossible to miss.
+//
+// The landing page still carries the saved identity, so a returning
+// player sees their name and character in the modal without typing.
+const identityOpen = ref(false);
+
+/** The launch options the modal is holding, and the join will use. */
+const pendingLaunch = ref<string | undefined>(undefined);
+
+/**
+ * Whether the identity step should be shown at all.
+ *
+ * A player who ticked "remember me" does not get asked again — that is
+ * the whole point of the checkbox. A player who did NOT tick it is
+ * asked every time, which is what they asked for.
+ */
+const identityRequired = ref(true);
+
+/**
+ * The player confirmed their identity, so the launch goes ahead.
+ *
+ * The guard has to be cleared HERE, and this is the whole reason this
+ * function exists.
+ *
+ * `launch()` re-checks `identityRequired` before it connects, and
+ * that check is what opens the modal in the first place. So the
+ * sequence used to be:
+ *
+ *   Play -> launch() -> identityRequired is true -> open the modal
+ *   confirm -> onIdentityConfirm() -> launch() again
+ *          -> identityRequired is STILL true -> open the modal AGAIN
+ *
+ * and the player could never get into the game. The modal re-opened
+ * on top of itself, forever, and the only way out was to tick
+ * "remember me" on a page reload — which is not what "remember me"
+ * is supposed to mean, and which a first-time player has no reason
+ * to know about.
+ *
+ * The flag is only recomputed in `onMounted`, from what is in
+ * localStorage, so within a session it never changed.
+ *
+ * Clearing it here means "the player has been asked, and answered" —
+ * which is the actual condition the guard is meant to express.
+ */
+function onIdentityConfirm() {
+  identityOpen.value = false;
+  identityRequired.value = false;
+  const options = pendingLaunch.value;
+  pendingLaunch.value = undefined;
+  void launch(options);
+}
 
 /**
  * The code rain.
@@ -316,24 +404,6 @@ const downloadProgress = computed(() => Math.round(loadingProgress.value));
  * how a server row targets its own address instead of the default target.
  */
 async function launch(options?: string) {
-  // Fullscreen is asked for HERE, at the top of the launch, before the
-  // first await. The browser only grants a fullscreen request while the
-  // click's user gesture is still live, and everything below this line is
-  // async: resolving the server, downloading 493 MB, booting the engine.
-  // A request made after an await is simply refused.
-  //
-  // A refusal is not a failure: the game is playable windowed, and the
-  // browser's own reason (no gesture, a policy) is not something the
-  // player can act on. The service logs it and moves on.
-  if (browserFullscreen.value) {
-    void enterFullscreen();
-  }
-
-  if (!xashCanvas.value) {
-    console.error('Canvas is not available');
-    return;
-  }
-
   // Resolve WHERE to connect BEFORE anything expensive happens.
   //
   // The address has to come from the server list, never from a
@@ -359,6 +429,61 @@ async function launch(options?: string) {
         e instanceof Error ? e.message : 'Could not reach the server list.';
       return;
     }
+  }
+
+
+  // The identity step comes BEFORE the fullscreen request and before
+  // the download.
+  //
+  // Fullscreen has to be asked for inside the click's user gesture,
+  // and the modal is a DOM interaction in between — so asking for
+  // fullscreen from the modal's confirm handler would be too late and
+  // the browser would refuse it. Instead the launch is deferred: the
+  // modal collects the identity, and the launch runs afterwards.
+  //
+  // The alternative (fullscreen first, modal on top) works, but then
+  // the player is thrown into a fullscreen browser with a dialog in it
+  // and the Escape key exits fullscreen instead of closing the dialog.
+  if (identityRequired.value) {
+    pendingLaunch.value = resolved;
+    identityOpen.value = true;
+    return;
+  }
+
+  await doLaunch(resolved);
+}
+
+/**
+ * The launch itself: fullscreen, download, boot.
+ *
+ * Split out of `launch()` so the identity step can sit in front of it
+ * without duplicating the body.
+ */
+async function doLaunch(resolved: string) {
+  // Fullscreen is asked for HERE, at the top of the launch, before the
+  // first await. The browser only grants a fullscreen request while the
+  // click's user gesture is still live, and everything below this line is
+  // async: downloading 493 MB, booting the engine.
+  //
+  // A request made after an await is simply refused.
+  //
+  // A refusal is not a failure: the game is playable windowed, and the
+  // browser's own reason (no gesture, a policy) is not something the
+  // player can act on. The service logs it and moves on.
+  if (browserFullscreen.value) {
+    void enterFullscreen();
+  }
+
+  if (!xashCanvas.value) {
+    console.error('Canvas is not available');
+    return;
+  }
+
+  // The identity rides in the launch arguments, so the engine sends it
+  // to the server WITH the connect — not as a change after the fact.
+  const identityArgs = identityLaunchArgs();
+  if (identityArgs.length) {
+    resolved = `${resolved} ${identityArgs.join(' ')}`;
   }
 
   launchError.value = '';
@@ -461,6 +586,12 @@ function onJoinServer(server: TsServer) {
  * `?autoplay=1` says: on load, go straight back in.
  */
 onMounted(() => {
+  // The saved identity decides whether the player is asked at all: a
+  // player who ticked "remember me" is not interrupted again, and one
+  // who did not is asked every time (which is what they asked for).
+  const saved = loadSavedIdentity();
+  identityRequired.value = saved.remember === false || !saved.name;
+
   const params = new URLSearchParams(location.search);
   if (params.get('autoplay') === '1') {
     // Let the landing paint first, so the boot screen is what the player

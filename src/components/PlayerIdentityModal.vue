@@ -1,0 +1,377 @@
+<template>
+  <div v-if="open" class="ident" role="dialog" aria-label="Choose your player">
+    <div class="ident__panel">
+      <header class="ident__head">
+        <h2 class="ident__title">Before you join</h2>
+        <button
+          v-if="dismissible"
+          class="ident__close"
+          type="button"
+          aria-label="Close"
+          @click="close"
+        >
+          ✕
+        </button>
+      </header>
+
+      <p class="ident__lede">
+        Pick the name you play under and the character you spawn as. You
+        can change both mid-match with <kbd>Esc</kbd>.
+      </p>
+
+      <label class="ident__row">
+        <span class="ident__label">Name</span>
+        <input
+          ref="nameInput"
+          v-model="name"
+          class="ident__input"
+          type="text"
+          maxlength="24"
+          spellcheck="false"
+          autocomplete="off"
+          @keyup.enter="commit"
+        />
+      </label>
+
+      <div class="ident__row ident__row--models">
+        <span class="ident__label">Character</span>
+        <div class="ident__models" role="group" aria-label="Character model">
+          <button
+            v-for="m in models"
+            :key="m"
+            class="ident__model"
+            type="button"
+            :class="{ 'ident__model--on': model === m }"
+            :aria-pressed="model === m"
+            @click="model = m"
+          >
+            <!--
+              The picture is the GAME'S OWN PORTRAIT: the .bmp that
+              ships beside the model, with its flat backdrop made
+              transparent so the character sits on the panel.
+
+              It was a 3D render once. The renderer applied each
+              bone's bind-pose world matrix to vertices that already
+              carried their bind position, so the position was added
+              twice: one gordon vertex moved 67.7 units on a 22-unit
+              character, and the heads floated with the hands detached
+              from the arms. The portrait is correct and it is free.
+            -->
+            <img
+              class="ident__model-img"
+              :src="`/models/${m}.png`"
+              :alt="`${m} character preview`"
+              width="72"
+              height="72"
+              loading="lazy"
+            />
+            <span class="ident__model-name">{{ m }}</span>
+          </button>
+        </div>
+      </div>
+
+      <label class="ident__remember">
+        <input v-model="remember" type="checkbox" />
+        <span>Remember me — don't ask again</span>
+      </label>
+
+      <div class="ident__actions">
+        <button
+          v-if="dismissible"
+          class="ident__btn"
+          type="button"
+          @click="close"
+        >
+          Cancel
+        </button>
+        <button class="ident__btn ident__btn--go" type="button" @click="commit">
+          Join as {{ name.trim() || 'Specialist' }}
+        </button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, watch, nextTick } from 'vue';
+import {
+  TS_MODELS,
+  applyModel,
+  applyName,
+  displayName,
+  engineModel,
+  loadSavedIdentity,
+  refreshIdentity,
+  saveIdentity,
+} from '/@/services/player-identity';
+
+const props = withDefaults(
+  defineProps<{
+    open: boolean;
+    /** Can the player back out of it? The landing-page flow cannot. */
+    dismissible?: boolean;
+  }>(),
+  { dismissible: false },
+);
+
+const emit = defineEmits<{ (e: 'confirm'): void; (e: 'close'): void }>();
+
+const models = TS_MODELS;
+const name = ref('');
+const model = ref('');
+const remember = ref(true);
+const nameInput = ref<HTMLInputElement | null>(null);
+
+function close() {
+  emit('close');
+}
+
+async function prepare() {
+  // A saved identity wins over the engine's defaults: it is the
+  // player's explicit choice from last time.
+  const saved = loadSavedIdentity();
+  remember.value = saved.remember !== false;
+  await refreshIdentity();
+  name.value = saved.name || displayName.value;
+  model.value = saved.model || engineModel.value;
+  await nextTick();
+  nameInput.value?.focus();
+  nameInput.value?.select();
+}
+
+watch(
+  () => props.open,
+  (isOpen) => {
+    if (isOpen) void prepare();
+  },
+  { immediate: true },
+);
+
+function commit() {
+  applyName(name.value);
+  if (model.value) applyModel(model.value);
+  saveIdentity({ remember: remember.value });
+  emit('confirm');
+}
+</script>
+
+<style scoped lang="scss">
+.ident {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(1, 10, 4, 0.88);
+  z-index: 40;
+
+  &__panel {
+    width: min(30rem, 92vw);
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 1.3rem 1.4rem 1.4rem;
+    background: var(--ts-panel, #06150a);
+    border: 1px solid rgba(0, 255, 65, 0.32);
+    box-shadow: 0 1.5rem 3rem rgba(0, 0, 0, 0.65);
+  }
+
+  &__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+  }
+
+  &__title {
+    margin: 0;
+    font-family: var(--ts-font-display);
+    font-size: 1.25rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ts-lime);
+  }
+
+  &__close {
+    background: none;
+    border: 1px solid rgba(0, 255, 65, 0.32);
+    color: var(--ts-ink);
+    cursor: pointer;
+    font-size: 0.8rem;
+    padding: 0.1rem 0.4rem;
+
+    &:hover {
+      border-color: var(--ts-lime);
+      color: var(--ts-lime);
+    }
+  }
+
+  &__lede {
+    margin: 0 0 1rem;
+    font-size: 0.85rem;
+    line-height: 1.55;
+    color: var(--ts-ink-muted);
+
+    kbd {
+      font-family: var(--ts-font-mono);
+      font-size: 0.72rem;
+      padding: 0.05rem 0.28rem;
+      border: 1px solid var(--ts-edge);
+      color: var(--ts-ink);
+    }
+  }
+
+  &__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.9rem;
+    margin-bottom: 0.6rem;
+
+    &--models {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 0.45rem;
+      margin-top: 0.9rem;
+    }
+  }
+
+  &__label {
+    font-size: 0.82rem;
+    color: var(--ts-ink);
+  }
+
+  &__input {
+    width: 11rem;
+    padding: 0.35rem 0.5rem;
+    background: rgba(0, 0, 0, 0.45);
+    border: 1px solid rgba(0, 255, 65, 0.25);
+    color: var(--ts-ink-bright);
+    font-family: var(--ts-font-mono);
+    font-size: 0.88rem;
+
+    &:focus {
+      outline: none;
+      border-color: var(--ts-signal);
+      box-shadow: 0 0 0 1px var(--ts-signal), 0 0 12px rgba(0, 255, 65, 0.3);
+    }
+  }
+
+  &__models {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  &__model {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.28rem 0.6rem;
+    background: rgba(0, 255, 65, 0.06);
+    border: 1px solid rgba(0, 255, 65, 0.28);
+    color: var(--ts-ink-muted);
+    font-family: var(--ts-font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+
+    &:hover {
+      border-color: var(--ts-lime);
+      color: var(--ts-ink);
+    }
+
+    &:focus-visible {
+      outline: none;
+      border-color: var(--ts-signal);
+      box-shadow: 0 0 0 1px var(--ts-signal);
+    }
+
+    &--on {
+      background: rgba(0, 255, 65, 0.16);
+      border-color: var(--ts-signal);
+      color: var(--ts-ink-bright);
+    }
+  }
+
+  // The character's own portrait, on transparent pixels.
+  //
+  // The game's portrait art has a flat grey backdrop, which is removed
+  // so the character sits on the panel rather than on a grey card.
+  // It is sized to the button, and `contain` keeps its aspect.
+  //
+  // `image-rendering` is `auto`, not `pixelated`: the portrait is
+  // 164x200 and the box is 72px, so the nearest-neighbour downscale
+  // threw away two thirds of it. The 3D render it replaced was square
+  // and scaled cleanly, which is why it was `pixelated` then.
+  &__model-img {
+    display: block;
+    width: 72px;
+    height: 72px;
+    object-fit: contain;
+    image-rendering: auto;
+    background: rgba(0, 0, 0, 0.35);
+    border-radius: 2px;
+  }
+
+  &__model-name {
+    line-height: 1;
+  }
+
+  &__remember {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 1rem;
+    font-size: 0.8rem;
+    color: var(--ts-ink-muted);
+    cursor: pointer;
+
+    input {
+      accent-color: var(--ts-signal);
+    }
+  }
+
+  &__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    margin-top: 1.2rem;
+  }
+
+  &__btn {
+    padding: 0.45rem 0.9rem;
+    background: rgba(0, 255, 65, 0.08);
+    border: 1px solid rgba(0, 255, 65, 0.32);
+    color: var(--ts-ink-bright);
+    font-family: var(--ts-font-mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+
+    &:hover {
+      background: rgba(0, 255, 65, 0.18);
+      border-color: var(--ts-lime);
+    }
+
+    &:focus-visible {
+      outline: none;
+      border-color: var(--ts-signal);
+      box-shadow: 0 0 0 1px var(--ts-signal);
+    }
+
+    &--go {
+      background: var(--ts-signal);
+      border-color: var(--ts-signal);
+      color: var(--ts-void);
+
+      &:hover {
+        background: var(--ts-signal-hot);
+        border-color: var(--ts-signal-hot);
+      }
+    }
+  }
+}
+</style>
