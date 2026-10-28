@@ -34,11 +34,6 @@
             Bullet<span>Ballet</span>
           </span>
         </div>
-        <div class="ts-landing__nav-links">
-          <a href="https://www.tsmod.net/" target="_blank" rel="noreferrer noopener">TS Mod</a>
-          <a href="https://github.com/x8BitRain/webXash" target="_blank" rel="noreferrer noopener">webXash</a>
-          <a href="https://github.com/FWGS/xash3d-fwgs" target="_blank" rel="noreferrer noopener">Xash3D FWGS</a>
-        </div>
       </nav>
 
       <!-- hero -->
@@ -788,25 +783,6 @@ onMounted(() => {
 
     span {
       color: var(--ts-signal);
-    }
-  }
-
-  &__nav-links {
-    display: flex;
-    gap: 1.4rem;
-
-    a {
-      font-family: var(--ts-font-mono);
-      font-size: 0.66rem;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-      color: var(--ts-ink-muted);
-      text-decoration: none;
-      transition: color var(--ts-sweep) var(--ts-ease);
-
-      &:hover {
-        color: var(--ts-signal);
-      }
     }
   }
 
