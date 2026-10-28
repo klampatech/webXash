@@ -11,48 +11,18 @@
       </span>
     </div>
 
-    <!-- the stage: the code rain, the grid, the glow, the emblem -->
+    <!-- the stage: the grid, the glow, the emblem -->
     <div class="ts-landing__bg" aria-hidden="true">
-      <div class="ts-landing__rain" :style="rainVars">
-        <!--
-          v-text, not an interpolation: Vue's template compiler collapses
-          the whitespace in an interpolated string, and this string is
-          192 newlines. v-text sets the text node directly, so the
-          newlines survive to be rendered as line breaks.
-
-          Two elements per column, not one. The trail is the fixed
-          glyphs; the head is the one character at the leading edge
-          that re-decodes, and it changes several times a second. If it
-          were a character inside the trail's text, every change would
-          re-lay-out all 192 lines of that column.
-        -->
-        <span
-          v-for="(col, i) in rainColumns"
-          :key="i"
-          class="ts-landing__rain-col"
-          :style="rainStyle(i)"
-        >
-          <span class="ts-landing__rain-trail" v-text="col.trail" />
-        </span>
-        <!--
-          The heads, and they are OUTSIDE the columns. A column carries
-          the phosphor glow — a drop-shadow filter over a strip three
-          tiles tall — and a filter is re-run whenever anything inside
-          it changes. A head changing inside the column re-filtered
-          3072px of strip several times a second in every column at
-          once, and the rain ran at half speed.
-        -->
-        <span
-          v-for="(head, hi) in rainHeads"
-          :key="hi"
-          class="ts-landing__rain-head"
-          :style="head.style"
-          v-text="head.char"
-        />
-      </div>
       <div class="ts-landing__grid" />
       <div class="ts-landing__glow" />
-      <div class="ts-landing__emblem" />
+      <!--
+        The emblem: a dial that turns. The circle carries the tick
+        marks on its rim, so the whole thing reads as one object, and
+        the marks inside it turn the other way.
+      -->
+      <div class="ts-landing__emblem">
+        <span class="ts-landing__emblem-rays" />
+      </div>
     </div>
 
     <div class="ts-landing__inner">
@@ -215,7 +185,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useXashStore } from '/@/stores/store';
 import { XashLoader } from '/@/services';
@@ -306,291 +276,6 @@ function onIdentityConfirm() {
   pendingLaunch.value = undefined;
   void launch(options);
 }
-
-/**
- * The code rain.
- *
- * THE REAL MATRIX GLYPHS, AND A HEAD.
- * -----------------------------------
- * Two things were wrong with this effect. The glyphs were a monospace
- * fallback — ordinary Japanese katakana, which reads as "a Japanese
- * terminal" and not as the Matrix — and every glyph in a column had the
- * same brightness, so the columns read as a flat wash of characters
- * with no direction. The thing that makes the effect read as RAIN is the
- * bright head leading each column with a trail fading out behind it.
- *
- * The glyphs are now `Matrix Code`, the film's own shapes (see the
- * @font-face in ts-theme.css), and the brightness comes from a
- * gradient whose period is EXACTLY one tile.
- *
- * WHY THE PATTERN IS TEXT AND NOT A BACKGROUND IMAGE
- * --------------------------------------------------
- * An SVG background image is an isolated document: it cannot use the
- * page's webfonts, so the real Matrix glyphs cannot reach it without
- * embedding the whole font in every column's data URI. Text can use
- * the page's font directly, and one text node per column is 192
- * characters — cheaper than the 16 SVG data URIs this replaces.
- *
- * WHY THE LOOP IS STILL SEAMLESS
- * ------------------------------
- * A seamless loop needs the pattern's period to equal the travel
- * distance EXACTLY, and the earlier version got that by making the
- * travel a fixed pixel height with a repeating background behind it.
- * Text can do the same thing, but only because the period here is
- * VERTICAL: the travel is a number of LINES times an explicit
- * line-height, and neither depends on the font's glyph advance, the
- * font size or the viewport. The travel is 64 lines x 19px = 1216px,
- * and the content is three copies of the same 64-line tile, so at the
- * end of the cycle the column shows the same glyphs in the same places
- * it showed at the start. There is no seam and no pop.
- *
- * The strips are generated from a fixed seed on purpose: the rain must
- * be the same on every load, so the page never reflows under the
- * reader, and a screenshot of it is reproducible.
- */
-
-/**
- * The glyph set — the characters `Matrix Code` maps to the film's
- * shapes, taken from the upstream project's own glyph order. Fifty-six
- * of them: the katakana the films use, a handful of digits, and the
- * punctuation that appears in the title sequences.
- *
- * The upstream project renders these from an MSDF texture; the font is
- * the same shapes without the texture.
- */
-const RAIN_GLYPHS =
-  'モエヤキオカ7ケサスz152ヨタワ4ネヌナ98ヒ0ホア3ウ セ¦:"꞊ミラリ╌ツテニハソ▪—<>|+*コシマムメ';
-
-/** Glyphs per tile. 64 rows of the row pitch. */
-const RAIN_TILE_GLYPHS = 64;
-/**
- * THE REFERENCE, AND HOW FAR OFF IT THIS IS.
- *
- * Wikipedia's "digital rain" article carries a 500x400 screensaver
- * capture of the effect, and it is the right reference for how the
- * thing MOVES and how it is put together. Measured off the GIF:
- *
- *   the row pitch     27.5px on a 400px screen  = 6.9% of the height
- *   the glyph         22px, which is 80% of the row
- *   the column pitch  ~35px on a 500px screen   = 7% of the width
- *   the trail         uniformly bright green, (0,195-246,0), blooming
- *   the head          ONE glyph, pure white, and it changes EVERY
- *                     frame — ten times a second
- *   the fall          33px per 100ms frame, which is 12 ROWS a second
- *
- * But the reference is rain on a black screen with nothing in front of
- * it, and this is a background behind a title. Matched to the
- * reference's sizes it is a wall of characters: the glyphs came out
- * at 85% of the height of the wordmark, which is not a background,
- * it is wallpaper.
- *
- * So the proportions are the reference's and the SCALE is not. The
- * glyphs are a quarter of the size — a background texture rather than
- * a row of characters — and the whole thing is dimmed to match.
- */
-const RAIN_ROW_VH = 2.82;
-const RAIN_FONT_VH = 2.6;
-/**
- * How fast it falls.
- *
- * In ROWS a second, which is the scale-free version of the
- * reference's 33px per 100ms frame: the reference's rows are 27.5px
- * and it moves 33px a frame, so 1.2 rows a frame, 12 rows a second.
- *
- * The tile is 64 rows, so one tile takes 5.3 seconds — the same at
- * every window size, because the rows are a fixed fraction of it.
- */
-const RAIN_ROWS_PER_SECOND = 12;
-const RAIN_TILE_SECONDS = RAIN_TILE_GLYPHS / RAIN_ROWS_PER_SECOND;
-/**
- * Tiles of content per column. Three: one above the window, one in it,
- * one below, so the column is always in flight and always covers the
- * window however tall it is.
- */
-const RAIN_TILES = 3;
-/** Columns. Twenty: the reference has one every 35px on a 500px screen,
- *  and its glyphs are a fifth of the size of this page's, so this
- *  keeps the same amount of green on the screen rather than twice as
- *  much. */
-const RAIN_COLUMNS = 20;
-
-/**
- * One column's TRAIL: the fixed glyphs of one tile.
- *
- * 64 rows, of which two are EMPTY — the slots the heads occupy.
- *
- * The LAST slot is the leading edge of the column's rain. In the
- * reference the white character is the last character of a run, with
- * nothing below it in that column, and the row after it is empty.
- *
- * The other slot is at a random row, because the reference has more
- * than one white character in a column at a time and they are not in
- * step from one column to the next. And the reason there are two at
- * all is visibility: with one head per 64 rows, and 64 rows being
- * four screens of rain, a head would be on screen a fifth of the time.
- * The reference has one on screen essentially always.
- *
- * Every glyph is followed by a newline. The trailing one matters:
- * without it the last glyph of one tile and the first of the next
- * would land on the same line, and the tile would be 63 lines tall —
- * which is not the height the travel is.
- */
-function rainTile(seed: number): { trail: string; slots: number[] } {
-  let s = (seed + 1) * 48271;
-  const next = () => {
-    s = (s * 48271) % 2147483647;
-    return s / 2147483647;
-  };
-  const slots = [RAIN_TILE_GLYPHS - 2];
-  const rows: string[] = [];
-  for (let i = 0; i < RAIN_TILE_GLYPHS; i++) {
-    if (slots.includes(i)) {
-      rows.push('');
-    } else if (i === RAIN_TILE_GLYPHS - 1) {
-      // The gap below the leading head: the run stops at the head.
-      rows.push('');
-    } else {
-      rows.push(RAIN_GLYPHS[Math.floor(next() * RAIN_GLYPHS.length)]);
-    }
-  }
-  return { trail: rows.join('\n') + '\n', slots };
-}
-
-function randomRainGlyph(): string {
-  return RAIN_GLYPHS[Math.floor(Math.random() * RAIN_GLYPHS.length)];
-}
-
-/** The columns' trails. These never change. */
-const rainColumns = Array.from({ length: RAIN_COLUMNS }, (_, i) => {
-  const tile = rainTile(i);
-  return {
-    // Three copies of the same tile, so the column's pattern repeats
-    // exactly every 64 rows. The empty lines come with it.
-    trail: tile.trail.repeat(RAIN_TILES),
-    slots: tile.slots,
-  };
-});
-
-/**
- * THE HEAD.
- *
- * In the films the leading character of a column is not a fixed glyph.
- * It re-decodes: it flickers from one character to the next several
- * times a second, and that is a large part of what makes the effect
- * read as code being DECODED rather than as text scrolling past.
- *
- * So the head is a character of its own, separate from the trail, and
- * it changes.
- *
- * It is a separate ELEMENT rather than a character inside the trail's
- * text for one reason: the trail is 192 lines of text, and changing a
- * character in it would re-lay-out all 192 of them, several times a
- * second, in every column at once. The head is one character in one
- * absolutely-positioned box, so changing it costs one glyph.
- *
- * There is one head per TILE, not one per column, because the trail
- * leaves an empty line for the head once per tile and an uncovered
- * empty line is a hole in the rain. On a window shorter than a tile
- * only the first of them is ever on screen; on a tall one the others
- * come into view as the column falls, and they are the heads of the
- * rain lines below.
- *
- * And they are OUTSIDE the columns, not inside them. The column
- * carries the phosphor glow — a drop-shadow filter over a strip three
- * tiles tall — and a filter is re-run whenever anything inside it
- * changes. A head changing inside the column therefore re-filtered
- * 3072px of strip several times a second, in every column at once,
- * and the whole rain ran at half speed. Outside the column the heads
- * animate with the same clock and the same distance, and the filter
- * is left alone.
- */
-const rainHeads = ref(
-  rainColumns.flatMap((col, ci) =>
-    col.slots.flatMap((slot) =>
-      Array.from({ length: RAIN_TILES }, (_, t) => {
-        // The row of the strip this head sits on.
-        const row = t * RAIN_TILE_GLYPHS + slot;
-        return {
-          char: randomRainGlyph(),
-          style: { ...rainStyle(ci), '--head-row': row },
-        };
-      }),
-    ),
-  ),
-);
-
-/**
- * How often the head changes, and how likely a given column changes on
- * any one tick.
- *
- * The reference's head changes EVERY FRAME — the GIF is ten frames a
- * second and the head's glyph was identical to the previous frame in
- * none of the eleven frames measured. So the head changes about ten
- * times a second here too.
- *
- * A column that changed on EVERY tick would make all of them change
- * in step, which reads as a flash across the screen rather than as
- * independent columns decoding; so each tick changes only some of the
- * columns and no column is on a fixed beat.
- */
-const RAIN_HEAD_TICK_MS = 60;
-const RAIN_HEAD_CHANCE = 0.6;
-
-let rainHeadTimer: ReturnType<typeof setInterval> | null = null;
-
-/** A reduced-motion reader wants the rain still; a still head is still. */
-const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-
-function scrambleRainHeads(): void {
-  if (prefersReducedMotion.matches) return;
-  for (const head of rainHeads.value) {
-    if (Math.random() < RAIN_HEAD_CHANCE) head.char = randomRainGlyph();
-  }
-}
-
-/**
- * The geometry, handed to the CSS as custom properties.
- *
- * The tile height and the glyph count are the two numbers that have to
- * agree: the tile is 64 lines tall, and the line height is the tile
- * divided by 64. If those drift apart the pattern's period stops
- * matching the travel distance and the loop opens a seam — the exact
- * failure this effect was built to avoid. So they are set in ONE place
- * here and the CSS reads them, rather than being written out twice.
- *
- * The line height is handed over as well, because the head has to sit
- * on the tile's last line exactly, and that is the tile minus one
- * line.
- */
-const rainVars = [
-  `--ts-rain-tile: ${RAIN_TILE_GLYPHS * RAIN_ROW_VH}vh`,
-  `--ts-rain-glyphs: ${RAIN_TILE_GLYPHS}`,
-  `--ts-rain-line: ${RAIN_ROW_VH}vh`,
-  `--ts-rain-font: ${RAIN_FONT_VH}vh`,
-].join('; ');
-
-/** Each column's position, phase and speed, so they do not march in step. */
-function rainStyle(i: number) {
-  return {
-    left: (i / RAIN_COLUMNS) * 100 + '%',
-    // The reference's columns all fall at the SAME speed and are spread
-    // evenly over one cycle, so the delay is a fraction of the cycle
-    // rather than a fixed number of seconds.
-    animationDelay: -((i / RAIN_COLUMNS) * RAIN_TILE_SECONDS) + 's',
-    animationDuration: RAIN_TILE_SECONDS + 's',
-  };
-}
-
-/**
- * The head's timer stops with the component. A landing page that is
- * unmounted must not keep re-decoding in the background.
- */
-onUnmounted(() => {
-  if (rainHeadTimer !== null) {
-    clearInterval(rainHeadTimer);
-    rainHeadTimer = null;
-  }
-});
 
 /**
  * The live status in the top bar.
@@ -817,10 +502,6 @@ function onJoinServer(server: TsServer) {
  * `?autoplay=1` says: on load, go straight back in.
  */
 onMounted(() => {
-  // The head re-decodes. The trail never changes, so this is the only
-  // thing the rain costs.
-  rainHeadTimer = setInterval(scrambleRainHeads, RAIN_HEAD_TICK_MS);
-
   // The saved identity decides whether the player is asked at all: a
   // player who ticked "remember me" is not interrupted again, and one
   // who did not is asked every time (which is what they asked for).
@@ -915,137 +596,6 @@ onMounted(() => {
     pointer-events: none;
   }
 
-  /* The code rain. One string per column, each travelling a full column
-     height — the mock's travels +/-8% of a 120%-tall element, so its
-     glyphs shimmer in place and never actually rain. */
-  &__rain {
-    position: absolute;
-    inset: 0;
-    overflow: hidden;
-    /* Fade hard from the top down.
-       The old mask was fully opaque from 14% to 76% of the screen, so
-       the rain hit the hero at full strength with nothing between. The
-       rain now falls away as it descends, which leaves the wordmark,
-       the lede and the PLAY button sitting on a calm field, and it is
-       the lower half of the screen that a moving eye is worst served
-       by. */
-    -webkit-mask-image: linear-gradient(
-      180deg,
-      transparent 0%,
-      #000 4%,
-      rgba(0, 0, 0, 0.55) 20%,
-      rgba(0, 0, 0, 0.3) 45%,
-      rgba(0, 0, 0, 0.12) 70%,
-      transparent 92%
-    );
-    mask-image: linear-gradient(
-      180deg,
-      transparent 0%,
-      #000 4%,
-      rgba(0, 0, 0, 0.55) 20%,
-      rgba(0, 0, 0, 0.3) 45%,
-      rgba(0, 0, 0, 0.12) 70%,
-      transparent 92%
-    );
-
-      /* THE MATRIX GLYPHS, in the font that has the film's shapes.
-
-         The font lives on the container so the columns and the heads
-         share it — the heads are outside the columns, so they cannot
-         inherit it from them. */
-      font-family: 'Matrix Code', monospace;
-      font-size: var(--ts-rain-font);
-      /* The row pitch, which is the reference's: 6.9% of the screen, and
-         the glyph is 80% of it, so there is the reference's 20% of air
-         between one glyph and the next. */
-      line-height: var(--ts-rain-line);
-      text-align: center;
-
-      .ts-landing__rain-col {
-        position: absolute;
-        /* One tile above the window, and three tiles tall, so the column
-           is always in flight and always covers the window. */
-        top: calc(-1 * var(--ts-rain-tile));
-        height: calc(var(--ts-rain-tile) * 3);
-        /* The font's widest advance is one em, so this is the width the
-           glyphs need. */
-        width: var(--ts-rain-font);
-
-        /* THE TRAIL.
-           The reference's columns are UNIFORMLY bright — there is no
-           ramp down the column, no dimming tail. What makes the leading
-           edge read as the leading edge is the white head, and the head
-           is white in every frame of the reference.
-
-           So the trail is one colour, the brand's phosphor green, and
-           the only thing that changes about a glyph is the one at the
-           head.
-
-           It is at HALF strength, though. The reference's green is
-           (0,195-246,0) on a black screen, which is as bright as a
-           character can be; here it is a background behind a title, and
-           the wordmark has to stay the brightest thing on the page. */
-        color: rgba(0, 255, 65, 0.42);
-
-        animation: ts-rain 18s linear infinite;
-        will-change: transform;
-      }
-
-      .ts-landing__rain-trail {
-        display: block;
-        /* The strip is 192 newlines. Without this they are spaces. */
-        white-space: pre;
-
-        /* The CRT phosphor glow: a soft halo around each glyph with the
-           core left crisp, which is what a real phosphor does and what
-           flat text does not. The reference's bloom is wide — about a
-           third of the glyph's own height.
-
-           It is a TEXT-SHADOW and not a filter on the column, and that
-           is not a detail. A filter is a composited layer, and a layer
-           has to be re-composited whenever anything overlaps it — which,
-           with the re-decoding heads flying over the columns several
-           times a second, is constantly. Filtered, the rain ran at 54
-           frames a second; as a text-shadow it runs at 60, and the glow
-           is the same glow. */
-        text-shadow: 0 0 0.8vh rgba(0, 255, 65, 0.22);
-      }
-
-      /* THE HEAD.
-         The one character at the leading edge of the column, and the
-         only thing in the rain that changes.
-
-         It sits on the LAST line of its tile, which is the line the
-         trail leaves empty for it, so it is exactly at the end of the
-         line of glyphs above it and exactly at the gradient's brightest
-         point.
-
-         It is not painted with the gradient — the gradient is clipped to
-         the text of the column, and the head has to be brighter than
-         the trail rather than merely as bright as it.
-
-         It travels with the column: the same keyframes, the same
-         duration, the same delay, and the tile's last line as its
-         starting offset. */
-      .ts-landing__rain-head {
-        position: absolute;
-        /* The row of the strip it sits on. The tile is 64 rows, so the
-           heads of the second and third tiles are 64 and 128 rows down. */
-        top: calc((var(--head-row) - var(--ts-rain-glyphs)) * var(--ts-rain-line));
-        width: var(--ts-rain-font);
-        /* WHITE, which is what the reference's head is: rgb(255,255,255)
-           in every frame, against a trail of rgb(0,195-246,0). Not
-           quite full white — the head is the brightest thing in the
-           rain, but the wordmark has to stay brighter than that. */
-        color: rgba(255, 255, 255, 0.8);
-        text-shadow:
-          0 0 0.9vh rgba(255, 255, 255, 0.7),
-          0 0 2vh rgba(0, 255, 65, 0.35);
-        animation: ts-rain 18s linear infinite;
-        will-change: transform;
-      }
-  }
-
   /* faint tactical grid — reads as a targeting overlay */
   &__grid {
     position: absolute;
@@ -1086,6 +636,17 @@ onMounted(() => {
     border-radius: 50%;
     pointer-events: none;
 
+    /* THE CIRCLE TURNS, CLOCKWISE.
+       A perfect circle is the same circle at every angle, so on its own
+       the turn would be invisible — which is exactly why the tick
+       marks on its rim belong to it. They travel with the ring, and
+       they are what makes the turn legible.
+
+       180 seconds a revolution: slow enough to be ambience rather than
+       motion, and slow enough that a moving eye never locks onto one
+       tick and follows it round. */
+    animation: ts-emblem-turn 180s linear infinite;
+
     /* inner ring, offset in rather than inset so it reads as depth */
     &::before {
       content: '';
@@ -1118,6 +679,48 @@ onMounted(() => {
         #000 50.4% 100%
       );
     }
+  }
+
+  /**
+   * THE LINES ON THE INSIDE, TURNING THE OTHER WAY.
+   *
+   * A second set of marks, in a band well inside the rim and clear of
+   * the outer ticks, turning anticlockwise while the circle they sit
+   * inside turns clockwise. The two sets cross and pass through each
+   * other, which is the whole point — it reads as a dial with a sweep
+   * running against its rim rather than as decoration that turns.
+   *
+   * The band is at 30%-49% of the gradient's radius, which puts it
+   * inside the white ring and clear of the outer ticks, and leaves the
+   * centre of the dial empty for the wordmark.
+   */
+  &__emblem-rays {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: repeating-conic-gradient(
+      from 7.5deg,
+      rgba(0, 255, 65, 0.075) 0deg 0.9deg,
+      transparent 0.9deg 15deg
+    );
+    /* A band well inside the rim, with a clear gap between it and the
+       outer ticks — the two sets have to read as two sets, or the
+       counter-rotation is not visible as counter-rotation. */
+    -webkit-mask: radial-gradient(
+      circle at center,
+      transparent 0 23%,
+      #000 24% 42%,
+      transparent 43% 100%
+    );
+    mask: radial-gradient(
+      circle at center,
+      transparent 0 23%,
+      #000 24% 42%,
+      transparent 43% 100%
+    );
+    /* Anticlockwise, and at twice the circle's rate — see the keyframes
+       for why it is 90s and not 180s. */
+    animation: ts-emblem-turn-rev 90s linear infinite;
   }
 
   /* ---- the column ---------------------------------------------------- */
@@ -1494,16 +1097,36 @@ onMounted(() => {
   }
 }
 
-@keyframes ts-rain {
+/**
+ * THE DIAL.
+ *
+ * The circle turns clockwise, and the lines inside it turn the other
+ * way. Two rates, so the lines come out at the same speed as the rim
+ * against the page while turning twice as fast against the circle
+ * they sit inside:
+ *
+ *   the circle           180s a turn, clockwise
+ *   the lines             90s a turn, anticlockwise
+ *
+ * The lines' own 90s is inside the circle's 180s, so the net against
+ * the page is 360/90 - 360/180 = 4 - 2 = 2 degrees a second the
+ * other way — the same rate as the rim, in the opposite direction.
+ */
+@keyframes ts-emblem-turn {
   from {
-    transform: translateY(0);
+    transform: translate(-50%, -50%) rotate(0deg);
   }
   to {
-    /* EXACTLY one tile height — the same number as the line height
-       times the glyph count, which is the pattern's period. So the
-       strip slides down precisely one tile and the next copy of the
-       tile takes its place. The loop has no seam and no pop. */
-    transform: translateY(var(--ts-rain-tile));
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+@keyframes ts-emblem-turn-rev {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(-360deg);
   }
 }
 
@@ -1518,8 +1141,8 @@ onMounted(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ts-landing__rain-col,
-  .ts-landing__rain-head {
+  .ts-landing__emblem,
+  .ts-landing__emblem-rays {
     animation: none !important;
   }
 }

@@ -69,35 +69,6 @@
  * game is not restyled at all.
  */
 
-/**
- * The Matrix code glyphs.
- *
- * THE REAL ONES, not a katakana stand-in. The rain on the landing page
- * used to be set in a monospace fallback, which gave ordinary Japanese
- * katakana — readable as "a Japanese terminal", and not as the Matrix.
- * The difference is visible: the film's glyphs are custom angular
- * shapes, and no system font has them.
- *
- * This is `assets/Matrix-Code.ttf` from Rezmason's `matrix` project
- * (MIT, © 2018 Rezmason), whose glyphs were cleaned up from vectors in
- * the promotional site for an official Matrix product. The licence is
- * vendored next to the font.
- *
- * 7.9 KB. It is the only piece of that project worth taking: the rest
- * is a WebGL renderer with GPU particles, and this page also runs the
- * game engine's own WebGL context — and the rain has to work on a
- * machine with no hardware acceleration at all, which is exactly the
- * case the upstream project greets with "Wake up, Neo… you've got
- * hardware acceleration disabled".
- */
-@font-face {
-  font-family: 'Matrix Code';
-  src: url('./fonts/Matrix-Code.ttf') format('truetype');
-  font-weight: normal;
-  font-style: normal;
-  font-display: swap;
-}
-
 :root {
   /* ---- surfaces, darkest to lightest -------------------------------- */
   --ts-void: #010a04; /* the page ground */
