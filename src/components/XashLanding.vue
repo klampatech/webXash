@@ -13,8 +13,19 @@
 
     <!-- the stage: the code rain, the grid, the glow, the emblem -->
     <div class="ts-landing__bg" aria-hidden="true">
-      <div class="ts-landing__rain">
-        <span v-for="(strip, i) in rainStrips" :key="i" :style="rainStyle(strip, i)" />
+      <div class="ts-landing__rain" :style="rainVars">
+        <!--
+          v-text, not an interpolation: Vue's template compiler collapses
+          the whitespace in an interpolated string, and this string is
+          192 newlines. v-text sets the text node directly, so the
+          newlines survive to be rendered as line breaks.
+        -->
+        <span
+          v-for="(strip, i) in rainStrips"
+          :key="i"
+          v-text="strip"
+          :style="rainStyle(i)"
+        />
       </div>
       <div class="ts-landing__grid" />
       <div class="ts-landing__glow" />
@@ -276,82 +287,106 @@ function onIdentityConfirm() {
 /**
  * The code rain.
  *
- * ONE GLYPH STRIP PER COLUMN. The mock's rain is twelve columns of one
- * identical string, and its animation translates only -8% -> +8% of a
- * 120%-tall element, so the glyphs shimmer in place and never travel.
- * Each column here carries its own strip and travels a full tile
- * height, so it actually rains.
+ * THE REAL MATRIX GLYPHS, AND A HEAD.
+ * -----------------------------------
+ * Two things were wrong with this effect. The glyphs were a monospace
+ * fallback — ordinary Japanese katakana, which reads as "a Japanese
+ * terminal" and not as the Matrix — and every glyph in a column had the
+ * same brightness, so the columns read as a flat wash of characters
+ * with no direction. The thing that makes the effect read as RAIN is the
+ * bright head leading each column with a trail fading out behind it.
  *
- * WHY A BACKGROUND AND NOT TEXT
- * -----------------------------
+ * The glyphs are now `Matrix Code`, the film's own shapes (see the
+ * @font-face in ts-theme.css), and the brightness comes from a
+ * gradient whose period is EXACTLY one tile.
+ *
+ * WHY THE PATTERN IS TEXT AND NOT A BACKGROUND IMAGE
+ * --------------------------------------------------
+ * An SVG background image is an isolated document: it cannot use the
+ * page's webfonts, so the real Matrix glyphs cannot reach it without
+ * embedding the whole font in every column's data URI. Text can use
+ * the page's font directly, and one text node per column is 192
+ * characters — cheaper than the 16 SVG data URIs this replaces.
+ *
+ * WHY THE LOOP IS STILL SEAMLESS
+ * ------------------------------
  * A seamless loop needs the pattern's period to equal the travel
- * distance EXACTLY. With text, the period is the glyph count times the
- * glyph advance — a number that depends on the font, the font size and
- * the viewport. Get it slightly wrong and a gap opens at the end of the
- * cycle and the next cycle POPS the top back in, which is exactly what
- * was reported: "sometimes the lines just appear rather than always
- * raining down from the top".
- *
- * A repeating background has no such problem. `background-size` fixes
- * the tile at an exact pixel height, the travel is that same height in
- * pixels, and the strip repeats forever underneath. It is seamless for
- * ANY viewport, at any size, with no measurement anywhere.
+ * distance EXACTLY, and the earlier version got that by making the
+ * travel a fixed pixel height with a repeating background behind it.
+ * Text can do the same thing, but only because the period here is
+ * VERTICAL: the travel is a number of LINES times an explicit
+ * line-height, and neither depends on the font's glyph advance, the
+ * font size or the viewport. The travel is 64 lines x 19px = 1216px,
+ * and the content is three copies of the same 64-line tile, so at the
+ * end of the cycle the column shows the same glyphs in the same places
+ * it showed at the start. There is no seam and no pop.
  *
  * The strips are generated from a fixed seed on purpose: the rain must
  * be the same on every load, so the page never reflows under the
  * reader, and a screenshot of it is reproducible.
  */
+
 /**
- * The glyph set.
+ * The glyph set — the characters `Matrix Code` maps to the film's
+ * shapes, taken from the upstream project's own glyph order. Fifty-six
+ * of them: the katakana the films use, a handful of digits, and the
+ * punctuation that appears in the title sequences.
  *
- * Weighted towards half-width katakana, because that is what the CRT
- * matrix look is made of: a column of dense, angular, half-width
- * characters reads as terminal output, where a column of Latin letters
- * reads as a spreadsheet.
+ * The upstream project renders these from an MSDF texture; the font is
+ * the same shapes without the texture.
  */
 const RAIN_GLYPHS =
-  'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿ' +
-  '0123456789' +
-  'ABCDEFXYZ' +
-  '<>/\\|[]{}+=*#$%&@';
+  'モエヤキオカ7ケサスz152ヨタワ4ネヌナ98ヒ0ホア3ウ セ¦:"꞊ミラリ╌ツテニハソ▪—<>|+*コシマムメ';
+
 /** Glyphs per tile. 64 at 19px is a 1216px tile. */
 const RAIN_TILE_GLYPHS = 64;
 /** The tile's height in pixels. The travel is EXACTLY this. */
 const RAIN_TILE_PX = 1216;
-const RAIN_GLYPH_STEP = RAIN_TILE_PX / RAIN_TILE_GLYPHS;
+/**
+ * Tiles of content per column. Three: one above the window, one in it,
+ * one below, so the column is always in flight and always covers the
+ * window however tall it is.
+ */
+const RAIN_TILES = 3;
+/** Columns. Sixteen: one every 80px across a 1280px window. */
+const RAIN_COLUMNS = 16;
 
-function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-/** One column's glyph strip, as a repeating background image. */
+/**
+ * One column's glyph strip: RAIN_TILES copies of the same 64-glyph
+ * tile, so the column's pattern repeats exactly every 1216px.
+ *
+ * The trailing newline matters. Without it the last glyph of one tile
+ * and the first of the next would land on the same line, and the tile
+ * would be 63 lines tall — which is not the height the travel is.
+ */
 function rainStrip(seed: number): string {
   let s = (seed + 1) * 48271;
-  const rows: string[] = [];
+  const tile: string[] = [];
   for (let i = 0; i < RAIN_TILE_GLYPHS; i++) {
     s = (s * 48271) % 2147483647;
-    const g = RAIN_GLYPHS[Math.floor((s / 2147483647) * RAIN_GLYPHS.length)];
-    rows.push(
-      `<text x="10" y="${(14 + i * RAIN_GLYPH_STEP).toFixed(2)}" text-anchor="middle">${escapeXml(g)}</text>`,
-    );
+    tile.push(RAIN_GLYPHS[Math.floor((s / 2147483647) * RAIN_GLYPHS.length)]);
   }
-  const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="${RAIN_TILE_PX}" ` +
-    `font-family="monospace" font-size="15" fill="#00ff41">${rows.join('')}</svg>`;
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+  return (tile.join('\n') + '\n').repeat(RAIN_TILES);
 }
 
-const rainStrips = Array.from({ length: 16 }, (_, i) => rainStrip(i));
+const rainStrips = Array.from({ length: RAIN_COLUMNS }, (_, i) => rainStrip(i));
+
+/**
+ * The geometry, handed to the CSS as custom properties.
+ *
+ * The tile height and the glyph count are the two numbers that have to
+ * agree: the tile is 64 lines tall, and the line height is the tile
+ * divided by 64. If those drift apart the pattern's period stops
+ * matching the travel distance and the loop opens a seam — the exact
+ * failure this effect was built to avoid. So they are set in ONE place
+ * here and the CSS reads them, rather than being written out twice.
+ */
+const rainVars = `--ts-rain-tile: ${RAIN_TILE_PX}px; --ts-rain-glyphs: ${RAIN_TILE_GLYPHS};`;
 
 /** Each column's position, phase and speed, so they do not march in step. */
-function rainStyle(strip: string, i: number) {
+function rainStyle(i: number) {
   return {
-    left: (i / rainStrips.length) * 100 + '%',
-    backgroundImage: strip,
+    left: (i / RAIN_COLUMNS) * 100 + '%',
     animationDelay: -(i * 0.83) + 's',
     // 18-31s for one 1216px tile, so 39-67px/second. It was 10-16s,
     // which is 76-121px/second: a full screen of glyphs moving at a
@@ -717,12 +752,44 @@ onMounted(() => {
       position: absolute;
       /* One tile above the window, and three tiles tall, so the column
          is always in flight and always covers the window. */
-      top: -1216px;
-      height: 3648px;
+      top: calc(-1 * var(--ts-rain-tile));
+      height: calc(var(--ts-rain-tile) * 3);
       width: 20px;
-      background-repeat: repeat-y;
-      background-size: 20px 1216px;
-      opacity: 0.17;
+      /* THE MATRIX GLYPHS, in the font that has the film's shapes. */
+      font-family: 'Matrix Code', monospace;
+      font-size: 17px;
+      /* The line height IS the tile: 64 lines of 19px is the 1216px the
+         column travels, so the pattern's period and the travel are the
+         same number and the loop cannot open a seam. */
+      line-height: calc(var(--ts-rain-tile) / var(--ts-rain-glyphs));
+      text-align: center;
+      /* The strip is 192 newlines. Without this they are spaces. */
+      white-space: pre;
+
+      /* THE HEAD.
+         The column is painted with a gradient whose period is exactly
+         one tile, and the glyphs are filled with it. The bottom of
+         every tile is the bright end and the top is the dim end, so
+         the bright band is the HEAD of the column and the dim glyphs
+         above it are the trail it has already rained through. It
+         falls, so the head leads and the trail follows above it — the
+         same order the real effect has.
+
+         The gradient is clipped to the glyphs, which is why the text is
+         transparent: the text is not coloured, it is FILLED with the
+         gradient. */
+      color: transparent;
+      background-image: repeating-linear-gradient(
+        to bottom,
+        rgba(0, 255, 65, 0.14) 0,
+        rgba(0, 255, 65, 0.14) calc(var(--ts-rain-tile) * 0.62),
+        rgba(0, 255, 65, 0.4) calc(var(--ts-rain-tile) * 0.78),
+        rgba(150, 255, 190, 0.85) calc(var(--ts-rain-tile) * 0.92),
+        rgba(226, 255, 235, 1) var(--ts-rain-tile)
+      );
+      background-clip: text;
+      -webkit-background-clip: text;
+
       /* The CRT phosphor glow: a soft halo around each glyph with the
          core left crisp, which is what a real phosphor does and what
          flat text does not. */
@@ -1185,10 +1252,11 @@ onMounted(() => {
     transform: translateY(0);
   }
   to {
-    /* EXACTLY one tile height — the same number as background-size. So
-       the strip slides down precisely one tile and the repeat underneath
-       takes its place. The loop has no seam and no pop. */
-    transform: translateY(1216px);
+    /* EXACTLY one tile height — the same number as the line height
+       times the glyph count, which is the pattern's period. So the
+       strip slides down precisely one tile and the next copy of the
+       tile takes its place. The loop has no seam and no pop. */
+    transform: translateY(var(--ts-rain-tile));
   }
 }
 
