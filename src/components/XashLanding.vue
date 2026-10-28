@@ -338,18 +338,30 @@ function onIdentityConfirm() {
 const RAIN_GLYPHS =
   'モエヤキオカ7ケサスz152ヨタワ4ネヌナ98ヒ0ホア3ウ セ¦:"꞊ミラリ╌ツテニハソ▪—<>|+*コシマムメ';
 
-/** Glyphs per tile. 64 at 19px is a 1216px tile. */
+/** Glyphs per tile. 64 at 16px is a 1024px tile. */
 const RAIN_TILE_GLYPHS = 64;
-/** The tile's height in pixels. The travel is EXACTLY this. */
-const RAIN_TILE_PX = 1216;
+/**
+ * The tile's height in pixels. The travel is EXACTLY this.
+ *
+ * It is also the line height times the glyph count, and the line height
+ * is what makes the rows TOUCH. The Matrix font's glyphs are 87 units
+ * of ink in a 1000-unit em, so at an 18px font they are 15.7px tall —
+ * and a row of 16px puts the next glyph 0.3px below the last one's
+ * baseline, which is touching. The old row was 19px, which left a 4px
+ * hole between every pair of glyphs, and a column of glyphs with holes
+ * in it reads as a list of characters rather than as rain.
+ *
+ * So the tile is 1024px and the line height is 16px.
+ */
+const RAIN_TILE_PX = 1024;
 /**
  * Tiles of content per column. Three: one above the window, one in it,
  * one below, so the column is always in flight and always covers the
  * window however tall it is.
  */
 const RAIN_TILES = 3;
-/** Columns. Sixteen: one every 80px across a 1280px window. */
-const RAIN_COLUMNS = 16;
+/** Columns. Twenty-four: one every 53px across a 1280px window. */
+const RAIN_COLUMNS = 24;
 
 /**
  * One column's glyph strip: RAIN_TILES copies of the same 64-glyph
@@ -754,13 +766,19 @@ onMounted(() => {
          is always in flight and always covers the window. */
       top: calc(-1 * var(--ts-rain-tile));
       height: calc(var(--ts-rain-tile) * 3);
-      width: 20px;
+      width: 18px;
       /* THE MATRIX GLYPHS, in the font that has the film's shapes. */
       font-family: 'Matrix Code', monospace;
-      font-size: 17px;
-      /* The line height IS the tile: 64 lines of 19px is the 1216px the
+      font-size: 18px;
+      /* The line height IS the tile: 64 lines of 16px is the 1024px the
          column travels, so the pattern's period and the travel are the
-         same number and the loop cannot open a seam. */
+         same number and the loop cannot open a seam.
+
+         It is also what makes the rows touch. The glyphs are 87 units
+         of ink in a 1000-unit em, so at 18px they are 15.7px tall and
+         a 16px row leaves a third of a pixel between them. A 19px row
+         left four, and a column of glyphs with four-pixel holes in it
+         reads as a list of characters, not as rain. */
       line-height: calc(var(--ts-rain-tile) / var(--ts-rain-glyphs));
       text-align: center;
       /* The strip is 192 newlines. Without this they are spaces. */

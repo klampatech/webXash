@@ -6,18 +6,30 @@
   BALLET is drawn in. On the void ground, so it holds its contrast in a
   dark tab and in a light one.
 
+  THE B's ARE ANTON'S B's
+  ========================
+  The wordmark on the site is set in Anton, so the favicon's B's are
+  Anton's B's — the outlines, converted from the font and baked into
+  this file as paths.
+
+  Not as <text font-family="Anton">: an SVG loaded as an icon is an
+  isolated document and cannot use the page's webfonts, so it would
+  silently fall back to Arial Narrow or Impact and the favicon would be
+  a different letterform on every machine. And not as an embedded font
+  either: this is 1.6 KB of paths instead of 15 KB of base64.
+
+  The outlines are a snapshot of Anton as of 2026-10-28. If Anton is
+  updated, re-run webxash/tools/make-favicon.py.
+
   WHY LETTERS AND NOT THE MARK
   =============================
   The mark is two slender cartridges with internal cutouts. At 16px the
   cutouts vanish and what is left is a pair of green blobs — which is
-  what this file used to be, and what it read as. The letterforms are
-  drawn as paths rather than set in a font, so the favicon is the same
-  drawing on every machine: a system font would render a different B
-  on Windows than on a phone.
+  what this file used to be, and what it read as.
 
-  The counters are cut large. At 16px a B is eight pixels wide, and a
-  counter of one pixel is not a counter — it is a smudge, and the B
-  reads as a solid bar. These are as big as the letterform will carry.
+  The counters are Anton's own, which are small at this size: a B is
+  eight pixels wide at 16px and Anton's counters are a fraction of that.
+  It is legible as a pair of letterforms, which is what a tab needs.
 -->
 <svg
   xmlns="http://www.w3.org/2000/svg"
@@ -26,14 +38,8 @@
   aria-label="BulletBallet"
 >
   <rect width="32" height="32" fill="#010a04" />
-  <g fill-rule="evenodd">
-    <path
-      fill="#d8ffe2"
-      d="M2.6 3.4h6.6c3.6 0 5.9 2.1 5.9 5.4 0 2.3-1.2 4-3.2 4.8 2.6.8 4.1 2.8 4.1 5.8 0 5-2.8 7.8-7.6 7.8H2.6Zm4.4 3.9v4.4h1.9c1.7 0 2.6-.8 2.6-2.2s-.9-2.2-2.6-2.2H7Zm0 8.3v7.2h2.3c2 0 3.1-1.2 3.1-3.6s-1.1-3.6-3.1-3.6H7Z"
-    />
-    <path
-      fill="#00ff41"
-      d="M17 3.4h6.6c3.6 0 5.9 2.1 5.9 5.4 0 2.3-1.2 4-3.2 4.8 2.6.8 4.1 2.8 4.1 5.8 0 5-2.8 7.8-7.6 7.8H17Zm4.4 3.9v4.4h1.9c1.7 0 2.6-.8 2.6-2.2s-.9-2.2-2.6-2.2h-1.9Zm0 8.3v7.2h2.3c2 0 3.1-1.2 3.1-3.6s-1.1-3.6-3.1-3.6h-2.3Z"
-    />
+  <g transform="translate(0.5227 29.6200) scale(0.0154773 -0.0154773)">
+    <path fill="#d8ffe2" d="M78 0V1760H555Q747 1760 834.5 1666.5Q922 1573 922 1358V1281Q922 1157 877.5 1080.0Q833 1003 742 979Q861 949 901.5 838.5Q942 728 942 569Q942 398 910.0 270.0Q878 142 794.0 71.0Q710 0 555 0ZM422 1097H494Q543 1097 557.0 1135.0Q571 1173 571 1226V1403Q571 1488 496 1488H422ZM457 310Q594 310 594 440V660Q594 735 571.5 778.5Q549 822 487 822H422V312Q444 310 457 310Z" />
+    <path fill="#00ff41" d="M78 0V1760H555Q747 1760 834.5 1666.5Q922 1573 922 1358V1281Q922 1157 877.5 1080.0Q833 1003 742 979Q861 949 901.5 838.5Q942 728 942 569Q942 398 910.0 270.0Q878 142 794.0 71.0Q710 0 555 0ZM422 1097H494Q543 1097 557.0 1135.0Q571 1173 571 1226V1403Q571 1488 496 1488H422ZM457 310Q594 310 594 440V660Q594 735 571.5 778.5Q549 822 487 822H422V312Q444 310 457 310Z" transform="translate(980 0)" />
   </g>
 </svg>
