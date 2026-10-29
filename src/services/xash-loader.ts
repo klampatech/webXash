@@ -25,6 +25,7 @@ import {
   forceFrameCap,
   getPacingState,
   installFramePacingShim,
+  wantsNoFrameCap,
 } from '/@/services/frame-pacing-apply.ts';
 import { delay } from '/@/utils/helpers.ts';
 import { DEFAULT_GAME_DIR } from '/@/services/save-manager.ts';
@@ -673,7 +674,15 @@ class XashLoader {
     // first frame, so it sees every tick from the start. It only
     // measures until `applyFrameCap` decides what to do, and it gates
     // the engine's callback only if the engine turns out to need it.
-    installFramePacingShim();
+    //
+    // Unless the player has switched the cap off for this session
+    // (`?nocap=1`). Then the global rAF is left alone entirely: the
+    // page runs exactly as it did before the cap existed. The default
+    // is still ON -- the cap exists because the uncapped engine
+    // arrives unevenly on a fast display.
+    if (!wantsNoFrameCap()) {
+      installFramePacingShim();
+    }
 
     const launchOptsStr = options.launchArgs?.join(' ') ?? '';
     const Xash3D = await this._getXashInstance(launchOptsStr);

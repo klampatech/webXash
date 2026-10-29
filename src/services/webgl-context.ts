@@ -72,11 +72,23 @@ export function createEngineContext(
       //   alpha:true antialias:true depth:true stencil:false
       //   preserveDrawingBuffer:false premultipliedAlpha:true
       //
-      // They are matched EXACTLY, so the ONLY difference from the
-      // shipped behaviour is `desynchronized`. Matching them matters:
-      // pre-creating the context with, say, antialias:false would
-      // silently change the rendering, which is not what this change
-      // is for.
+      // Every attribute that `gl.getContextAttributes()` can REPORT
+      // is matched to the measured value -- alpha, antialias, depth,
+      // stencil, preserveDrawingBuffer, premultipliedAlpha and
+      // desynchronized -- so the observable difference from the
+      // shipped behaviour is `desynchronized` and nothing else.
+      //
+      // Two attributes CANNOT be observed and are therefore NOT
+      // verified: `failIfMajorPerformanceCaveat` and
+      // `powerPreference`. `getContextAttributes()` does not report
+      // either, so no measurement of the engine's own context could
+      // have confirmed them. They are set here to the values the
+      // engine's renderer asks for, but that is a belief about the
+      // engine's WASM side, not a verified match.
+      //
+      // Matching the reported attributes matters: pre-creating the
+      // context with, say, antialias:false would silently change the
+      // rendering, which is not what this change is for.
       alpha: true,
       antialias: true,
       depth: true,
