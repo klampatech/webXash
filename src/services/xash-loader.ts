@@ -19,6 +19,13 @@ import {
   setRenderResolutionTarget,
   type RenderResolution,
 } from '/@/services/video-settings.ts';
+import { prepareEngineContext } from '/@/services/webgl-context.ts';
+import {
+  applyFrameCap,
+  forceFrameCap,
+  getPacingState,
+  installFramePacingShim,
+} from '/@/services/frame-pacing-apply.ts';
 import { delay } from '/@/utils/helpers.ts';
 import { DEFAULT_GAME_DIR } from '/@/services/save-manager.ts';
 
@@ -636,6 +643,38 @@ class XashLoader {
   }
 
   public async initXash(options: GameLoaderOptions): Promise<Xash3D> {
+    // PRE-CREATE THE WEBGL CONTEXT, before the engine asks for one.
+    //
+    // The engine's renderer creates its own context through
+    // `_emscripten_webgl_create_context`, which takes its attributes
+    // from the WASM side. The usual Emscripten lever,
+    // `Module.webGLContextAttributes`, does not reach it: this glue
+    // never reads it, and the live context reports
+    // `desynchronized: false`.
+    //
+    // A canvas has ONE WebGL context for its lifetime, and
+    // `getContext` returns the same one every time. So creating the
+    // context here, with the attributes we want, means the engine's
+    // later call returns OURS.
+    //
+    // This is here, and not in `startWithFiles`, because BOTH boot
+    // paths call `initXash` -- and the real one is the ZIP path. An
+    // earlier version put this in `startWithFiles`, which the ZIP
+    // path never touches, so the context was never pre-created and
+    // `desynchronized` was never set.
+    //
+    // The loader's canvas IS the canvas the engine renders into, so
+    // this is the authoritative pre-creation. It runs before the
+    // engine module is created, so the engine's renderer gets OUR
+    // context rather than making its own.
+    prepareEngineContext(options.canvas);
+
+    // Install the frame-pacing measuring shim BEFORE the engine's
+    // first frame, so it sees every tick from the start. It only
+    // measures until `applyFrameCap` decides what to do, and it gates
+    // the engine's callback only if the engine turns out to need it.
+    installFramePacingShim();
+
     const launchOptsStr = options.launchArgs?.join(' ') ?? '';
     const Xash3D = await this._getXashInstance(launchOptsStr);
 
@@ -724,6 +763,14 @@ class XashLoader {
     // Also expose it on window so Playwright probes and devtools can
     // poke the engine console directly while iterating.
     (window as any).__xash = xash;
+    // The frame-pacing state, for the diagnostics and for a player who
+    // is asked what their client is doing.
+    (window as any).__xashPacing = getPacingState;
+    // The force hook, for the A/B harness. It is not reachable from
+    // the UI on purpose: it exists so the harness can measure what the
+    // cap DOES, on a display where it would otherwise never engage.
+    (window as any).__xashForceFrameCap = (everyNth = 2) =>
+      forceFrameCap(everyNth);
     return xash;
   }
 
@@ -1520,6 +1567,37 @@ class XashLoader {
     // Try again shortly after; the check is free (it reads the canvas
     // backing store) and does nothing if the resolution already took.
     setTimeout(() => applyVideo(false), 1500);
+
+    // CAP THE ENGINE'S TICK RATE, if it needs one.
+    //
+    // The engine has no frame limiter in the browser: with vsync on,
+    // `fps_max` is never consulted, so the engine renders on every
+    // tick the browser offers it. Its per-frame work was measured at
+    // ~7-8 ms, which is comfortable at 60 Hz (16.7 ms of budget) and
+    // OVER budget at 144 Hz (6.9 ms). A display faster than the
+    // engine can sustain makes the engine miss deadlines, the browser
+    // drop ticks to catch up, and the frames arrive unevenly -- which
+    // is judder, and which the engine's own FPS counter cannot see
+    // because it counts the frames it drew, not the gaps between them.
+    //
+    // The cap is measured, not assumed: the shim times the engine's
+    // own callback (which IS its frame) and reads the display's
+    // refresh rate from the tick intervals. If the engine keeps up,
+    // nothing is gated at all.
+    //
+    // It runs on a delay so the engine is warm -- the first frames
+    // after boot include shader compilation and map streaming, and
+    // capping on those would be measuring the wrong thing.
+    setTimeout(() => {
+      void applyFrameCap()
+        .then((s) => {
+          logDebug(`[frame-pacing] ${s.reason}`);
+          console.log('[frame-pacing]', s.reason);
+        })
+        .catch((e) => {
+          console.warn('[frame-pacing] the measurement failed:', e);
+        });
+    }, 3000);
   }
 
   public static removeReloadListener() {
