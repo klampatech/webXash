@@ -627,6 +627,67 @@ class XashLoader {
   }
 
   /**
+   * Is the game's transport up right now?
+   *
+   * False for single-player (there is no transport at all) — the caller
+   * reads that as "the fast path cannot succeed".
+   */
+  public static isTransportOpen(): boolean {
+    const inst = XashLoader.liveInstance as unknown as {
+      isTransportOpen?: () => boolean;
+    } | null;
+    if (!inst || typeof inst.isTransportOpen !== 'function') return false;
+    return inst.isTransportOpen();
+  }
+
+  /**
+   * Reconnect to the game server without reloading the page.
+   *
+   * WHY
+   * ---
+   * The old recovery was a page reload — re-unpack the 517 MB archive,
+   * re-boot the WASM engine, re-run the handshake. That is a minute of
+   * loading after a blip, and it is exactly the window the server's
+   * connect timeout was waiting on: a browser reconnect is slower than
+   * a normal client, and the engine's `sv_connect_timeout_ban` was
+   * punishing the whole fleet for it (every browser player reaches the
+   * server as the same address).
+   *
+   * The engine does not need any of that. It has a `retry` command —
+   * "retry connection to last server" — that disconnects the stale
+   * channel and re-runs the handshake against the address it already
+   * knows (`cls.servername`, set by the launch's `+connect`). The only
+   * thing that has to be put back is the transport, because the engine
+   * keeps running when the WebSocket closes; it just stops receiving.
+   *
+   * Returns false when the fast path is not available, so the caller
+   * can fall back to the reload. This is never allowed to be the ONLY
+   * way back into the game.
+   */
+  public static async reconnectToServer(): Promise<boolean> {
+    const inst = XashLoader.liveInstance;
+    if (!inst) return false;
+    const transport = inst as unknown as {
+      reconnect?: () => Promise<void>;
+    };
+    // Single-player, or a transport that cannot be re-opened.
+    if (typeof transport.reconnect !== 'function') return false;
+    try {
+      await transport.reconnect();
+    } catch (e) {
+      console.warn('[xash-reconnect] the transport would not come back:', e);
+      return false;
+    }
+    // The engine's own reconnect. `retry` re-connects to the last
+    // server, which is the one the launch options named.
+    if (!XashLoader.exec('retry')) {
+      console.warn('[xash-reconnect] the engine took no "retry"');
+      return false;
+    }
+    return true;
+  }
+
+  /**
    * Drop the "are you sure you want to leave?" guard.
    *
    * WHY
@@ -1725,6 +1786,12 @@ class XashLoader {
   }
   public allowUnload() {
     XashLoader.allowUnload();
+  }
+  public reconnectToServer(): Promise<boolean> {
+    return XashLoader.reconnectToServer();
+  }
+  public isTransportOpen(): boolean {
+    return XashLoader.isTransportOpen();
   }
 }
 

@@ -47,7 +47,7 @@
     <div class="lost__panel">
       <p class="lost__title">CONNECTION LOST</p>
       <p class="lost__body">{{ connectionLostReason }}</p>
-      <p class="lost__countdown">Reconnecting in {{ countdown }}s</p>
+      <p class="lost__countdown">{{ countdownLabel }}</p>
       <button class="lost__btn" @click="reconnect">Reconnect now</button>
     </div>
   </div>
@@ -65,6 +65,7 @@
     tryAttachMouseBridge,
   } from '/@/services/keyboard-bridge.ts';
   import { logDebug } from '/@/services/debug-log.ts';
+  import { waitForServerBanner } from '/@/services/server-banner.ts';
   import XashLoader from '/@/services/xash-loader.ts';
 
   // Dependencies
@@ -74,21 +75,72 @@
     storeToRefs(store);
 
   /**
-   * Reconnect = reload the page.
+   * Reconnect: the fast path first, the reload as the fallback.
    *
-   * There is no cheaper option. The engine's state — the map, the
-   * player, the round — lives in the server and in WASM memory that a
-   * reload discards; the browser would have to re-establish the socket
-   * and re-run the whole handshake against a server that no longer knows
-   * this client. A reload is the honest "try again", and the archive is
-   * cached in IndexedDB, so it is quick.
+   * WHY
+   * ---
+   * The fast path puts the transport back and tells the engine to
+   * `retry` the connection it already knows. That is seconds, against
+   * a minute for a reload — and the reload is exactly what made the
+   * reconnect long enough for the server's connect timeout to fire:
+   * a browser reconnect re-unpacks the 517 MB archive and re-boots the
+   * engine, which is far slower than any normal client, and the
+   * engine's `sv_connect_timeout_ban` was punishing the whole fleet
+   * for it (every browser player reaches the server as one address).
+   *
+   * The reload is still here, for the two cases the fast path cannot
+   * cover: the engine is gone (a WASM abort), or the fast path did not
+   * get the player back inside its window.
    */
-  function reconnect() {
-    // `autoplay=1` puts the player straight back into a game on reload.
-    // A plain reload drops them on the landing page, which read
-    // literally is not a reconnect — it is "click Play again", and if
-    // the thing that broke was the connect address, clicking Play
-    // again would break it again.
+  async function reconnect() {
+    if (reconnecting.value) return;
+    reconnecting.value = true;
+    // The countdown must not fire a second attempt underneath this one.
+    if (countdownTimer) {
+      clearInterval(countdownTimer);
+      countdownTimer = null;
+    }
+    let recovered = false;
+    try {
+      // THE LISTENER GOES UP FIRST — BEFORE THE RECONNECT IS TRIGGERED.
+      //
+      // The engine's `retry` fires the handshake immediately
+      // (`cls.connect_time = MAX_HEARTBEAT`, "CL_CheckForResend() will
+      // fire immediately"), so the banner can come back inside the
+      // same tick. A listener attached after the trigger would miss it,
+      // and a missed banner means the panel stays over a live world
+      // and the fallback fires a reload that was not needed.
+      const banner = waitForServerBanner(BANNER_TIMEOUT_MS, {
+        // THE FAST PATH NEEDS A LIVE TRANSPORT. The engine's handshake
+        // runs over the WebSocket, so if the socket dies again while we
+        // wait, no banner can arrive — the fallback (a reload, which
+        // brings a fresh transport) has to take over at once instead of
+        // after the whole window.
+        stillPossible: () => XashLoader.isTransportOpen(),
+      });
+      const started = await XashLoader.reconnectToServer();
+      if (started) {
+        // The engine prints the server's banner the moment the
+        // handshake completes — that is the engine's own proof that the
+        // player is back in a game, and nothing weaker will do.
+        recovered = await banner;
+        if (!recovered) {
+          logDebug('[reconnect] the fast path did not get the player back');
+        }
+      }
+    } catch (e) {
+      console.warn('[reconnect] the fast path failed:', e);
+    }
+    if (recovered) {
+      reconnecting.value = false;
+      store.clearConnectionLost();
+      return;
+    }
+    // The fallback: reload the page. `autoplay=1` puts the player
+    // straight back into a game on reload. A plain reload drops them
+    // on the landing page, which read literally is not a reconnect —
+    // it is "click Play again", and if the thing that broke was the
+    // connect address, clicking Play again would break it again.
     //
     // The app's "are you sure you want to leave?" guard has to come
     // off first: it fires on this navigation too, and the browser's
@@ -102,6 +154,33 @@
   }
 
   /**
+   * How long to wait for the engine's banner before giving up on the
+   * fast path.
+   *
+   * THE ENGINE'S OWN BUDGET IS THE CEILING HERE, and it is smaller than
+   * it looks. `CL_CheckForResend` gives the connect attempt
+   * `CL_CONNECTION_RETRIES` (5) tries, one every `cl_resend` (6.0 s by
+   * default), and then calls `CL_Disconnect()` — the engine gives up
+   * after about 30 seconds and goes idle. No banner can arrive after
+   * that, because there is no longer a handshake in flight.
+   *
+   * So waiting longer cannot buy a banner; it can only delay the
+   * fallback. Forty seconds covers the engine's whole budget (its last
+   * attempt is around the 24-second mark, with the answer a moment
+   * later) and leaves a margin for a slow answer.
+   *
+   * The bridge's "will be back in about a minute" is about the SERVER
+   * coming back, not about the client's patience — and by the time the
+   * client counts down and tries, the server has been back for a good
+   * while already: the bridge only learns the server is gone after
+   * three A2S polls miss it, which is a detection lag, not a restart.
+   */
+  const BANNER_TIMEOUT_MS = 40_000;
+
+  /** True while a reconnect attempt is in flight. */
+  const reconnecting = ref(false);
+
+  /**
    * Count down and reconnect on our own.
    *
    * A player staring at a frozen screen needs to click something to be
@@ -112,6 +191,10 @@
   const RECONNECT_SECONDS = 12;
   const countdown = ref(RECONNECT_SECONDS);
   let countdownTimer: ReturnType<typeof setInterval> | null = null;
+
+  const countdownLabel = computed(() =>
+    reconnecting.value ? 'Reconnecting…' : `Reconnecting in ${countdown.value}s`
+  );
 
   watch(connectionLost, (lost) => {
     if (countdownTimer) {

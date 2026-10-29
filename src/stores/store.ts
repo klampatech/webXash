@@ -182,6 +182,20 @@ export const useXashStore = defineStore(
     };
     const connectionLostReason = ref('');
 
+    /**
+     * The connection is back.
+     *
+     * The CONNECTION LOST panel is the player's only feedback about a
+     * dead world, so it must not sit over a live one — and the reason
+     * it carried has to go with it, or the next drop shows the old
+     * story.
+     */
+    const clearConnectionLost = () => {
+      if (!connectionLost.value) return;
+      connectionLost.value = false;
+      connectionLostReason.value = '';
+    };
+
     const onBootPhase = (info: { phase: BootPhase; percent: number | null }) => {
       bootPhase.value = info.phase;
       bootPercent.value = info.percent;
@@ -277,6 +291,7 @@ export const useXashStore = defineStore(
       connectionLost,
       connectionLostReason,
       setConnectionLost,
+      clearConnectionLost,
       maxLoadingAmount,
       bootPhase,
       launching,
