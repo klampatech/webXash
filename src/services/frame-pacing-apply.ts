@@ -72,18 +72,42 @@
  *
  * WHAT IT COSTS
  * -------------
- * On a display the engine can already sustain, the gate is not
- * installed at all: `shouldCap` returns false, and the measurement
- * shim is removed. The cap only engages when the engine would
- * otherwise miss deadlines.
+ * On a display the engine can already sustain, the gate GATES
+ * NOTHING: `shouldCap` returns false, the divisor stays at 1, and
+ * every callback is forwarded on the tick it arrived. The cap only
+ * engages when the engine would otherwise miss deadlines.
+ *
+ * THE SHIM STAYS INSTALLED, THOUGH. It is NOT removed on a display
+ * the engine can already sustain -- an earlier version of this
+ * comment claimed it was, and it was never true. The shim IS the
+ * global `requestAnimationFrame` patch, and it stays for the life of
+ * the page.
+ *
+ * What that costs, at a divisor of 1:
+ *
+ *   - every rAF callback goes through one Map insert and one delete,
+ *     and is timed with two `performance.now()` calls -- a few
+ *     microseconds against a 16.7 ms frame budget;
+ *   - no callback is delayed: they still run on the tick they were
+ *     asked for, and the app's own one-shots still run immediately;
+ *   - and the diagnostics keep working, because the state is read
+ *     live rather than snapshotted once.
+ *
+ * The alternative -- uninstalling the shim when the cap is not
+ * needed -- was not taken because uninstalling has to hand the
+ * engine's held callback back to the browser (see
+ * `uninstallFramePacing`), and a global rAF patch that is removed
+ * and re-installed around the engine's loop is a much larger thing
+ * to get wrong than a few microseconds per frame.
  */
 import {
   chooseFrameCap,
   frameIntervalMs,
+  isLate,
   shouldCap,
   sustainableFps,
   type FrameCap,
-} from '/@/services/frame-pacing.ts';
+} from './frame-pacing.ts';
 
 /** What the pacer decided, for the log and the diagnostics. */
 export interface PacingState {
@@ -95,28 +119,82 @@ export interface PacingState {
   engineWorkMs: number;
   /** The frame rate the engine can sustain. */
   sustainableFps: number;
-  /** Whether the gate is installed. */
+  /**
+   * Whether the gate is DROPPING TICKS.
+   *
+   * Derived from the gate itself -- it is true exactly when
+   * `everyNth` is greater than 1 -- so it cannot say the engine is
+   * running uncapped while the gate is still halving its rate.
+   */
   active: boolean;
   /** How many display ticks per engine frame. 1 = every tick. */
   everyNth: number;
+  /**
+   * How many display ticks arrived LATE in the measurement window --
+   * the browser dropped a frame to catch up.
+   *
+   * This is the unevenness the cap exists to remove, counted rather
+   * than described.
+   */
+  lateTicks: number;
   /** Why. */
   reason: string;
 }
 
+/**
+ * The parts of the state that are NOT the gate.
+ *
+ * `everyNth` and `active` are deliberately absent: they are DERIVED
+ * from the gate itself, in `getPacingState()`. See the note there.
+ */
+interface PacingCore {
+  capFps: number;
+  displayHz: number;
+  engineWorkMs: number;
+  sustainableFps: number;
+  lateTicks: number;
+  reason: string;
+}
+
 /** The pacer singleton's state. Read by the diagnostics. */
-let state: PacingState = {
+let core: PacingCore = {
   capFps: 0,
   displayHz: 0,
   engineWorkMs: 0,
   sustainableFps: 0,
-  active: false,
-  everyNth: 1,
+  lateTicks: 0,
   reason: 'not measured yet',
 };
 
-/** The current state, for the log and the diagnostics. */
+/**
+ * Every Nth tick is allowed through to the engine.
+ *
+ * THE GATE IS THE ONLY COPY OF THIS NUMBER.
+ *
+ * It used to have a second copy, in `state.everyNth`, and the two
+ * could drift: the "not capping" branch set `state.everyNth = 1` and
+ * left this one at its old value, so the engine kept running at half
+ * speed while the diagnostics reported "not capping, everyNth 1". A
+ * state that lies about the machine is the exact bug this whole
+ * feature exists to fix, so the gate is now the single source of
+ * truth and the reported state is derived from it.
+ */
+let everyNth = 1;
+
+/**
+ * The current state, for the log and the diagnostics.
+ *
+ * `everyNth` and `active` come from the GATE, not from a stored
+ * copy of it, so they cannot disagree with what the shim is
+ * actually doing: `active` is true exactly when the gate is
+ * dropping ticks.
+ */
 export function getPacingState(): PacingState {
-  return { ...state };
+  return {
+    ...core,
+    everyNth,
+    active: everyNth > 1,
+  };
 }
 
 /** The native rAF, captured before any patching. */
@@ -147,8 +225,17 @@ let engineCallback: unknown = null;
  */
 const pending = new Map<number, FrameRequestCallback>();
 
-/** The ids we have handed out. */
-let nextId = 1;
+/**
+ * The ids we hand out.
+ *
+ * They start HIGH, above anything a browser's own rAF ids reach, so
+ * that an id handed out by the shim can never collide with one
+ * handed out by the browser. That matters after the shim is removed:
+ * the browser's `cancelAnimationFrame` would otherwise be able to
+ * cancel an unrelated frame that happened to get the same number.
+ */
+const ID_BASE = 1_000_000;
+let nextId = ID_BASE;
 
 /** Is a native rAF already scheduled? */
 let scheduled = false;
@@ -156,16 +243,27 @@ let scheduled = false;
 /** The tick counter, for the every-Nth decision. */
 let tick = 0;
 
-/** Every Nth tick is allowed through to the engine. */
-let everyNth = 1;
-
 /** Per-callback statistics, for identifying the engine's. */
 interface CallbackStats {
   calls: number;
-  totalMs: number;
-  maxMs: number;
+  /**
+   * The recent durations of this callback, in milliseconds.
+   *
+   * The MEDIAN of these is the per-frame cost -- see `readMeasurement`
+   * for why the median and not the mean.
+   */
+  samples: number[];
 }
 const stats = new Map<unknown, CallbackStats>();
+
+/**
+ * How many recent samples to keep per callback.
+ *
+ * A rolling window is plenty: the engine's per-frame cost does not
+ * change, and an unbounded list of every frame since boot is a leak
+ * in a long session.
+ */
+const MAX_SAMPLES = 240;
 
 /** The intervals between display ticks, for the refresh rate. */
 const intervals: number[] = [];
@@ -185,12 +283,24 @@ const OBSERVE_MS = 2000;
 function noteCallback(cb: unknown, durationMs: number): void {
   let s = stats.get(cb);
   if (!s) {
-    s = { calls: 0, totalMs: 0, maxMs: 0 };
+    s = { calls: 0, samples: [] };
     stats.set(cb, s);
   }
   s.calls++;
-  s.totalMs += durationMs;
-  if (durationMs > s.maxMs) s.maxMs = durationMs;
+  s.samples.push(durationMs);
+  if (s.samples.length > MAX_SAMPLES) s.samples.shift();
+}
+
+/**
+ * The median of a set of numbers.
+ *
+ * For an even count, the average of the two middle values.
+ */
+function medianOf(values: number[]): number {
+  if (!values.length) return 0;
+  const sorted = values.slice().sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 /** The tick the shim runs on, deciding whether the engine runs. */
@@ -276,14 +386,32 @@ export function installFramePacingShim(): void {
   }
 }
 
-/** Remove the shim and restore the native rAF. */
+/**
+ * Remove the shim and restore the native rAF.
+ *
+ * WHAT THIS DOES TO THE ENGINE'S LOOP
+ * ------------------------------------
+ * It does NOT stop it. The engine asks for its next frame from
+ * INSIDE the frame it just ran, so a callback that is DROPPED here
+ * would take the engine from 60.3 fps to 0.3 fps -- the loop would
+ * never be asked for again.
+ *
+ * So the held callbacks are HANDED BACK: each one is re-offered to
+ * the browser's own `requestAnimationFrame`, which runs it on the
+ * next native frame. The engine's callback runs there, asks for its
+ * next frame from the now-restored native rAF, and the loop
+ * continues on the browser's own schedule -- just without the gate
+ * and without the measurement.
+ *
+ * The frame rate does not change; what goes away is the pacing.
+ */
 export function uninstallFramePacing(): void {
   if (!shimInstalled) return;
   shimInstalled = false;
-  pending.clear();
-  scheduled = false;
-  engineCallback = null;
-  everyNth = 1;
+
+  // Restore the native rAF FIRST, so that a callback which
+  // re-registers itself -- which is exactly what the engine's does --
+  // registers with the browser and not with the shim being removed.
   if (nativeRaf) {
     window.requestAnimationFrame =
       nativeRaf as unknown as typeof window.requestAnimationFrame;
@@ -292,6 +420,24 @@ export function uninstallFramePacing(): void {
     window.cancelAnimationFrame =
       nativeCancel as unknown as typeof window.cancelAnimationFrame;
   }
+
+  // Hand the held callbacks back to the browser rather than dropping
+  // them. Dropping the engine's callback kills the engine's loop.
+  const held = [...pending.values()];
+  pending.clear();
+  for (const cb of held) nativeRaf?.(cb);
+
+  scheduled = false;
+  engineCallback = null;
+
+  // The gate comes off, and the reported state follows it -- the state
+  // is derived from the gate, so the two cannot disagree.
+  everyNth = 1;
+  core = {
+    ...core,
+    capFps: 0,
+    reason: 'the frame-pacing shim was uninstalled; not capping',
+  };
 }
 
 /**
@@ -302,31 +448,80 @@ export function uninstallFramePacing(): void {
  *
  * `engineWorkMs` is how long the engine's own callback takes -- the
  * engine's per-frame cost, measured directly, not inferred.
+ *
+ * `lateTicks` is how many display ticks arrived late -- the browser
+ * dropped a frame to catch up. That is the unevenness this feature
+ * exists to remove, counted.
  */
 export function readMeasurement(): {
   displayHz: number;
   engineWorkMs: number;
+  lateTicks: number;
 } {
   // The refresh rate: the median interval between ticks.
   let displayHz = 0;
   if (intervals.length >= 10) {
-    const sorted = intervals.slice().sort((a, b) => a - b);
-    const median = sorted[Math.floor(sorted.length / 2)];
+    const median = medianOf(intervals);
     if (median > 0) displayHz = 1000 / median;
   }
 
   // The engine's cost: the callback with the most calls is the one
   // that runs every frame. Its MEDIAN duration is the per-frame cost.
+  //
+  // THE MEDIAN, NOT THE MEAN. A frame cost is a distribution with a
+  // long tail: one frame in a few hundred pays for a shader
+  // compilation, a GC pause, or the tab regaining focus. The MEAN is
+  // dragged up by that tail, so the estimate it produces is
+  // pessimistic -- and `sustainableFps()` already applies a 0.85
+  // safety factor to tolerate exactly those outliers. Using the mean
+  // as well would count the same outlier TWICE: once in the
+  // estimate, once in the safety margin, and the cap would engage
+  // harder than the policy intends. The median is unmoved by a
+  // handful of outlier frames, which is what a per-frame cost
+  // estimate needs to be.
   let engineWorkMs = 0;
   let best: CallbackStats | null = null;
   for (const s of stats.values()) {
     if (!best || s.calls > best.calls) best = s;
   }
-  if (best && best.calls > 0) {
-    engineWorkMs = best.totalMs / best.calls;
+  if (best && best.samples.length > 0) {
+    engineWorkMs = medianOf(best.samples);
   }
 
-  return { displayHz, engineWorkMs };
+  // How many display ticks arrived LATE. The threshold is RELATIVE to
+  // the frame budget (see `isLate`), never a constant, so it is
+  // correct on a 165 Hz display as well as on a 60 Hz one.
+  const budget = frameIntervalMs(displayHz);
+  let lateTicks = 0;
+  for (const gap of intervals) {
+    if (isLate(gap, budget)) lateTicks++;
+  }
+
+  return { displayHz, engineWorkMs, lateTicks };
+}
+
+/**
+ * Is the frame cap switched OFF for this session?
+ *
+ * The pattern is the one `wantsDesynchronized()` uses in
+ * `webgl-context.ts`: a URL parameter, off by default, read at
+ * runtime, and documented.
+ *
+ *     ?nocap=1
+ *
+ * THE DEFAULT STAYS ON. The cap is ON unless the parameter says
+ * otherwise, because the cap exists because the UNCAPPED engine
+ * arrives unevenly on a fast display: a player who wants it off is
+ * fixing a problem they can see, and the default must not regress
+ * everyone else.
+ */
+export function wantsNoFrameCap(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return new URLSearchParams(window.location.search).get('nocap') === '1';
+  } catch (e) {
+    return false;
+  }
 }
 
 /**
@@ -345,6 +540,30 @@ export async function applyFrameCap(
 ): Promise<PacingState> {
   const observeMs = opts.observeMs ?? OBSERVE_MS;
 
+  // The player can switch the cap OFF for their session. It is ON by
+  // default, and this is the one thing that turns it off.
+  //
+  // The opt-out applies to the AUTOMATIC path. `force` is an explicit,
+  // deliberate measurement request (the A/B harness), so it still
+  // works with the parameter set.
+  const optedOut = !opts.force && wantsNoFrameCap();
+  if (optedOut) {
+    // Nothing is measured and nothing is gated: the page runs exactly
+    // as it did before this feature existed. The shim is NOT
+    // installed -- there is no point patching the global rAF for a
+    // measurement whose result cannot be acted on.
+    everyNth = 1;
+    core = {
+      capFps: 0,
+      displayHz: 0,
+      engineWorkMs: 0,
+      sustainableFps: 0,
+      lateTicks: 0,
+      reason: 'the frame cap is switched OFF for this session (?nocap=1)',
+    };
+    return getPacingState();
+  }
+
   // The shim has to be installed before anything can be measured.
   // If it is not, the engine is running on the native rAF and there is
   // nothing to read -- which is what produced a "0 Hz display" in an
@@ -360,21 +579,25 @@ export async function applyFrameCap(
 
   await new Promise((r) => setTimeout(r, observeMs));
 
-  const { displayHz, engineWorkMs } = readMeasurement();
+  const { displayHz, engineWorkMs, lateTicks } = readMeasurement();
   const sustainable = sustainableFps(engineWorkMs);
 
   // If the window was empty, say so plainly. "0 fps against a 0 Hz
   // display" reads like a fact about the display; it is actually a
   // fact about the measurement having failed.
   if (intervals.length < 10 || engineWorkMs <= 0) {
-    state = {
-      ...state,
+    core = {
+      ...core,
       displayHz,
       engineWorkMs,
+      lateTicks,
       reason:
         `the measurement window was empty ` +
         `(${intervals.length} ticks, ${stats.size} callbacks seen) -- ` +
-        `the engine may not be running yet; not capping`,
+        `the engine may not be running yet; ` +
+        (everyNth > 1
+          ? `the existing cap (1 frame in ${everyNth}) is left in place`
+          : `not capping`),
     };
     return getPacingState();
   }
@@ -396,13 +619,18 @@ export async function applyFrameCap(
 
   const need = opts.force || shouldCap(displayHz, sustainable);
   if (!need) {
-    state = {
+    // THE GATE COMES OFF HERE. `everyNth` IS the gate, so setting it
+    // to 1 is what stops the engine being offered every second
+    // frame -- and the reported state is derived from it, so "not
+    // capping" cannot leave the engine at half speed while the log
+    // says it is running uncapped.
+    everyNth = 1;
+    core = {
       capFps: 0,
       displayHz,
       engineWorkMs,
       sustainableFps: sustainable,
-      active: false,
-      everyNth: 1,
+      lateTicks,
       reason:
         `the engine sustains ${sustainable.toFixed(0)} fps against a ` +
         `${displayHz.toFixed(0)} Hz display; not capping`,
@@ -418,13 +646,12 @@ export async function applyFrameCap(
   );
   const effective = displayHz / everyNth;
 
-  state = {
+  core = {
     capFps: effective,
     displayHz,
     engineWorkMs,
     sustainableFps: sustainable,
-    active: everyNth > 1,
-    everyNth,
+    lateTicks,
     reason:
       `${cap.reason}; the engine runs 1 frame in ${everyNth} ` +
       `(effective ${effective.toFixed(1)} fps, budget ` +
