@@ -564,6 +564,69 @@ export class Xash3DBridge extends Xash3D {
   }
 
   /**
+   * Put the transport back.
+   *
+   * WHY
+   * ---
+   * The engine keeps running when the WebSocket closes — it simply
+   * stops receiving packets, so the world freezes mid-game. Recovering
+   * from that used to mean reloading the page: re-unpack the 517 MB
+   * archive, re-boot the WASM engine, re-run the handshake. That is a
+   * minute of loading after a blip, and it is the window the server's
+   * connect timeout was waiting on.
+   *
+   * The engine does not need a reload to reconnect. It has its own
+   * `retry` command, which re-runs the handshake against the server it
+   * already knows. All it needs from us is its WebSocket back — the
+   * engine, the unpacked game files and the heap are all still here.
+   *
+   * The old socket's handlers are detached FIRST: closing it would
+   * otherwise fire `onclose`, which reports a disconnect — the very
+   * thing we are recovering from.
+   */
+  async reconnect(): Promise<void> {
+    const open = this.ws;
+    if (open && open.readyState === WebSocket.OPEN) {
+      // The transport is ALIVE — the game server behind it is what went
+      // away (the bridge closes with 4001 while the orchestrator
+      // restarts the instance). Re-opening a healthy socket would be
+      // pointless churn, and the engine's own `retry` is what needs to
+      // run in that case.
+      this.disconnectReported = false;
+      return;
+    }
+    const old = this.ws;
+    if (old) {
+      old.onclose = null;
+      old.onerror = null;
+      old.onmessage = null;
+      try {
+        old.close();
+      } catch {
+        /* already gone */
+      }
+    }
+    this.ws = undefined;
+    // A disconnect that has already been reported must be reportable
+    // again, or the NEXT real drop is silent.
+    this.disconnectReported = false;
+    await this._connect();
+  }
+
+  /**
+   * Is the transport up right now?
+   *
+   * The fast reconnect needs a live socket: the engine's handshake runs
+   * over it. If the socket dies AGAIN while we are waiting for the
+   * engine's banner, no banner can ever arrive — the fast path is over
+   * and the fallback (a page reload, which brings a fresh transport) has
+   * to take over at once.
+   */
+  isTransportOpen(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  /**
    * The stall watchdog.
    *
    * WHY
