@@ -537,6 +537,77 @@ class XashLoader {
   }
 
   /**
+   * True once the engine has run a frame.
+   *
+   * The engine's command pool does not exist before its first frame, and
+   * `Cmd_ExecuteString` before that makes the engine raise a fatal error
+   * of its own (`_Mem_Alloc: pool == NULL`). Anything that talks to the
+   * engine has to ask this first.
+   */
+  private static engineUp = false;
+
+  /** Callbacks waiting for the engine's first frame. */
+  private static engineUpHooks: Array<() => void> = [];
+
+  /** Has the engine run its first frame? */
+  public static isEngineUp(): boolean {
+    return XashLoader.engineUp;
+  }
+
+  /**
+   * Run `fn` once the engine is up — immediately if it already is.
+   *
+   * The session-start work (the buy menu's hidden flag, the first state
+   * request) hangs off this: it has to happen after the first frame and
+   * before the player can die, and "after the first frame" is not a
+   * moment a caller can wait for on its own.
+   */
+  public static onEngineUp(fn: () => void): void {
+    if (XashLoader.engineUp) {
+      fn();
+      return;
+    }
+    XashLoader.engineUpHooks.push(fn);
+  }
+
+  /** Mark the engine as up and run the hooks that were waiting for it. */
+  private static markEngineUp(): void {
+    if (XashLoader.engineUp) return;
+    XashLoader.engineUp = true;
+    const hooks = XashLoader.engineUpHooks;
+    XashLoader.engineUpHooks = [];
+    for (const fn of hooks) {
+      try {
+        fn();
+      } catch (e) {
+        console.warn('[xash] engine-up hook failed:', e);
+      }
+    }
+  }
+
+  /**
+   * Read a file out of the engine's own filesystem.
+   *
+   * The game's files are unpacked into the WASM filesystem at boot, so
+   * this is how the frontend reads the game's OWN data — its
+   * `titles.txt`, for instance, rather than a table of its own.
+   *
+   * `relPath` is relative to the game's base directory (`ts/titles.txt`).
+   */
+  public static readGameFile(relPath: string): string | null {
+    const em = XashLoader.liveInstance?.em;
+    if (!em?.FS) return null;
+    try {
+      const bytes = em.FS.readFile(XASH_BASE_DIR + relPath);
+      return new TextDecoder('utf-8').decode(bytes);
+    } catch (_) {
+      // No such file (or not readable yet): the caller decides what to
+      // do about it.
+      return null;
+    }
+  }
+
+  /**
    * Run an engine console command (no-op if not booted).
    *
    * Returns true when the engine took it. The engine's command system
@@ -1032,7 +1103,7 @@ class XashLoader {
     // wait for that frame or the config's `unbindall` wipes it. The
     // second bind is belt and braces: if the config somehow ran after
     // the first frame, this one is the one that sticks.
-    requestAnimationFrame(() => XashLoader.bindTsKeys(xash));
+    requestAnimationFrame(() => XashLoader.afterFirstFrame(xash));
     setTimeout(() => XashLoader.bindTsKeys(xash), 2000);
     return xash;
   }
@@ -1061,7 +1132,7 @@ class XashLoader {
     // wait for that frame or the config's `unbindall` wipes it. The
     // second bind is belt and braces: if the config somehow ran after
     // the first frame, this one is the one that sticks.
-    requestAnimationFrame(() => XashLoader.bindTsKeys(xash));
+    requestAnimationFrame(() => XashLoader.afterFirstFrame(xash));
     setTimeout(() => XashLoader.bindTsKeys(xash), 2000);
     // D.7.56 — start the TS game-loop pump. The engine's loopback
     // connect never completes in webXash, so its server frame loop
@@ -1147,6 +1218,19 @@ class XashLoader {
     } catch (e) {
       console.warn('[xash] could not bind the TS keys:', e);
     }
+  }
+
+  /**
+   * The engine's first frame.
+   *
+   * Two things are true only after it: the engine has run its config
+   * (so the binds stick), and its command pool exists (so a console
+   * command does not raise a fatal error). The session-start work hangs
+   * off the second one — see `onEngineUp`.
+   */
+  private static afterFirstFrame(xash: Xash3D): void {
+    XashLoader.bindTsKeys(xash);
+    XashLoader.markEngineUp();
   }
 
   public async fetchExtras(): Promise<ArrayBuffer> {
@@ -1249,7 +1333,7 @@ class XashLoader {
       // wait for that frame or the config's `unbindall` wipes it. The
       // second bind is belt and braces: if the config somehow ran after
       // the first frame, this one is the one that sticks.
-      requestAnimationFrame(() => XashLoader.bindTsKeys(xash));
+      requestAnimationFrame(() => XashLoader.afterFirstFrame(xash));
       setTimeout(() => XashLoader.bindTsKeys(xash), 2000);
 
       options.onEndLoading?.();
@@ -1626,6 +1710,15 @@ class XashLoader {
   // live-state bridge without importing the class.
   public exec(cmd: string) {
     XashLoader.exec(cmd);
+  }
+  public isEngineUp(): boolean {
+    return XashLoader.isEngineUp();
+  }
+  public onEngineUp(fn: () => void) {
+    XashLoader.onEngineUp(fn);
+  }
+  public readGameFile(relPath: string): string | null {
+    return XashLoader.readGameFile(relPath);
   }
   public setLiveInstance(inst: Xash3D | Xash3DWebRTC | null) {
     XashLoader.setLiveInstance(inst);
