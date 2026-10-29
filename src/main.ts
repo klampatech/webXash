@@ -28,6 +28,22 @@ installEscapeGate();
 import { installBrowserChordGate } from './services/browser-chord-gate';
 installBrowserChordGate();
 
+// The engine's WebGL context.
+//
+// A canvas keeps the context its FIRST getContext created, so whoever
+// asks first decides the attributes. The fullscreen watchdog below
+// calls getContext to check for a lost context, and it fires on the
+// first resize -- which is while the landing page is up. So the
+// context has to be created HERE, before the watchdog is installed,
+// or the watchdog creates it with the default attributes and the
+// launcher's pre-creation is ignored.
+//
+// This is a no-op on the first load, because the canvas does not exist
+// yet -- the Vue app has not mounted. The loader calls it again once
+// the canvas is there.
+import { prepareEngineContext } from './services/webgl-context';
+prepareEngineContext();
+
 // The fullscreen watchdog: a canvas resize can lose the WebGL context,
 // and a lost context renders black. It only acts when the context is
 // actually lost, so it cannot make a working resize worse.

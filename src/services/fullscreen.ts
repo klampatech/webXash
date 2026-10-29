@@ -98,6 +98,23 @@ export function exitFullscreen(): void {
 function engineContext(): WebGL2RenderingContext | WebGLRenderingContext | null {
   const canvas = document.getElementById('canvas') as HTMLCanvasElement | null;
   if (!canvas) return null;
+
+  // A LOST CONTEXT CAN ONLY HAPPEN AFTER THE ENGINE HAS CREATED ONE.
+  //
+  // And `getContext` CREATES the context if there is not one already,
+  // and a canvas keeps the context its FIRST getContext created. So
+  // calling this before the engine is up would create the context with
+  // the DEFAULT attributes -- and the launcher's pre-creation, with
+  // the attributes it wants, would be silently ignored.
+  //
+  // Measured: the first getContext on the canvas was this one, fired
+  // by the watchdog on a resize while the landing page was up, which
+  // is why `desynchronized` never took effect.
+  //
+  // So: do nothing until the engine is up. That is exactly when a lost
+  // context is possible at all.
+  if (!isRenderResolutionArmed()) return null;
+
   try {
     return (canvas.getContext('webgl2') ||
       canvas.getContext('webgl')) as WebGL2RenderingContext | null;
@@ -158,7 +175,10 @@ export function recoverLostContext(): boolean {
  * Idempotent: installing it twice installs one watcher.
  */
 import XashLoader from '/@/services/xash-loader';
-import { applyRenderResolution } from '/@/services/video-settings.ts';
+import {
+  applyRenderResolution,
+  isRenderResolutionArmed,
+} from '/@/services/video-settings.ts';
 import { logDebug } from '/@/services/debug-log.ts';
 
 export function installFullscreenWatchdog(): () => void {
