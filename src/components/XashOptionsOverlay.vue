@@ -163,6 +163,43 @@
         <p class="opts__note">Third person needs you alive — spawn with a left click first.</p>
       </section>
 
+      <!--
+        THE BUY MENU.
+
+        Two menus, one set of loadouts. 'Classic' is the game's own
+        canvas menu, drawn by the client library. 'Modern' is the DOM
+        panel: it reads the game's own prices, budget and slot count
+        from the port and sends the game's own key presses, so a
+        purchase behaves exactly as it does in the classic menu.
+
+        The saved loadouts are the game's (`tsbuylist.tsa`), so
+        switching never forks what the player has bought.
+      -->
+      <section class="opts__group">
+        <h3 class="opts__legend">Buy menu</h3>
+        <div class="opts__row">
+          <span class="opts__label">Buy menu</span>
+          <div class="opts__switch" role="radiogroup" aria-label="Buy menu style">
+            <button
+              v-for="mode in buyMenuModes"
+              :key="mode"
+              class="opts__switch-btn"
+              :class="{ 'opts__switch-btn--on': buyMenu === mode }"
+              type="button"
+              role="radio"
+              :aria-checked="buyMenu === mode"
+              @click="setBuyMenu(mode)"
+            >
+              {{ mode === 'classic' ? 'Classic' : 'Modern' }}
+            </button>
+          </div>
+        </div>
+        <p class="opts__note">
+          Classic is the game's own canvas menu. Modern is a panel in the browser that reads
+          the game's own prices. Both use the same saved loadouts.
+        </p>
+      </section>
+
       <section class="opts__group">
         <h3 class="opts__legend">Session</h3>
         <button class="opts__btn opts__btn--danger" type="button" @click="quitToWebUi">
@@ -177,11 +214,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue';
+import { ref, watch, nextTick, computed } from 'vue';
+import { storeToRefs } from 'pinia';
+import { useXashStore } from '/@/stores/store.ts';
 import { overlayOpen, closeOverlay } from '/@/services/escape-gate';
 import { readCvar, writeCvar, runCommand } from '/@/services/engine-cvars';
 import { logDebug } from '/@/services/debug-log';
 import { setBridgeSuspended } from '/@/services/keyboard-bridge';
+import { applyBuyMenuMode, type BuyMenuMode } from '/@/services/buy-menu';
 import {
   TS_MODELS,
   applyModel,
@@ -201,6 +241,31 @@ const volume = ref<number | null>(null);
 
 const models = TS_MODELS;
 const nameInput = ref<HTMLInputElement | null>(null);
+
+// The buy menu's style. It lives in the store (and is persisted), but
+// it is NOT a cvar: it is the port's `ts_buy_hide` flag, a client
+// library switch, so it never reaches the launch args.
+const store = useXashStore();
+const { tsConfig } = storeToRefs(store);
+const buyMenuModes: BuyMenuMode[] = ['classic', 'modern'];
+const buyMenu = computed<BuyMenuMode>(() =>
+  tsConfig.value?.buyMenu === 'modern' ? 'modern' : 'classic',
+);
+
+/**
+ * Switch the buy menu.
+ *
+ * The store keeps the choice; the port is told immediately, because a
+ * player who switches to Modern expects the canvas menu to go away
+ * now, not at the next session. The flag is idempotent, so repeating
+ * it is harmless.
+ */
+function setBuyMenu(mode: BuyMenuMode): void {
+  if (!tsConfig.value) return;
+  tsConfig.value.buyMenu = mode;
+  applyBuyMenuMode(mode);
+  logDebug(`[opts] buy menu -> ${mode}`);
+}
 
 /** Load the current values from the engine when the overlay opens. */
 async function refresh() {
@@ -299,7 +364,12 @@ function quitToWebUi() {
   align-items: center;
   justify-content: center;
   background: rgba(1, 10, 4, 0.9);
-  z-index: 30;
+  /* Above the HUD (1000) and the buy panel (1001): the overlay is a
+     MODAL, and the panel can be open when the player reaches for the
+     options (the game opens its own buy menu when the player becomes
+     an observer). The panel's own toggle lives in here, so it has to
+     be reachable. */
+  z-index: 2000;
 
   &__panel {
     width: min(28rem, 92vw);
@@ -520,6 +590,45 @@ function quitToWebUi() {
     font-size: 0.72rem;
     line-height: 1.45;
     color: var(--ts-ink-dim, rgba(220, 235, 210, 0.6));
+  }
+
+  /* The Classic / Modern switch. Two states, so two buttons — the same
+     shape as the character picker above, with the chosen one lit. */
+  &__switch {
+    display: inline-flex;
+    border: 1px solid rgba(0, 255, 65, 0.28);
+  }
+
+  &__switch-btn {
+    background: rgba(0, 0, 0, 0.35);
+    border: none;
+    border-right: 1px solid rgba(0, 255, 65, 0.18);
+    color: var(--ts-ink-muted, #6fa67c);
+    font-family: var(--ts-font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.28rem 0.75rem;
+    cursor: pointer;
+
+    &:last-child {
+      border-right: none;
+    }
+
+    &:hover {
+      color: var(--ts-lime);
+    }
+
+    &:focus-visible {
+      outline: none;
+      border-color: var(--ts-signal);
+      box-shadow: 0 0 0 1px var(--ts-signal);
+    }
+
+    &--on {
+      background: rgba(0, 255, 65, 0.16);
+      color: var(--ts-ink-bright);
+    }
   }
 }
 </style>

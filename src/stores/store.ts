@@ -109,6 +109,16 @@ export const useXashStore = defineStore(
       lastmanstanding: 0,
       // Spectator chat / killfeed rendered in launcher overlay.
       killfeedOverlay: true,
+      // Which buy menu the player wants: the game's own canvas menu
+      // ('classic') or the DOM panel ('modern').
+      //
+      // NOT a cvar. It is a client-library switch — the port's
+      // `ts_buy_hide` flag — so it must never be spliced into the
+      // launch args (see `effectiveLaunchOptions`).
+      //
+      // The default is 'classic', so nobody's experience changes
+      // without them asking for it.
+      buyMenu: 'classic' as 'classic' | 'modern',
     });
 
     const fullScreen = ref(false);
@@ -308,6 +318,15 @@ export const useXashStore = defineStore(
         'browserFullscreen',
         'enableConsole',
         'enableCheats',
+        // The buy menu's style is a player preference, not a launch
+        // option: it has to survive a reload, or the player would have
+        // to choose it again every session.
+        //
+        // Only this one field is persisted. The rest of `tsConfig` is
+        // launch configuration — the launch options screen sets it
+        // fresh each time, and persisting it would silently change
+        // what a launch does.
+        'tsConfig.buyMenu',
         // The render resolution is a per-player preference, not a
         // per-session one: the same display wants the same cap every
         // time, and re-deriving it on every load is how it ends up

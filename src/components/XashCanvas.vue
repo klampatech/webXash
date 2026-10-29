@@ -19,6 +19,15 @@
   -->
   <TSHud v-if="showVueHud" />
   <!--
+    The modern buy menu, when the player asked for it.
+
+    It is its own mount because the HUD above is off by default: the
+    panel is a MENU (it reads the game's own state and sends the
+    game's own keys), not one of the HUD's simulated readouts, so it
+    does not go dark with them.
+  -->
+  <TSHud v-else-if="showModernBuyPanel" buy-panel-only />
+  <!--
     The options overlay: Escape #2 opens it. It is DOM, so the keyboard
     inside it is real DOM keyboard — a text field here types, it does not
     fire a game hotkey.
@@ -61,7 +70,7 @@
   // Dependencies
 
   const store = useXashStore();
-  const { loading, xashCanvas, launching, connectionLost, connectionLostReason } =
+  const { loading, xashCanvas, launching, connectionLost, connectionLostReason, tsConfig } =
     storeToRefs(store);
 
   /**
@@ -148,6 +157,22 @@ const connectingLabel = computed(() => 'Connecting to server');
    */
   const showVueHud =
     new URLSearchParams(window.location.search).get('hud') === 'vue';
+
+  /**
+   * The modern buy menu's own mount.
+   *
+   * The player chooses the menu in the ESC options overlay, and the
+   * choice is persisted, so this is read from the store rather than
+   * from the URL. `?nohud=1` is the isolation switch for the
+   * keyboard: the panel takes keys from the game, so it stays out of
+   * that test too.
+   */
+  const modernBuyMenu = computed(() => tsConfig.value?.buyMenu === 'modern');
+  const hudIsolation =
+    new URLSearchParams(window.location.search).get('nohud') === '1';
+  const showModernBuyPanel = computed(
+    () => modernBuyMenu.value && !hudIsolation,
+  );
 
   /**
    * Focus the canvas and grab pointer lock on first press.
