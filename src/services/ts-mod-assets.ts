@@ -89,51 +89,55 @@ export interface AssetProgress {
 async function fetchManifest(
   bypassCache: boolean,
 ): Promise<{ manifest: TsManifest; baseUrl: string }> {
-  let res: Response;
-  try {
-    res = await fetch(MANIFEST_URL, {
-      cache: bypassCache ? 'no-store' : 'default',
-    });
-  } catch (e) {
-    // Same self-heal as fetchPart: a CDN variant cached without the CORS
-    // header fails opaquely, and a changed cache key gets a fresh copy from
-    // the origin. The manifest is the entry point, so failing here fails
-    // everything.
+  let firstError: unknown = null;
+  // Same shape as fetchPart, and for the same reason: the retry has to
+  // cover the BODY READ, not just the fetch. A reset between the
+  // headers and the last byte of the manifest is the same failure as a
+  // reset between the headers and the last byte of a 64 MiB part, and
+  // it used to escape the retry here too.
+  for (const candidate of [MANIFEST_URL, bustCacheKey(MANIFEST_URL)]) {
     try {
-      res = await fetch(bustCacheKey(MANIFEST_URL));
-      logDebug('[assets] manifest fetch failed, retried with a cache-busting key');
-    } catch {
-      throw new AssetFetchError(
-        `could not reach ${MANIFEST_URL}. Has the archive been split?\n` +
-          '  Run:  node tools/assets/split-tsmod.mjs',
-        e,
+      const res = await fetch(candidate, {
+        cache: bypassCache ? 'no-store' : 'default',
+      });
+      if (res.status === 404) {
+        throw new AssetFetchError(
+          `${MANIFEST_URL} returned 404. The archive has not been split yet.\n` +
+            '  Run:  node tools/assets/split-tsmod.mjs',
+        );
+      }
+      if (!res.ok) {
+        throw new AssetFetchError(`manifest fetch failed (HTTP ${res.status})`);
+      }
+      const m = (await res.json()) as TsManifest;
+      if (!m?.version || !Array.isArray(m.parts) || m.parts.length === 0) {
+        throw new AssetFetchError('manifest is missing version/parts');
+      }
+      // Part URLs are resolved against THIS file, not the document. The
+      // manifest's `prefix` is written relative to itself, so resolving it
+      // against location.href sent requests to /<version>/... instead
+      // of /hl/ts/<version>/... and Vite answered every one with
+      // index.html - 1107 bytes where 67108864 were expected.
+      // Strip any cache-buster before deriving the base URL for part
+      // resolution, so the parts resolve against the manifest's directory and
+      // not against a query string.
+      const manifestUrl = new URL(res.url);
+      manifestUrl.search = '';
+      return { manifest: m, baseUrl: new URL('.', manifestUrl.href).href };
+    } catch (err) {
+      if (err instanceof AssetFetchError) throw err;
+      firstError = firstError ?? err;
+      logDebug(
+        '[assets] manifest fetch failed, retrying with a cache-busting key:',
+        candidate,
       );
     }
   }
-  if (res.status === 404) {
-    throw new AssetFetchError(
-      `${MANIFEST_URL} returned 404. The archive has not been split yet.\n` +
-        '  Run:  node tools/assets/split-tsmod.mjs',
-    );
-  }
-  if (!res.ok) {
-    throw new AssetFetchError(`manifest fetch failed (HTTP ${res.status})`);
-  }
-  const m = (await res.json()) as TsManifest;
-  if (!m?.version || !Array.isArray(m.parts) || m.parts.length === 0) {
-    throw new AssetFetchError('manifest is missing version/parts');
-  }
-  // Part URLs are resolved against THIS file, not the document. The
-  // manifest's `prefix` is written relative to itself, so resolving it
-  // against location.href sent requests to /<version>/... instead
-  // of /hl/ts/<version>/... and Vite answered every one with
-  // index.html - 1107 bytes where 67108864 were expected.
-  // Strip any cache-buster before deriving the base URL for part
-  // resolution, so the parts resolve against the manifest's directory and
-  // not against a query string.
-  const manifestUrl = new URL(res.url);
-  manifestUrl.search = '';
-  return { manifest: m, baseUrl: new URL('.', manifestUrl.href).href };
+  throw new AssetFetchError(
+    `could not reach ${MANIFEST_URL}. Has the archive been split?\n` +
+      '  Run:  node tools/assets/split-tsmod.mjs',
+    firstError,
+  );
 }
 
 /**
@@ -175,43 +179,62 @@ function bustCacheKey(url: string): string {
 }
 
 async function fetchPart(url: string, expectedBytes: number): Promise<ArrayBuffer> {
-  let res: Response;
-  try {
-    res = await fetch(url);
-  } catch (err) {
-    const busted = bustCacheKey(url);
+  let firstError: unknown = null;
+  // The whole operation is retried, and the BODY READ IS INSIDE THE
+  // TRY — that is the fix.
+  //
+  // The retry used to wrap only `fetch()`, which resolves as soon as the
+  // RESPONSE HEADERS arrive. The body then streams in — and for the
+  // archive's 64 MiB parts that is where the time goes and where the
+  // failures happen. A connection reset mid-body rejects
+  // `res.arrayBuffer()` with a raw `TypeError: Failed to fetch`, which
+  // escaped the retry entirely and killed the load with no second
+  // attempt.
+  //
+  // Measured 2026-10-30, on the deploy's browser gate: the archive
+  // download died at 78% with `net::ERR_CONNECTION_RESET`, the engine
+  // never booted, and the gate reported a server that "never answered
+  // the handshake" — a broken client that was really a dropped
+  // download. A player on a flaky connection hits exactly the same
+  // thing, and has since the archive was split.
+  //
+  // A STATUS failure is not a network failure: a different cache key
+  // would not change it, so those are rethrown rather than retried.
+  for (const candidate of [url, bustCacheKey(url)]) {
     try {
-      res = await fetch(busted);
-    } catch {
-      // Throw the ORIGINAL error: a cache-busted retry failing too means the
-      // origin itself is unreachable, and the first error is the honest one.
-      throw new AssetFetchError(
-        `part fetch failed for ${url}: ${(err as Error)?.message || err}`,
+      const res = await fetch(candidate);
+      if (!res.ok) {
+        throw new AssetFetchError(`part fetch failed (HTTP ${res.status}): ${url}`);
+      }
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength !== expectedBytes) {
+        const looksLikeHtml =
+          buf.byteLength < 4096 &&
+          new TextDecoder().decode(buf.slice(0, 64)).trimStart().startsWith('<');
+        throw new AssetFetchError(
+          looksLikeHtml
+            ? `part URL returned an HTML page, not the part: ${url}\n` +
+                '  Expected ' + expectedBytes + ' bytes. The server is falling back to a\n' +
+                '  document for unknown paths - check the manifest prefix resolves\n' +
+                '  against the manifest URL.'
+            : `part ${url} is ${buf.byteLength} bytes, manifest declares ${expectedBytes}`,
+        );
+      }
+      return buf;
+    } catch (err) {
+      if (err instanceof AssetFetchError) throw err;
+      firstError = firstError ?? err;
+      logDebug(
+        '[assets] part fetch failed, retrying with a cache-busting key:',
+        candidate,
       );
     }
-    logDebug(
-      '[assets] part fetch failed, retried with a cache-busting key:',
-      busted,
-    );
   }
-  if (!res.ok) {
-    throw new AssetFetchError(`part fetch failed (HTTP ${res.status}): ${url}`);
-  }
-  const buf = await res.arrayBuffer();
-  if (buf.byteLength !== expectedBytes) {
-    const looksLikeHtml =
-      buf.byteLength < 4096 &&
-      new TextDecoder().decode(buf.slice(0, 64)).trimStart().startsWith('<');
-    throw new AssetFetchError(
-      looksLikeHtml
-        ? `part URL returned an HTML page, not the part: ${url}\n` +
-            '  Expected ' + expectedBytes + ' bytes. The server is falling back to a\n' +
-            '  document for unknown paths - check the manifest prefix resolves\n' +
-            '  against the manifest URL.'
-        : `part ${url} is ${buf.byteLength} bytes, manifest declares ${expectedBytes}`,
-    );
-  }
-  return buf;
+  // Throw the ORIGINAL error: a cache-busted retry failing too means the
+  // origin itself is unreachable, and the first error is the honest one.
+  throw new AssetFetchError(
+    `part fetch failed for ${url}: ${(firstError as Error)?.message || firstError}`,
+  );
 }
 
 /**
