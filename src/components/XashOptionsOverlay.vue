@@ -398,6 +398,11 @@ function quitToWebUi() {
      border, a real 2rem hit area, and the glyph optically centred
      instead of sitting on a text baseline.
 
+     The resting state follows the panel's own idiom (`opts__model`,
+     `opts__switch-btn`): a muted glyph over a faint lime wash, so the
+     2rem footprint is visible without shouting. Hover lifts it to the
+     lime and doubles the wash.
+
      The focus ring is the app's own phosphor ring (the same one
      `opts__input` and `opts__model` use), not the browser default.
      It stays square: the panel is a GoldSrc game panel, and sharp
@@ -410,9 +415,9 @@ function quitToWebUi() {
     min-width: 2rem;
     min-height: 2rem;
     padding: 0;
-    background: none;
+    background: rgba(0, 255, 65, 0.06);
     border: none;
-    color: var(--ts-ink);
+    color: var(--ts-ink-muted);
     font-size: 0.95rem;
     line-height: 1;
     cursor: pointer;
@@ -425,6 +430,22 @@ function quitToWebUi() {
     &:focus-visible {
       outline: none;
       box-shadow: 0 0 0 1px var(--ts-signal);
+
+      /* Forced colours force `box-shadow` to none, so the phosphor
+         ring is gone. Keep an outline, or a keyboard user in Windows
+         High Contrast gets nothing at all. */
+      @media (forced-colors: active) {
+        outline: 2px solid ButtonText;
+        outline-offset: 2px;
+      }
+    }
+
+    /* Same story at rest: forced colours paint no background and no
+       box-shadow, and the border is gone, so the button would have no
+       visible container. The outline is that container. */
+    @media (forced-colors: active) {
+      outline: 2px solid ButtonText;
+      outline-offset: 2px;
     }
   }
 
