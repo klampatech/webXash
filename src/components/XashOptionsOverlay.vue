@@ -113,10 +113,6 @@
             </button>
           </div>
         </div>
-        <p class="opts__note">
-          The server picks the final model from your team's list — it is
-          the one that decides who you spawn as.
-        </p>
       </section>
 
       <section class="opts__group">
@@ -157,12 +153,6 @@
         <button class="opts__btn" type="button" @click="applySettings">Apply</button>
       </section>
 
-      <section class="opts__group">
-        <h3 class="opts__legend">Camera</h3>
-        <button class="opts__btn" type="button" @click="toggleThirdPerson">Toggle third person</button>
-        <p class="opts__note">Third person needs you alive — spawn with a left click first.</p>
-      </section>
-
       <!--
         THE BUY MENU.
 
@@ -194,20 +184,13 @@
             </button>
           </div>
         </div>
-        <p class="opts__note">
-          Classic is the game's own canvas menu. Modern is a panel in the browser that reads
-          the game's own prices. Both use the same saved loadouts.
-        </p>
       </section>
 
       <section class="opts__group">
         <h3 class="opts__legend">Session</h3>
         <button class="opts__btn opts__btn--danger" type="button" @click="quitToWebUi">
-          Quit to web UI
+          Quit
         </button>
-        <p class="opts__note">
-          Leaves the match and returns to the site. You can rejoin from the server list.
-        </p>
       </section>
     </div>
   </div>
@@ -218,7 +201,7 @@ import { ref, watch, nextTick, computed } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useXashStore } from '/@/stores/store.ts';
 import { overlayOpen, closeOverlay } from '/@/services/escape-gate';
-import { readCvar, writeCvar, runCommand } from '/@/services/engine-cvars';
+import { readCvar, writeCvar } from '/@/services/engine-cvars';
 import { logDebug } from '/@/services/debug-log';
 import { setBridgeSuspended } from '/@/services/keyboard-bridge';
 import { applyBuyMenuMode, type BuyMenuMode } from '/@/services/buy-menu';
@@ -315,10 +298,6 @@ function applySettings() {
   if (volume.value !== null) writeCvar('volume', volume.value);
 }
 
-function toggleThirdPerson() {
-  runCommand('thirdperson');
-}
-
 function applyName() {
   const n = name.value.trim();
   if (!n) return;
@@ -412,22 +391,39 @@ function quitToWebUi() {
     color: var(--ts-lime);
   }
 
+  /* The close button.
+
+     It used to carry a 1px border around a small glyph, which made it
+     read as an empty text input rather than a button. So: no resting
+     border, a real 2rem hit area, and the glyph optically centred
+     instead of sitting on a text baseline.
+
+     The focus ring is the app's own phosphor ring (the same one
+     `opts__input` and `opts__model` use), not the browser default.
+     It stays square: the panel is a GoldSrc game panel, and sharp
+     rectangles are its visual language.
+  */
   &__close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2rem;
+    min-height: 2rem;
+    padding: 0;
     background: none;
-    border: 1px solid rgba(0, 255, 65, 0.32);
+    border: none;
     color: var(--ts-ink);
+    font-size: 0.95rem;
+    line-height: 1;
     cursor: pointer;
-    font-size: 0.8rem;
-    padding: 0.1rem 0.4rem;
 
     &:hover {
-      border-color: var(--ts-lime);
+      background: rgba(0, 255, 65, 0.12);
       color: var(--ts-lime);
     }
 
     &:focus-visible {
       outline: none;
-      border-color: var(--ts-signal);
       box-shadow: 0 0 0 1px var(--ts-signal);
     }
   }
@@ -583,13 +579,6 @@ function quitToWebUi() {
         border-color: #ff8b8b;
       }
     }
-  }
-
-  &__note {
-    margin: 0.35rem 0 0;
-    font-size: 0.72rem;
-    line-height: 1.45;
-    color: var(--ts-ink-dim, rgba(220, 235, 210, 0.6));
   }
 
   /* The Classic / Modern switch. Two states, so two buttons — the same

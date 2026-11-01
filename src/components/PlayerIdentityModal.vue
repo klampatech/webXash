@@ -191,17 +191,32 @@ function commit() {
     color: var(--ts-lime);
   }
 
+  /* The close button. Same treatment as the options overlay's
+     `opts__close`: the 1px border made it read as an empty text input
+     rather than a button, so it is borderless, has a real 2rem hit
+     area, and uses the app's own phosphor focus ring. */
   &__close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2rem;
+    min-height: 2rem;
+    padding: 0;
     background: none;
-    border: 1px solid rgba(0, 255, 65, 0.32);
+    border: none;
     color: var(--ts-ink);
+    font-size: 0.95rem;
+    line-height: 1;
     cursor: pointer;
-    font-size: 0.8rem;
-    padding: 0.1rem 0.4rem;
 
     &:hover {
-      border-color: var(--ts-lime);
+      background: rgba(0, 255, 65, 0.12);
       color: var(--ts-lime);
+    }
+
+    &:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 1px var(--ts-signal);
     }
   }
 
