@@ -576,15 +576,16 @@ const attachmentRows = computed(() => rows.value.filter((r) => r.key >= 1 && r.k
 /** The attachment screen's commit. */
 const commitRow = computed(() => rows.value.find((r) => r.key === COMMIT_KEY))
 
-/** The attachments that are on. */
-// The purchase's lines: the attachments that are on.
-//
-// A row the port flagged `swap` is a choice of VERSION, not a line of the purchase: it
-// swaps the gun in the purchase for another of its versions (the akimbo version), so it
-// is not added to the purchase and it is not listed as one of its parts. The gun's own
-// row carries the price once the swap is on.
+/**
+ * The purchase's lines: the priced rows that are on — the attachments and the akimbo
+ * version among them.
+ *
+ * The akimbo version is not a version swap: the game's own rule is that the pair is the
+ * gun bought twice, so the row is one of the purchase's parts and it is listed as one.
+ * The browser never adds anything up — the port's summary carries the total.
+ */
 const selectedAttachments = computed(() =>
-  attachmentRows.value.filter((r) => r.selected && !r.flags.includes('swap')),
+  attachmentRows.value.filter((r) => r.selected),
 )
 
 // ---------------------------------------------------------------------------

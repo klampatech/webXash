@@ -13,13 +13,13 @@
 // THE RAIL: SEVEN ENTRIES, AND TWO DIFFERENT NUMBERS
 // ---------------------------------------------------
 // The rail is the browse aid and it has SEVEN entries: the melee
-// weapons, the pistols, the SMGs, the rifles, the shotguns, the akimbo
-// weapons and the player's accessory. The port keys them 1..7.
+// weapons, the pistols, the SMGs, the rifles, the shotguns and the
+// player's accessory. The port keys them 1..6.
 //
 // The loadout screen's cards are the game's own HUD slots — five of
 // them, plus the accessory — and those are a DIFFERENT set of numbers.
-// The rail's key 5 is the shotguns and the HUD slot 5 is the akimbo
-// weapons; the shotguns and the rifles share the HUD slot 4. So the
+// The rail's key 5 is the shotguns and the HUD slot 5 is the pairs
+// (the akimbos); the shotguns and the rifles share the HUD slot 4. So the
 // fixture keeps the two apart: RAIL below is what the browser sees on
 // the browse screen, and the loadout's cards keep their own labels.
 //
@@ -76,7 +76,8 @@ export type MockState =
   | 'shotguns'
   | 'special'
   | 'akimbo'
-  | 'akimbo-on';
+  | 'akimbo-on'
+  | 'akimbo-bought';
 
 export interface MockOptions {
   /** Which of the three screens to show. */
@@ -163,7 +164,7 @@ const MELEE: MockWeapon[] = [
  * The order is the port's own (the HUD grid column, then the id), which
  * puts the Beretta 92F last — it is in the ninth column of the grid.
  * The Golden Colts are NOT here: they are an akimbo weapon and they
- * live in the rail's Special entry.
+ * live in the HUD slot 5 — the loadout's card 5.
  */
 const PISTOLS: MockWeapon[] = [
   { name: 'Glock-18', cost: 850, slots: 10 },
@@ -334,6 +335,51 @@ const LOADOUT_A: MockSlot[] = [
   { number: 3, label: 'SMGs', weapons: [] },
   { number: 4, label: 'Rifles · Shotguns', weapons: [] },
   { number: 5, label: 'Special Purpose', weapons: [] },
+];
+
+/**
+ * A loadout with an akimbo pair in it.
+ *
+ * The game gives the player the gun AND the pair: the pair is the gun bought twice,
+ * and the server's spawn hands out the gun (in its own HUD slot) and the pair (in the
+ * slot 5). The table agrees the two are the same thing twice — every twin costs and
+ * takes what its base costs and takes — so the two items add up to the $2,500 the
+ * player paid.
+ */
+const LOADOUT_AKIMBO: MockSlot[] = [
+  {
+    number: 1,
+    label: 'Melee weapons',
+    weapons: [{ name: 'Combat Knife', cost: 100, slots: 1 }],
+  },
+  {
+    number: 2,
+    label: 'Pistols',
+    weapons: [
+      {
+        name: 'Five-seveN',
+        cost: 2150,
+        slots: 10,
+        attachments: ['#HUD_Silencer'],
+      },
+      { name: 'Desert Eagle', cost: 1050, slots: 15 },
+    ],
+  },
+  { number: 3, label: 'SMGs', weapons: [] },
+  { number: 4, label: 'Rifles · Shotguns', weapons: [] },
+  {
+    number: 5,
+    label: 'Special Purpose',
+    weapons: [
+      {
+        name: 'Akimbo Five-seveN',
+        cost: 1250,
+        slots: 10,
+        attachments: ['#HUD_Silencer'],
+      },
+    ],
+  },
+  { number: 6, label: 'Player Accessory', weapons: [] },
 ];
 
 /**
@@ -599,7 +645,12 @@ export interface MockScenario {
 
 /** The loadout screen — the mockup's frame 1. */
 function loadoutScenario(state: MockState): MockScenario {
-  const slots = state === 'empty' ? LOADOUT_A.map((s) => ({ ...s, weapons: [] })) : LOADOUT_A;
+  const slots =
+    state === 'empty'
+      ? LOADOUT_A.map((s) => ({ ...s, weapons: [] }))
+      : state === 'akimbo-bought'
+        ? LOADOUT_AKIMBO
+        : LOADOUT_A;
   const low = state === 'low';
   const loadout = low ? LOADOUT_LOW : slots;
   const total = loadout.reduce((n, slot) => n + slot.weapons.reduce((m, w) => m + w.cost, 0), 0);
@@ -788,10 +839,11 @@ function attachScenario(state: MockState): MockScenario {
 /**
  * The attachments screen of a gun that HAS an akimbo twin: the Five-seveN.
  *
- * The akimbo version is a choice about this gun, not a section of its own. The row is
- * priced at what it adds, and the twin costs the same as the gun (the akimbo Five-seveN
- * is $1,250 and so is the Five-seveN), so it adds nothing — and the gun's own row carries
- * the twin's price when the row is on.
+ * The akimbo version is a choice about this gun, not a section of its own. The game's
+ * own rule is what it buys: the pair is the gun bought TWICE — the client sends the gun
+ * twice and the server's spawn turns the second copy into the pair. So the row is priced
+ * at the gun's price again ($1,250), and with the row on the purchase is the gun twice:
+ * $2,500.
  */
 function akimboScenario(state: MockState): MockScenario {
   const on = state === 'akimbo-on';
@@ -799,8 +851,9 @@ function akimboScenario(state: MockState): MockScenario {
     const key = i + 1;
     return `TSBUY row ${key} ${attachment.cost} 0 ${PAGE.OPTIONS} ${keyPrefix(key)} ${attachment.key}`;
   });
-  const gunName = on ? 'Akimbo Five-seveN' : 'Five-seveN';
+  const gunName = 'Five-seveN';
   const gunCost = 1250;
+  const total = on ? gunCost * 2 : gunCost;
   const records = [
     stateRecord({
       open: 1,
@@ -826,9 +879,9 @@ function akimboScenario(state: MockState): MockScenario {
     ...tabRecords(3, 0),
     `TSBUY row 0 ${gunCost} 0 ${PAGE.OPTIONS} - ${gunName}`,
     ...attachments,
-    `TSBUY row 5 1250 ${on ? 'on+swap' : 'swap'} ${PAGE.OPTIONS} 5 #Buy_Akimbo`,
-    `TSBUY row 6 ${gunCost} 0 ${PAGE.OPTIONS} 6 Add to loadout`,
-    `TSBUY sum ${gunCost} ${BUDGET - 6600 - gunCost}`,
+    `TSBUY row 5 1250 ${on ? 'on' : '0'} ${PAGE.OPTIONS} 5 #Buy_Akimbo`,
+    `TSBUY row 6 ${total} 0 ${PAGE.OPTIONS} 6 Add to loadout`,
+    `TSBUY sum ${total} ${BUDGET - 6600 - total}`,
     ...entryRecords(LOADOUT_A),
     'TSBUY end',
   ];
@@ -852,6 +905,8 @@ function labelFor(state: MockState): string {
       return 'the akimbo version';
     case 'akimbo-on':
       return 'the akimbo version, chosen';
+    case 'akimbo-bought':
+      return 'the akimbo pair, bought';
     case 'empty':
       return 'empty slots';
     case 'low':
@@ -893,6 +948,7 @@ export const MOCK_SCENARIOS: MockScenario[] = [
   attachScenario('selected'),
   akimboScenario('akimbo'),
   akimboScenario('akimbo-on'),
+  loadoutScenario('akimbo-bought'),
 ];
 
 /** The scenarios of one screen, in the order the harness lists them. */

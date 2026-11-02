@@ -145,11 +145,10 @@ export const BUY_REMOVE_PAGE = 5;
 /**
  * The flags a row can carry. The port writes `0` for "no flags".
  *
- * `swap` marks a row that is a choice of VERSION rather than a purchase line: it swaps
- * the gun in the purchase for another of its versions (the akimbo version), so it is not
- * one of the purchase's lines and it is not added to it.
+ * `on` is the selected one, `dim` a row that belongs to a parent column, `x` a row that
+ * costs more than the budget allows, and `sep` a header that takes no key.
  */
-const ROW_FLAGS = ['on', 'dim', 'x', 'sep', 'swap'] as const;
+const ROW_FLAGS = ['on', 'dim', 'x', 'sep'] as const;
 
 export type BuyMenuMode = 'classic' | 'modern';
 
