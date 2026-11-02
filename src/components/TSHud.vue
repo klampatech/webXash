@@ -2,98 +2,19 @@
   <!--
     THE BUY PANEL.
 
-    A view over the port's buy-menu state and an input device for it.
-    The numbers (the budget, the slot count, the prices) are the game's
-    — the port prints them — and a click is a key on the port's current
-    page, which is the same `handle_key` the canvas menu runs. The
-    browser computes nothing: it shows what the port says and asks the
-    port to act.
+    The redesigned modern buy menu: a view over the port's buy-menu
+    state and an input device for it. The panel itself lives in
+    TSBuyMenuPanel.vue — this is where it is mounted, and where the
+    pointer lock is released while it is open (the browser delivers
+    every mouse event to the lock target, so the panel's buttons would
+    be unclickable without it).
 
     It is its own layer rather than part of the HUD block below,
     because the HUD's other fields are simulated (see the DEMO banner)
     and the panel has to be usable whether or not that block is on
     screen.
   -->
-  <div
-    v-if="showBuyPanel"
-    class="ts-hud__buy-menu"
-    data-buy-menu
-    @keydown.stop
-    @keyup.stop
-    @keypress.stop
-  >
-    <div class="buy-menu__panel">
-      <header class="buy-menu__head">
-        <h2 class="buy-menu__title">BUY MENU</h2>
-        <span class="buy-menu__page">{{ pageName }}</span>
-      </header>
-
-      <!--
-        The budget bar. Every number here is the port's: the budget,
-        what the config costs (the ammo included, as the canvas's own
-        total counts it) and the slots it takes.
-      -->
-      <div class="buy-menu__budget">
-        <div class="buy-menu__bar">
-          <div class="buy-menu__bar-fill" :style="{ width: budgetPercent + '%' }" />
-        </div>
-        <div class="buy-menu__budget-row">
-          <span class="buy-menu__cell">
-            <span class="buy-menu__cell-label">SPENT</span>
-            <span class="buy-menu__cell-value">${{ spent.toLocaleString() }}</span>
-          </span>
-          <span class="buy-menu__cell">
-            <span class="buy-menu__cell-label">LEFT</span>
-            <span class="buy-menu__cell-value">${{ remaining.toLocaleString() }}</span>
-          </span>
-          <span class="buy-menu__cell">
-            <span class="buy-menu__cell-label">SLOTS</span>
-            <span class="buy-menu__cell-value">{{ slotsUsed }}<template v-if="slotLimit">/{{ slotLimit }}</template></span>
-          </span>
-        </div>
-      </div>
-
-      <!-- The page. The rows are the port's rows, in the port's order. -->
-      <ul v-if="buyState.available" class="buy-menu__rows">
-        <li
-          v-for="(row, i) in buyState.rows"
-          :key="i"
-          class="buy-menu__row"
-          :class="rowClass(row)"
-        >
-          <hr v-if="row.separator" class="buy-menu__sep" />
-          <button
-            v-else
-            class="buy-menu__row-btn"
-            type="button"
-            :disabled="!row.key || row.dim"
-            @click="activate(row)"
-          >
-            <span class="buy-menu__row-key">{{ keyBadge(row) }}</span>
-            <span class="buy-menu__row-label">{{ row.text }}</span>
-            <span class="buy-menu__row-price">{{ row.price ? '$' + row.price.toLocaleString() : '' }}</span>
-          </button>
-        </li>
-      </ul>
-
-      <!--
-        No state yet. The port's commands only exist in a client build
-        that carries them; until one does, the panel says so rather
-        than showing an empty menu that looks broken.
-      -->
-      <div v-else class="buy-menu__notice">
-        <p v-if="buyState.unsupported">
-          This client build has no buy-menu bridge, so the panel has nothing to read. The
-          game's own menu is being used instead.
-        </p>
-        <p v-else>Waiting for the game's buy menu…</p>
-      </div>
-
-      <footer class="buy-menu__foot">
-        Click a row, or press its number · B closes the panel
-      </footer>
-    </div>
-  </div>
+  <TSBuyMenuPanel v-if="showBuyPanel" data-buy-menu @close="closeBuyPanel" />
 
   <!--
     The bridge is not there. The game's own menu still works (the
@@ -225,11 +146,10 @@ import { tsPump } from '/@/services/ts-pump.ts'
 import {
   buyMenuState,
   requestBuyState,
-  sendBuyKey,
   startBuyMenuBridge,
   stopBuyMenuBridge,
-  type BuyRow,
 } from '/@/services/buy-menu.ts'
+import TSBuyMenuPanel from '/@/components/TSBuyMenuPanel.vue'
 
 /**
  * `buyPanelOnly` mounts the panel without the rest of the HUD.
@@ -420,6 +340,17 @@ function toggleBuyMenu(): void {
 }
 
 /**
+ * The panel's own "Close" button.
+ *
+ * The same as pressing B: the port's menu stays open underneath, and
+ * the panel says "not right now" — the same flag the keypress sets.
+ */
+function closeBuyPanel(): void {
+  buyMenuDismissed.value = true
+  syncPointerLock()
+}
+
+/**
  * The panel's keys, taken before the engine sees them.
  *
  * The engine registers its key listener on `window`, so a key pressed
@@ -459,105 +390,13 @@ function onWindowKeyDown(e: KeyboardEvent): void {
     return
   }
 
-  if (!showBuyPanel.value) return
-
-  // The menu's keys: 1..9, "0" (which is key 10, the canvas's "go
-  // back") and "a" (which is key 11 — the canvas draws the tenth
-  // weapon row as "A").
-  let menuKey = 0
-  if (key >= '1' && key <= '9') menuKey = Number(key)
-  else if (key === '0') menuKey = 10
-  else if (key === 'a') menuKey = 11
-  if (!menuKey) return
-
-  e.stopImmediatePropagation()
-  sendBuyKey(menuKey)
+  // The menu's own keys — the digits, "0" and "a" — belong to the
+  // panel now: what a key means depends on which of the three
+  // screens is up, and the panel is the thing that knows. The panel
+  // stops them at its own root (`@keydown.stop`) and, as a belt, in
+  // a capture-phase listener on `window` that runs before this one.
+  // So this handler only has B.
 }
-
-/**
- * A click is a key on the row's own page.
- *
- * The port is the state machine: it knows which page it is on and what
- * each row means. The row carries its own key AND the page that key
- * acts on, so the click sends both and the port does the rest — the
- * same `handle_key` the canvas menu runs.
- *
- * The page matters because the menu draws the columns of the page it
- * is on, and a row of a parent column answers on that column's own
- * page: the canvas's mouse picks the column the click was in. Clicking
- * the main column's "Buy" row while the weapons page is up means "buy",
- * not "pick weapon 2".
- *
- * A dim row is not actionable and sends nothing.
- */
-function activate(row: BuyRow): void {
-  if (!row.key || row.dim) return
-  sendBuyKey(row.key, row.page)
-}
-
-/** The row's state, as the canvas draws it. */
-function rowClass(row: BuyRow): string[] {
-  const classes: string[] = []
-  if (row.selected) classes.push('buy-menu__row--on')
-  if (row.dim) classes.push('buy-menu__row--dim')
-  if (row.unaffordable) classes.push('buy-menu__row--x')
-  if (row.separator) classes.push('buy-menu__row--sep')
-  return classes
-}
-
-/**
- * The number the canvas draws before the row's label.
- *
- * The port reports it: the key's own prefix ("1".."9", "0" for key 10,
- * "A" for key 11), or the entry's number in the remove column ("10"),
- * which is not a key at all.
- *
- * A row with no number of its own is one whose number is part of the
- * title (the saved slots, whose title carries the slot number), so the
- * key's own prefix is the number there.
- */
-function keyBadge(row: BuyRow): string {
-  if (row.number) return row.number
-  if (row.key >= 1 && row.key <= 9) return String(row.key)
-  if (row.key === 10) return '0'
-  if (row.key === 11) return 'A'
-  return ''
-}
-
-/** What the config costs, the ammo included — the canvas's own total. */
-const spent = computed(() => buyState.total + buyState.ammoSpend)
-
-/** What is left of the budget. */
-const remaining = computed(() => buyState.budget - spent.value)
-
-/** The budget bar, as a percentage of the budget. */
-const budgetPercent = computed(() => {
-  if (!buyState.budget) return 0
-  return Math.max(0, Math.min(100, (spent.value / buyState.budget) * 100))
-})
-
-/** The inventory slots the config takes. */
-const slotsUsed = computed(() => buyState.slots)
-
-/**
- * The slot limit, if the port reported one.
- *
- * The port's state record carries the slots USED, not the limit, and
- * the limit belongs to the port (a ruleset can change it), so the panel
- * does not invent one: it shows the limit only when the port says what
- * it is.
- */
-const slotLimit = computed(() => {
-  const raw = buyState.raw
-  for (const name of ['slot_limit', 'slots_limit', 'max_slots', 'slot_total']) {
-    const value = Number(raw[name])
-    if (Number.isFinite(value) && value > 0) return value
-  }
-  return 0
-})
-
-/** The page the port is on, as the panel's header names it. */
-const pageName = computed(() => buyState.pageName)
 
 // The port's menu closed: the next time it opens, the panel shows again.
 watch(() => buyState.open, (open) => {
@@ -923,12 +762,11 @@ onUnmounted(() => {
   color: rgba(255,215,110,0.6);
 }
 
-/* The modern buy panel.
+/* The layer the bridge notice lives in.
 
-   Its own layer, above the HUD: the HUD's other fields are simulated
-   (see the DEMO banner) and the panel has to be usable with or
-   without them. It sits at the LEFT, where the canvas menu's category
-   column sits, so the two read as one menu in two skins. */
+   The panel itself is its own component (TSBuyMenuPanel.vue) with its
+   own layer; this one is only here for the notice that says the
+   bridge is missing. */
 .ts-hud__buy-menu {
   position: absolute;
   inset: 0;
@@ -944,172 +782,6 @@ onUnmounted(() => {
   text-shadow: 1px 1px 2px rgba(0,0,0,0.85);
 }
 
-.buy-menu__panel {
-  pointer-events: auto;
-  width: 340px;
-  max-width: calc(100vw - 48px);
-  max-height: 88vh;
-  overflow-y: auto;
-  background: linear-gradient(180deg, rgba(38,24,0,0.96) 0%, rgba(16,9,0,0.96) 100%);
-  border: 1px solid rgba(190,140,40,0.8);
-  box-shadow: 0 10px 40px rgba(0,0,0,0.85);
-}
-
-.buy-menu__head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px 14px 8px;
-  border-bottom: 1px solid rgba(190,140,40,0.45);
-}
-.buy-menu__title {
-  margin: 0;
-  font-size: 14px;
-  letter-spacing: 3px;
-  color: #ffd76e;
-}
-.buy-menu__page {
-  font-size: 11px;
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
-  color: rgba(255,215,110,0.65);
-}
-
-/* The budget bar. The numbers in it are the port's. */
-.buy-menu__budget {
-  padding: 10px 14px 6px;
-}
-.buy-menu__bar {
-  height: 6px;
-  background: rgba(0,0,0,0.6);
-  border: 1px solid rgba(190,140,40,0.35);
-}
-.buy-menu__bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, rgba(190,140,40,0.9), rgba(255,215,110,0.95));
-  transition: width 0.15s linear;
-}
-.buy-menu__budget-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 8px;
-}
-.buy-menu__cell {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.buy-menu__cell-label {
-  font-size: 9px;
-  letter-spacing: 1.5px;
-  color: rgba(255,215,110,0.5);
-}
-.buy-menu__cell-value {
-  font-size: 15px;
-  font-weight: 700;
-  color: #ffd76e;
-  font-variant-numeric: tabular-nums;
-}
-
-/* The rows: the port's rows, in the port's order. */
-.buy-menu__rows {
-  list-style: none;
-  margin: 4px 0 0;
-  padding: 0 8px 8px;
-}
-.buy-menu__row {
-  margin: 0;
-}
-.buy-menu__row-btn {
-  display: grid;
-  grid-template-columns: 22px 1fr auto;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 6px 8px;
-  background: transparent;
-  border: 1px solid transparent;
-  color: #f4e3b0;
-  font-family: inherit;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-.buy-menu__row-btn:hover:not(:disabled) {
-  background: rgba(190,140,40,0.16);
-  border-color: rgba(190,140,40,0.4);
-}
-.buy-menu__row-btn:focus-visible {
-  outline: none;
-  border-color: #ffd76e;
-}
-.buy-menu__row-key {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  background: rgba(190,140,40,0.25);
-  border: 1px solid rgba(190,140,40,0.5);
-  color: #ffd76e;
-  font-size: 11px;
-  font-weight: 700;
-}
-.buy-menu__row-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.buy-menu__row-price {
-  color: #ffd76e;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-/* The canvas's own row states, drawn the same way. */
-.buy-menu__row--on .buy-menu__row-btn {
-  background: rgba(190,140,40,0.28);
-  border-color: rgba(255,215,110,0.6);
-}
-.buy-menu__row--on .buy-menu__row-label {
-  color: #fff3d0;
-}
-.buy-menu__row--x .buy-menu__row-label,
-.buy-menu__row--x .buy-menu__row-price {
-  text-decoration: line-through;
-  color: #ff6b3a;
-}
-.buy-menu__row--dim .buy-menu__row-btn {
-  opacity: 0.45;
-  cursor: default;
-}
-.buy-menu__sep {
-  border: none;
-  border-top: 1px solid rgba(190,140,40,0.3);
-  margin: 6px 8px;
-}
-
-.buy-menu__notice {
-  padding: 14px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: rgba(255,215,110,0.8);
-}
-.buy-menu__foot {
-  padding: 8px 14px 10px;
-  border-top: 1px solid rgba(190,140,40,0.3);
-  font-size: 10px;
-  letter-spacing: 0.5px;
-  color: rgba(255,215,110,0.5);
-}
-
-/* The notice that the bridge is not there. */
-.ts-hud__buy-menu--notice {
-  align-items: flex-start;
-  padding-top: 64px;
-}
 .buy-menu__notice-panel {
   pointer-events: auto;
   width: 340px;

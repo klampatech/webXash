@@ -18,7 +18,8 @@
 //   - the frontend's only write path is a key: `ts_buy_key <n> [<page>]`,
 //     which runs the same `BuyMenu::handle_key` the canvas menu runs.
 //
-// The frontend never computes a loadout, never sends `tkw`/`tki`/`tka`,
+// The frontend never computes a loadout, never sends the game's own
+// config commands (the three that write a loadout into a config file),
 // and keeps no copy of the slots. The saved loadouts live in the game's
 // own `tsbuylist.tsa`, so the classic menu and this panel can never
 // disagree about what the player bought.
@@ -37,6 +38,65 @@
 // not poll: it listens, and asks for a state once (`ts_buy_state`) when
 // it mounts.
 
+// THE MODERN FLOW
+// ---------------
+// The redesigned buy panel is the port's own buy menu, reorganised by
+// slot. The port grows a second flow for it and prints the same kind
+// of records, plus four new ones:
+//
+//   TSBUY state ... mode=modern screen=loadout slot=2 tab=0 title=...
+//   TSBUY slot 1 11 2 Melee - Grenades - Swords
+//   TSBUY tab 0 Loadout A 1
+//   TSBUY row 1 850 0 2 1 Glock-18
+//   TSBUY short 4 950
+//   TSBUY owned 3 1
+//
+//   - `mode`   is `classic` or `modern`.
+//   - `screen` is `loadout`, `browse` or `attach`.
+//   - `slot`   is the classic weapon slot being browsed (1..5), 0 on
+//              the loadout screen.
+//   - `tab`    is the active loadout tab (the config save slot).
+//   - `slot` records are the slot cards: the slot's number, the
+//              inventory slots its weapons take, how many weapons it
+//              holds and its label. A slot numbered 6 is the player
+//              accessory, which is not one of the five weapon slots.
+//   - `tab` records are the loadout tabs: the tab's index, its label
+//              and whether it is the active one.
+//   - `short` records say how much more money a row needs.
+//   - `owned` records say that a row is already in the loadout.
+//
+// The rules the port owns and the browser never second-guesses:
+//
+//   - The browser sends KEYS and nothing else. A row carries the page
+//     its key acts on, and a click sends the key with that page; the
+//     slot cards have no page of their own, so they send the key to
+//     the port's current page, which is the screen the port is on.
+//   - The port prints the loadout's entries grouped by slot, in slot
+//     order, and each slot record says how many weapons it holds — so
+//     the browser places the entries by counting, and knows nothing
+//     about which slot a weapon belongs to.
+//   - "Need $X more" is the port's number (the `short` record), never
+//     the browser's subtraction.
+//   - The browser adds up the prices of the pending purchase for the
+//     attachment screen's total — it does not decide what is in the
+//     loadout, and it does not decide whether a purchase is allowed.
+
+// THE MODERN FLOW'S KEYS
+// ----------------------
+// The screen changes what a key means, so the screen's title and
+// breadcrumb are always on screen. The port implements these:
+//
+//   loadout   1-5 open that slot · 6 the player accessory · R random
+//             · X clear (which asks for a confirmation) · Enter
+//             deploys, which with apply-on-purchase is the port's
+//             close action (key 10).
+//   browse    1-9 and A pick the weapon · 0 goes back to the loadout.
+//   attach    1-5 toggle the attachments · Enter adds the gun and its
+//             attachments to the loadout.
+//
+// The rows carry their own keys and pages, so a click never needs this
+// table; the table is what a TYPED key means.
+
 import { reactive } from 'vue';
 import XashLoader from '/@/services/xash-loader';
 import { useXashStore } from '/@/stores/store.ts';
@@ -49,6 +109,40 @@ const PREFIX = 'TSBUY ';
 const ROW_FLAGS = ['on', 'dim', 'x', 'sep'] as const;
 
 export type BuyMenuMode = 'classic' | 'modern';
+
+/** Which screen of the modern flow the port is on. */
+export type BuyMenuScreen = 'loadout' | 'browse' | 'attach';
+
+/**
+ * One of the port's slot cards.
+ *
+ * The classic weapon slots are 1 (melee, grenades, swords), 2
+ * (pistols), 3 (SMGs), 4 (rifles and shotguns) and 5 (the akimbo
+ * weapons) — the HUD grid column of the weapon table. Slot 6 is the
+ * player accessory, which is not one of the five.
+ */
+export interface BuySlotInfo {
+  /** The slot's number: 1..5 for the weapon slots, 6 for the accessory. */
+  number: number;
+  /** The inventory slots the slot's weapons take. */
+  slots: number;
+  /** How many weapons the slot holds. */
+  weapons: number;
+  /** The label as the port printed it. */
+  label: string;
+  /** The label, resolved through the game's own titles. */
+  text: string;
+}
+
+/** One of the port's loadout tabs — the config save slots. */
+export interface BuyTabInfo {
+  /** The tab's index. */
+  index: number;
+  /** The tab's label, as the port printed it. */
+  label: string;
+  /** The tab is the live one. */
+  active: boolean;
+}
 
 export interface BuyRow {
   /** The key this row answers to (1..11). 0 = the row takes no key. */
@@ -123,6 +217,13 @@ export interface BuyMenuState {
   total: number;
   /** The inventory slots the current config takes. */
   slots: number;
+  /**
+   * The size of the slot pool, if the port reported it.
+   *
+   * The pool is the game's own (81 slots), and a ruleset can change
+   * it, so the panel shows a limit only when the port says what it is.
+   */
+  slotLimit: number;
   /** What the ammo fill spent. */
   ammoSpend: number;
   /** The config differs from the last one used. */
@@ -141,6 +242,34 @@ export interface BuyMenuState {
   rows: BuyRow[];
   /** The config's entries. */
   entries: BuyEntry[];
+  /**
+   * The flow the port is in: the game's own menu, or the modern
+   * loadout flow the redesigned panel draws.
+   */
+  mode: BuyMenuMode;
+  /** Which screen of the modern flow the port is on. */
+  screen: BuyMenuScreen;
+  /**
+   * The classic weapon slot the port is browsing (1..5). 0 on the
+   * loadout screen.
+   */
+  slot: number;
+  /** The active loadout tab — the config save slot. */
+  tab: number;
+  /** The screen's title, as the port printed it. */
+  screenTitle: string;
+  /** The slot cards: the port's slots and what is in them. */
+  slotInfos: BuySlotInfo[];
+  /** The loadout tabs. */
+  tabs: BuyTabInfo[];
+  /**
+   * The rows that need more money: the row's key, and how much more.
+   *
+   * The port's number, not the browser's subtraction.
+   */
+  shortfalls: Record<number, number>;
+  /** The rows that are already in the loadout: the row's key. */
+  owned: Record<number, boolean>;
   /** Every key=value the port printed, including ones this file does not know. */
   raw: Record<string, string>;
   /** When the state arrived (ms since the epoch). */
@@ -158,6 +287,7 @@ function emptyState(): BuyMenuState {
     budget: 0,
     total: 0,
     slots: 0,
+    slotLimit: 0,
     ammoSpend: 0,
     newConfig: false,
     category: 0,
@@ -167,6 +297,15 @@ function emptyState(): BuyMenuState {
     pageName: '',
     rows: [],
     entries: [],
+    mode: 'classic',
+    screen: 'loadout',
+    slot: 0,
+    tab: 0,
+    screenTitle: '',
+    slotInfos: [],
+    tabs: [],
+    shortfalls: {},
+    owned: {},
     raw: {},
     updatedAt: 0,
   };
@@ -395,10 +534,23 @@ interface Dump {
   pageTitle: string;
   rows: BuyRow[];
   entries: BuyEntry[];
+  slotInfos: BuySlotInfo[];
+  tabs: BuyTabInfo[];
+  shortfalls: Record<number, number>;
+  owned: Record<number, boolean>;
 }
 
 function newDump(): Dump {
-  return { raw: {}, pageTitle: '', rows: [], entries: [] };
+  return {
+    raw: {},
+    pageTitle: '',
+    rows: [],
+    entries: [],
+    slotInfos: [],
+    tabs: [],
+    shortfalls: {},
+    owned: {},
+  };
 }
 
 let pendingDump: Dump | null = null;
@@ -532,6 +684,52 @@ function onEngineLine(rawLine: string): void {
       });
       break;
     }
+    case 'slot': {
+      if (!pendingDump) pendingDump = newDump();
+      // `slot <number> <slots> <weapons> <label>` — the label is the
+      // rest of the line (it holds spaces: "Melee - Grenades - Swords").
+      const parts = rest.split(/\s+/);
+      const label = parts.slice(3).join(' ');
+      pendingDump.slotInfos.push({
+        number: toNumber(parts[0]),
+        slots: toNumber(parts[1]),
+        weapons: toNumber(parts[2]),
+        label,
+        text: resolveBuyLabel(label),
+      });
+      break;
+    }
+    case 'tab': {
+      if (!pendingDump) pendingDump = newDump();
+      // `tab <index> <label> <active>` — the label holds spaces ("Loadout
+      // A"), so the active flag is the LAST token and the label is
+      // everything between the index and it.
+      const parts = rest.split(/\s+/);
+      const index = toNumber(parts[0]);
+      let labelParts = parts.slice(1);
+      let active = false;
+      const last = labelParts[labelParts.length - 1];
+      if (last === '0' || last === '1') {
+        active = last === '1';
+        labelParts = labelParts.slice(0, -1);
+      }
+      pendingDump.tabs.push({ index, label: labelParts.join(' '), active });
+      break;
+    }
+    case 'short': {
+      if (!pendingDump) pendingDump = newDump();
+      // `short <key> <amount>` — how much more money the row needs.
+      const parts = rest.split(/\s+/);
+      pendingDump.shortfalls[toNumber(parts[0])] = toNumber(parts[1]);
+      break;
+    }
+    case 'owned': {
+      if (!pendingDump) pendingDump = newDump();
+      // `owned <key> <flag>` — the row is already in the loadout.
+      const parts = rest.split(/\s+/);
+      pendingDump.owned[toNumber(parts[0])] = parts[1] === undefined ? true : toBool(parts[1]);
+      break;
+    }
     case 'end': {
       commitDump();
       break;
@@ -558,6 +756,7 @@ function commitDump(): void {
   buyMenuState.budget = toNumber(raw.budget);
   buyMenuState.total = toNumber(raw.total);
   buyMenuState.slots = toNumber(raw.slots);
+  buyMenuState.slotLimit = slotLimitFrom(raw);
   buyMenuState.ammoSpend = toNumber(raw.ammo_spend ?? raw.ammo);
   buyMenuState.newConfig = toBool(raw.new);
   buyMenuState.category = toNumber(raw.cat ?? raw.category);
@@ -568,8 +767,68 @@ function commitDump(): void {
   buyMenuState.pageName = buyPageName(dump.pageTitle, buyMenuState.pageTitle);
   buyMenuState.rows = dump.rows;
   buyMenuState.entries = dump.entries;
+  buyMenuState.mode = raw.mode === 'modern' ? 'modern' : 'classic';
+  buyMenuState.screen = parseScreen(raw.screen);
+  buyMenuState.slot = toNumber(raw.slot);
+  buyMenuState.tab = toNumber(raw.tab);
+  // The modern flow names its screens itself; the classic flow does
+  // not, and then the page's title is the screen's title.
+  buyMenuState.screenTitle = raw.title
+    ? resolveBuyLabel(raw.title)
+    : buyMenuState.pageTitle;
+  buyMenuState.slotInfos = dump.slotInfos;
+  buyMenuState.tabs = dump.tabs;
+  buyMenuState.shortfalls = dump.shortfalls;
+  buyMenuState.owned = dump.owned;
   buyMenuState.raw = raw;
   buyMenuState.updatedAt = Date.now();
+}
+
+/**
+ * Feed the port's records in from outside the engine's stdout.
+ *
+ * This is the SAME handler the live bridge uses: the stdout reader
+ * calls `onEngineLine` with every line the engine prints, and so does
+ * this. The dev harness (services/buy-menu.mock.ts) feeds it the
+ * port's own record format, so the harness exercises the real parser
+ * rather than a parallel fake of it.
+ */
+export function feedBuyMenuRecord(line: string): void {
+  onEngineLine(line);
+}
+
+/** Feed a set of records in, in order. */
+export function feedBuyMenuRecords(lines: string[]): void {
+  for (const line of lines) onEngineLine(line);
+}
+
+/**
+ * The modern flow's screen.
+ *
+ * The port names it; a state that does not (the classic flow) is the
+ * loadout screen, which is the one the classic menu's own page is a
+ * part of.
+ */
+function parseScreen(raw: string | undefined): BuyMenuScreen {
+  const value = (raw ?? '').trim().toLowerCase();
+  if (value === 'browse' || value === 'attach' || value === 'loadout') return value;
+  return 'loadout';
+}
+
+/**
+ * The size of the slot pool, if the port reported one.
+ *
+ * The port's state record carries the slots USED, not the limit, and
+ * the limit belongs to the port (a ruleset can change it), so the
+ * panel does not invent one: it shows the limit only when the port
+ * says what it is.
+ */
+function slotLimitFrom(raw: Record<string, string>): number {
+  for (const name of ['slot_limit', 'slots_limit', 'max_slots', 'slot_total']) {
+    const value = Number(raw[name]);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return 0;
 }
 
 // ---------------------------------------------------------------------------

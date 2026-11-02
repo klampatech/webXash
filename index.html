@@ -41,11 +41,18 @@
       Anton for display, Space Grotesk for body, JetBrains Mono for the
       technical readouts. This is the SHELL only — the game keeps TS's
       own bitmap fonts, which we do not ship and do not restyle.
+
+      Barlow Condensed and Inter are the BUY PANEL's fonts: the
+      redesign's headings are Barlow Condensed (letter-spaced) and its
+      UI text is Inter. The design's own instruction is to keep the
+      layout and swap the fonts if they cannot be loaded, so the
+      panel's fallbacks are the system fonts and nothing depends on
+      these two arriving.
     -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Anton&family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Anton&family=Barlow+Condensed:wght@600;700&family=Inter:wght@400;500;600&family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@500&display=swap"
       rel="stylesheet"
     />
 
