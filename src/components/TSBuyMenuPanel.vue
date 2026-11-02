@@ -212,7 +212,6 @@
             >
               <b class="bm__rail-num">{{ rail.key }}</b>{{ rail.text }}
             </button>
-            <p class="bm__hint">Switch categories without going back. No stacked menus.</p>
           </aside>
 
           <!-- the weapons, in two columns, keyed 1–9 then A -->
@@ -340,7 +339,7 @@
           </div>
         </template>
         <template v-else>
-          <span class="bm__hint">{{ footHint }}</span>
+          <span v-if="footHint" class="bm__hint">{{ footHint }}</span>
           <div class="bm__foot-actions">
             <button
               v-if="screen === 'loadout'"
@@ -753,14 +752,16 @@ const crumb = computed(() => {
   return bits.join(' · ')
 })
 
+/**
+ * The footer's hint.
+ *
+ * The modern flow says nothing here. The panel used to explain itself in its footer —
+ * how the categories work, what the budget buys, what closing the panel does — and it
+ * read like a rule the player had to learn before they could use the menu. The screen
+ * shows the answer instead of describing it.
+ */
 const footHint = computed(() => {
   if (!modern.value) return 'Click a row, or press its number · B closes the panel'
-  if (screen.value === 'loadout') return 'Closing keeps your loadout. Nothing to confirm.'
-  if (screen.value === 'browse')
-    return 'Add as many as your budget allows. Pick a gun to choose attachments first.'
-  // The attachments screen says nothing here. The panel used to explain the game's
-  // buying order in the footer, and it read like a rule the player had to learn; the
-  // screen shows the order instead of describing it.
   return ''
 })
 
