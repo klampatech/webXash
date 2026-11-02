@@ -142,8 +142,14 @@ const PREFIX = 'TSBUY ';
  */
 export const BUY_REMOVE_PAGE = 5;
 
-/** The flags a row can carry. The port writes `0` for "no flags". */
-const ROW_FLAGS = ['on', 'dim', 'x', 'sep'] as const;
+/**
+ * The flags a row can carry. The port writes `0` for "no flags".
+ *
+ * `swap` marks a row that is a choice of VERSION rather than a purchase line: it swaps
+ * the gun in the purchase for another of its versions (the akimbo version), so it is not
+ * one of the purchase's lines and it is not added to it.
+ */
+const ROW_FLAGS = ['on', 'dim', 'x', 'sep', 'swap'] as const;
 
 export type BuyMenuMode = 'classic' | 'modern';
 

@@ -577,7 +577,15 @@ const attachmentRows = computed(() => rows.value.filter((r) => r.key >= 1 && r.k
 const commitRow = computed(() => rows.value.find((r) => r.key === COMMIT_KEY))
 
 /** The attachments that are on. */
-const selectedAttachments = computed(() => attachmentRows.value.filter((r) => r.selected))
+// The purchase's lines: the attachments that are on.
+//
+// A row the port flagged `swap` is a choice of VERSION, not a line of the purchase: it
+// swaps the gun in the purchase for another of its versions (the akimbo version), so it
+// is not added to the purchase and it is not listed as one of its parts. The gun's own
+// row carries the price once the swap is on.
+const selectedAttachments = computed(() =>
+  attachmentRows.value.filter((r) => r.selected && !r.flags.includes('swap')),
+)
 
 // ---------------------------------------------------------------------------
 // The money and the slots — all of it the port's
@@ -749,7 +757,10 @@ const footHint = computed(() => {
   if (screen.value === 'loadout') return 'Closing keeps your loadout. Nothing to confirm.'
   if (screen.value === 'browse')
     return 'Add as many as your budget allows. Pick a gun to choose attachments first.'
-  return 'The game buys attachments first and the gun second. The menu hides that order.'
+  // The attachments screen says nothing here. The panel used to explain the game's
+  // buying order in the footer, and it read like a rule the player had to learn; the
+  // screen shows the order instead of describing it.
+  return ''
 })
 
 const backLabel = computed(() =>

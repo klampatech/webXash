@@ -74,7 +74,9 @@ export type MockState =
   | 'smgs'
   | 'rifles'
   | 'shotguns'
-  | 'special';
+  | 'special'
+  | 'akimbo'
+  | 'akimbo-on';
 
 export interface MockOptions {
   /** Which of the three screens to show. */
@@ -116,11 +118,17 @@ const SLOT_LIMIT = 81;
 // ---------------------------------------------------------------------------
 
 /**
- * The rail's seven entries.
+ * The rail's six entries.
  *
- * The port's keys (1..7) and the port's labels, verbatim. These are
+ * The port's keys (1..6) and the port's labels, verbatim. These are
  * NOT the HUD slots: the rail's key 4 is the rifles alone and the HUD
  * slot 4 holds the rifles AND the shotguns.
+ *
+ * The akimbo weapons are NOT a rail entry: a player who wants the
+ * akimbo Berettas is looking at the Berettas, so the akimbo version is
+ * offered on the gun itself, on its attachments screen. The HUD slot 5's
+ * own contents (the akimbo versions and the Golden Colts) are still
+ * reachable — from the loadout's card 5, which is that slot's list.
  */
 const RAIL: Array<{ key: number; label: string }> = [
   { key: 1, label: 'Melee weapons' },
@@ -128,8 +136,7 @@ const RAIL: Array<{ key: number; label: string }> = [
   { key: 3, label: 'SMGs' },
   { key: 4, label: 'Rifles' },
   { key: 5, label: 'Shotguns' },
-  { key: 6, label: 'Special' },
-  { key: 7, label: 'Player Accessory' },
+  { key: 6, label: 'Player Accessory' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -280,6 +287,11 @@ HUD_Flashlight
 {
 Flashlight
 }
+
+Buy_Akimbo
+{
+Buy Akimbo
+}
 `;
 
 // Seed the titles before the first state is parsed, so the very first
@@ -321,7 +333,7 @@ const LOADOUT_A: MockSlot[] = [
   },
   { number: 3, label: 'SMGs', weapons: [] },
   { number: 4, label: 'Rifles · Shotguns', weapons: [] },
-  { number: 5, label: 'Special', weapons: [] },
+  { number: 5, label: 'Special Purpose', weapons: [] },
 ];
 
 /**
@@ -363,7 +375,7 @@ const LOADOUT_LOW: MockSlot[] = [
   },
   {
     number: 5,
-    label: 'Special',
+    label: 'Special Purpose',
     weapons: [{ name: 'Golden Colts', cost: 2600, slots: 1 }],
   },
 ];
@@ -643,13 +655,15 @@ function browseScenario(state: MockState): MockScenario {
           : poor
             ? MELEE
             : PISTOLS;
-  const railKey = rifles ? 4 : shotguns ? 5 : special ? 6 : smgs ? 3 : poor ? 1 : 2;
+  // The HUD slot 5's list (the akimbo versions and the Golden Colts) is not a rail
+  // entry: it is opened from the loadout's card 5, and its key is past the rail's.
+  const railKey = rifles ? 4 : shotguns ? 5 : special ? 7 : smgs ? 3 : poor ? 1 : 2;
   const label = rifles
     ? 'Rifles'
     : shotguns
       ? 'Shotguns'
       : special
-        ? 'Special'
+        ? 'Special Purpose'
         : smgs
           ? 'SMGs'
           : poor
@@ -771,6 +785,56 @@ function attachScenario(state: MockState): MockScenario {
   return { screen: 'attach', state, label: labelFor(state), records };
 }
 
+/**
+ * The attachments screen of a gun that HAS an akimbo twin: the Five-seveN.
+ *
+ * The akimbo version is a choice about this gun, not a section of its own. The row is
+ * priced at what it adds, and the twin costs the same as the gun (the akimbo Five-seveN
+ * is $1,250 and so is the Five-seveN), so it adds nothing — and the gun's own row carries
+ * the twin's price when the row is on.
+ */
+function akimboScenario(state: MockState): MockScenario {
+  const on = state === 'akimbo-on';
+  const attachments = ATTACHMENTS.map((attachment, i) => {
+    const key = i + 1;
+    return `TSBUY row ${key} ${attachment.cost} 0 ${PAGE.OPTIONS} ${keyPrefix(key)} ${attachment.key}`;
+  });
+  const gunName = on ? 'Akimbo Five-seveN' : 'Five-seveN';
+  const gunCost = 1250;
+  const records = [
+    stateRecord({
+      open: 1,
+      hidden: 0,
+      page: PAGE.OPTIONS,
+      budget: BUDGET,
+      total: 6600,
+      slots: 36,
+      ammo_spend: 0,
+      new: 0,
+      cat: 0,
+      pending: 14,
+      att: 0,
+      mode: 'modern',
+      screen: 'attach',
+      slot: 2,
+      tab: 0,
+      slots_in_use: slotsInUse(LOADOUT_A),
+      slot_limit: SLOT_LIMIT,
+    }),
+    `TSBUY page ${PAGE.OPTIONS} ${gunName.toUpperCase()}`,
+    ...slotRecords(LOADOUT_A),
+    ...tabRecords(3, 0),
+    `TSBUY row 0 ${gunCost} 0 ${PAGE.OPTIONS} - ${gunName}`,
+    ...attachments,
+    `TSBUY row 5 1250 ${on ? 'on+swap' : 'swap'} ${PAGE.OPTIONS} 5 #Buy_Akimbo`,
+    `TSBUY row 6 ${gunCost} 0 ${PAGE.OPTIONS} 6 Add to loadout`,
+    `TSBUY sum ${gunCost} ${BUDGET - 6600 - gunCost}`,
+    ...entryRecords(LOADOUT_A),
+    'TSBUY end',
+  ];
+  return { screen: 'attach', state, label: labelFor(state), records };
+}
+
 /** What a state is called, for the harness's buttons. */
 function labelFor(state: MockState): string {
   switch (state) {
@@ -784,6 +848,10 @@ function labelFor(state: MockState): string {
       return "can't afford + shortfall";
     case 'selected':
       return 'selected attachments';
+    case 'akimbo':
+      return 'the akimbo version';
+    case 'akimbo-on':
+      return 'the akimbo version, chosen';
     case 'empty':
       return 'empty slots';
     case 'low':
@@ -823,6 +891,8 @@ export const MOCK_SCENARIOS: MockScenario[] = [
   browseScenario('special'),
   attachScenario('default'),
   attachScenario('selected'),
+  akimboScenario('akimbo'),
+  akimboScenario('akimbo-on'),
 ];
 
 /** The scenarios of one screen, in the order the harness lists them. */
