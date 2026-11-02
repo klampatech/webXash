@@ -300,7 +300,7 @@ seedBuyTitles(MOCK_TITLES);
 const LOADOUT_A: MockSlot[] = [
   {
     number: 1,
-    label: 'Melee · Grenades · Swords',
+    label: 'Melee weapons',
     weapons: [
       { name: 'Combat Knife', cost: 100, slots: 1 },
       { name: 'Katana', cost: 2900, slots: 10 },
@@ -337,7 +337,7 @@ const LOADOUT_A: MockSlot[] = [
 const LOADOUT_LOW: MockSlot[] = [
   {
     number: 1,
-    label: 'Melee · Grenades · Swords',
+    label: 'Melee weapons',
     weapons: [{ name: 'Katana', cost: 2900, slots: 10 }],
   },
   {

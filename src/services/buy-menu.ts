@@ -67,7 +67,7 @@
 // of records, plus four new ones:
 //
 //   TSBUY state ... mode=modern screen=loadout slot=2 tab=0 slot_limit=81 ...
-//   TSBUY slot 1 11 2 Melee - Grenades - Swords
+//   TSBUY slot 1 11 2 Melee weapons
 //   TSBUY tab 0 Loadout A 1
 //   TSBUY row 1 850 0 2 1 Glock-18
 //   TSBUY short 4 950
@@ -860,7 +860,7 @@ function onEngineLine(rawLine: string): void {
     case 'slot': {
       if (!pendingDump) pendingDump = newDump();
       // `slot <number> <slots> <weapons> <label>` — the label is the
-      // rest of the line (it holds spaces: "Melee - Grenades - Swords").
+      // rest of the line (it holds spaces: "Melee weapons").
       const parts = rest.split(/\s+/);
       const label = parts.slice(3).join(' ');
       pendingDump.slotInfos.push({

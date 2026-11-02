@@ -193,10 +193,6 @@
                 <span class="bm__key bm__key--suffix">{{ badge(row) }}</span>
               </button>
             </div>
-            <p class="bm__hint">
-              Press a slot number to browse it. A slot can hold several weapons while budget
-              lasts. Click a weapon to remove it.
-            </p>
           </aside>
         </section>
 
