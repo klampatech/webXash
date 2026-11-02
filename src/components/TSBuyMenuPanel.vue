@@ -35,7 +35,7 @@
   >
     <div class="bm__frame">
       <!-- ============ the header: the screen, the budget ============ -->
-      <header class="bm__head">
+      <header class="bm__head" :class="{ 'bm__head--loadout': screen === 'loadout' }">
         <div class="bm__head-text">
           <h1 class="bm__title">{{ title }}</h1>
           <p class="bm__crumb">{{ crumb }}</p>
@@ -155,10 +155,22 @@
                   </button>
                 </div>
                 <div v-if="slot.weapons" class="bm__items">
-                  <div v-for="entry in weaponsIn(slot)" :key="entry.index" class="bm__item">
+                  <button
+                    v-for="entry in weaponsIn(slot)"
+                    :key="entry.index"
+                    class="bm__item"
+                    type="button"
+                    :aria-label="`Remove ${entry.name}`"
+                    @click="removeEntry(entry)"
+                  >
                     <span class="bm__item-name">{{ entry.name }}</span>
+                    <span v-if="entry.attachments.length" class="bm__item-attachments">
+                      <span v-for="attachment in entry.attachments" :key="attachment" class="bm__chip">
+                        {{ attachment }}
+                      </span>
+                    </span>
                     <span class="bm__item-price">{{ money(entry.cost) }}</span>
-                  </div>
+                  </button>
                 </div>
               </article>
             </div>
@@ -169,7 +181,7 @@
             <p class="bm__label">Also</p>
             <button
               v-if="accessory"
-              class="bm__row"
+              class="bm__row bm__row--accessory"
               type="button"
               @click="openSlot(accessory)"
             >
@@ -184,12 +196,13 @@
                 type="button"
                 @click="activate(row)"
               >
-                <span class="bm__key bm__key--inline">{{ badge(row) }}</span>{{ row.text }}
+                <span class="bm__key">{{ badge(row) }}</span>
+                <span class="bm__action-label">{{ row.text }}</span>
               </button>
             </div>
             <p class="bm__hint">
               Press a slot number to browse it. A slot can hold several weapons while budget
-              lasts.
+              lasts. Click a weapon to remove it.
             </p>
           </aside>
         </section>
@@ -220,6 +233,7 @@
                 :key="row.key"
                 class="bm__row"
                 :class="rowClass(row)"
+                :style="rowStyle(row)"
                 type="button"
                 @click="activate(row)"
               >
@@ -232,17 +246,9 @@
                     money(row.price)
                   }}</span>
                   <span v-if="isOwned(row)" class="bm__row-tag">· Owned</span>
-                </span>
-                <!--
-                  The shortfall gets a line of its own, under the
-                  name. Beside the price it would not fit: a browse
-                  row is 214px wide, and "Katana" plus "$2,900" plus
-                  "Need $950 more" is more than that. The figure is
-                  the port's (TSBUY short), never a subtraction
-                  made here.
-                -->
-                <span v-if="shortfall(row)" class="bm__row-short">
-                  Need {{ money(shortfall(row)!) }} more
+                  <span v-if="shortfall(row)" class="bm__row-short">
+                    Need {{ money(shortfall(row)!) }} more
+                  </span>
                 </span>
               </button>
             </div>
@@ -328,7 +334,9 @@
                 <b>{{ money(purchaseTotal) }}</b>
               </div>
             </div>
-            <p class="bm__hint">After adding: {{ money(remainingAfter) }} left</p>
+            <p v-if="hasPurchaseSummary" class="bm__hint">
+              After adding: {{ money(remainingAfter) }} left
+            </p>
           </aside>
         </section>
       </div>
@@ -384,6 +392,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
+  BUY_REMOVE_PAGE,
   buyMenuState,
   sendBuyKey,
   type BuyEntry,
@@ -498,10 +507,66 @@ const gridRows = computed(() => ownRows.value.filter((r) => r.key !== 0))
  *
  * Two columns, filled down the first and then down the second, so
  * the keys read down the columns: 1-5 on the left, 6-A on the right.
+ *
+ * The rows are placed by hand (see `placement`), because a row
+ * that carries a shortfall needs a band of its own across the whole
+ * list — the price and the amount missing do not fit on one line in
+ * a 214px column.
  */
 const gridStyle = computed(() => ({
-  gridTemplateRows: `repeat(${gridRows.value.length ? Math.ceil(gridRows.value.length / 2) : 1}, auto)`,
+  gridTemplateColumns: '1fr 1fr',
+  gridTemplateRows: `repeat(${placement.value.bands}, auto)`,
 }))
+
+/**
+ * Where every row of the browse list goes.
+ *
+ * The mockup's list is two columns, filled down the first and then
+ * down the second, so the keys read down the columns: 1-5 on the
+ * left, 6-A on the right. A row that cannot be afforded carries the
+ * amount missing, and that has to sit on the price's line — the
+ * mockup draws it that way in its row-states frame.
+ *
+ * "Katana", "$2,900" and "Need $950 more" do not fit on one line in
+ * a 214px column, so such a row takes a band of its own across the
+ * whole list, exactly as the mockup draws it. The rest of the list
+ * keeps the mockup's two columns, and the keys keep their order:
+ * the wide row stays where it falls in the sequence.
+ */
+const placement = computed(() => {
+  const list = gridRows.value
+  const spots: Record<number, { band: number; column: string }> = {}
+  let band = 1
+  let i = 0
+  while (i < list.length) {
+    // The run of ordinary rows before the next wide one.
+    const start = i
+    while (i < list.length && shortfall(list[i]) === undefined) i += 1
+    const run = list.slice(start, i)
+    const tall = Math.max(1, Math.ceil(run.length / 2))
+    run.forEach((row, j) => {
+      spots[row.key] = {
+        band: band + (j % tall),
+        column: j < tall ? '1' : '2',
+      }
+    })
+    band += tall
+    if (i < list.length) {
+      // The row that cannot be afforded: a band of its own.
+      spots[list[i].key] = { band, column: '1 / -1' }
+      i += 1
+      band += 1
+    }
+  }
+  return { bands: Math.max(1, band - 1), spots }
+})
+
+/** Where one row of the browse list sits in the grid. */
+function rowStyle(row: BuyRow): Record<string, string> {
+  const spot = placement.value.spots[row.key]
+  if (!spot) return {}
+  return { gridRow: String(spot.band), gridColumn: spot.column }
+}
 
 /** The attachment screen's chosen weapon: the row that takes no key. */
 const gunRow = computed(() => rows.value.find((r) => r.key === 0))
@@ -560,15 +625,32 @@ const barLabel = computed(() => `${money(spent.value)} spent of ${money(budget.v
 /**
  * The loadout's weapons, in the slot they are in.
  *
- * The port prints the config's entries grouped by slot, in slot
- * order, and each slot record says how many weapons it holds — so
- * the browser places them by counting. It knows nothing about which
- * slot a weapon belongs to: that is the game's rule, and the port's.
+ * The modern entry record carries the entry's classic weapon slot, so
+ * that is exactly what places it. The browser does not derive a slot
+ * from the weapon or from the order of the records.
+ *
+ * The old four-field entry record has no slot. That is the classic
+ * flow's shape, and it keeps the counting fallback below so the
+ * classic menu does not change.
  */
 const loadoutBySlot = computed(() => {
   const out = new Map<number, BuyEntry[]>()
-  let i = 0
   const slots = weaponSlots.value
+  for (const slot of slots) out.set(slot.number, [])
+
+  const entriesWithSlots = state.entries.filter(
+    (entry) => entry.slot >= 1 && entry.slot <= WEAPON_SLOTS,
+  )
+  if (entriesWithSlots.length) {
+    for (const entry of entriesWithSlots) {
+      out.get(entry.slot)?.push(entry)
+    }
+    return out
+  }
+
+  // The classic record shape only. Count the entries into the slots
+  // in the order the classic port printed them.
+  let i = 0
   for (const slot of slots) {
     out.set(slot.number, state.entries.slice(i, i + slot.weapons))
     i += slot.weapons
@@ -648,7 +730,11 @@ const gunPrice = computed(() => gunRow.value?.price ?? 0)
 const gunNote = computed(() => {
   const slot = currentSlot.value
   if (!slot) return ''
-  const others = weaponsIn(slot).map((e) => e.name)
+  const pending = gunName.value.trim().toLowerCase()
+  // The gun being added is not one of the slot's OTHER weapons.
+  const others = weaponsIn(slot)
+    .filter((entry) => entry.name.trim().toLowerCase() !== pending)
+    .map((entry) => entry.name)
   const where = `Slot ${slot.number} (${slot.text})`
   return others.length ? `Added to ${where}, next to ${others.join(', ')}` : `Added to ${where}`
 })
@@ -693,21 +779,18 @@ const backLabel = computed(() =>
 /**
  * What the gun and its attachments cost.
  *
- * The port's number when it gives one (the commit row carries the
- * total), and otherwise the sum of the prices the port printed for
- * the gun and the attachments that are on. Either way the browser
- * only adds up prices it was told: it does not decide what goes in the
- * loadout.
+ * `TSBUY sum` is the port's number. The old commit row's price is the
+ * fallback for a port that has not grown the sum record yet. The
+ * browser does not add the gun and its attachments up itself.
  */
 const purchaseTotal = computed(() => {
-  const commit = commitRow.value
-  if (commit && commit.price > 0) return commit.price
-  const attachments = selectedAttachments.value.reduce((n, row) => n + row.price, 0)
-  return gunPrice.value + attachments
+  if (state.hasPurchaseSummary) return state.pendingTotal
+  return commitRow.value?.price ?? 0
 })
 
-/** What is left of the budget after the purchase. */
-const remainingAfter = computed(() => remaining.value - purchaseTotal.value)
+/** What is left of the budget after the purchase — the port's number. */
+const remainingAfter = computed(() => state.remainingAfterPurchase)
+const hasPurchaseSummary = computed(() => state.hasPurchaseSummary)
 
 // ---------------------------------------------------------------------------
 // The rows
@@ -745,6 +828,8 @@ function rowClass(row: BuyRow): string[] {
   if (row.dim) classes.push('bm__row--dim')
   if (row.unaffordable) classes.push('bm__row--x')
   if (isOwned(row)) classes.push('bm__row--owned')
+  // A row that cannot be afforded carries the amount missing, too.
+  if (shortfall(row) !== undefined) classes.push('bm__row--wide')
   return classes
 }
 
@@ -829,6 +914,18 @@ function openSlot(slot: BuySlotInfo): void {
     return
   }
   send(slot.number)
+}
+
+/**
+ * Remove a weapon from the loadout.
+ *
+ * The entry record carries the key that removes it, and the port's
+ * remove page is where that key acts. The browser still sends only a
+ * key; it never edits a loadout itself.
+ */
+function removeEntry(entry: BuyEntry): void {
+  if (!entry.removeKey) return
+  send(entry.removeKey, BUY_REMOVE_PAGE)
 }
 
 /** Switch the live loadout tab — the port's config save slot. */
@@ -1058,7 +1155,11 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 18px;
-  padding: 28px;
+  /*
+    The border is inside the frame's box, so 27px of padding puts the
+    content 28px from the outside edge — the mockup's geometry.
+  */
+  padding: 27px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -1083,10 +1184,25 @@ watch(
   text-transform: uppercase;
 }
 
+/*
+  The loadout's title is 40px in the mockup. Its height is part of the
+  frame's layout: with the 30px title the five slot cards do not fit
+  above the pinned footer.
+*/
+.bm__head--loadout .bm__title {
+  margin: 4px 0 12px;
+  font-size: 40px;
+  line-height: 1.125;
+}
+
 .bm__crumb {
   margin: 2px 0 0;
   color: var(--muted);
   font-size: 13px;
+}
+
+.bm__head--loadout .bm__crumb {
+  line-height: 1.6;
 }
 
 .bm__budget {
@@ -1278,11 +1394,9 @@ watch(
 .bm__cards {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding-right: 4px;
 }
 
 .bm__card {
@@ -1301,7 +1415,12 @@ watch(
   align-items: stretch;
   gap: 6px;
   padding: 8px 10px;
-  flex: none;
+  /*
+    The mockup's first two cards shrink to make room for all five.
+    Their extra rows are clipped by the next card, while the three
+    empty cards stay one line tall.
+  */
+  flex: 0 1 auto;
 }
 
 .bm__card--slim {
@@ -1366,6 +1485,21 @@ watch(
   background: var(--card-2);
   border: 1px solid transparent;
   border-radius: 8px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bm__item:hover {
+  border-color: var(--border-soft);
+}
+
+.bm__item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .bm__item-name {
@@ -1378,6 +1512,23 @@ watch(
   margin-left: auto;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+
+.bm__item-attachments {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.bm__chip {
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: var(--border);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .bm__num {
@@ -1408,13 +1559,9 @@ watch(
 
 /* ---- the rows ---- */
 .bm__row {
-  /*
-    A grid, not a flex row: a row that cannot afford its weapon
-    needs a second line for the shortfall, and a grid gives it one
-    that starts under the name.
-  */
+  /* A grid, so the name and the price block keep their own columns. */
   display: grid;
-  grid-template-columns: auto minmax(min-content, 1fr) minmax(0, auto);
+  grid-template-columns: auto minmax(min-content, 1fr) minmax(0, 0.9fr);
   align-items: center;
   column-gap: 12px;
   width: 100%;
@@ -1434,6 +1581,17 @@ watch(
 
 .bm__row:hover {
   border-color: var(--border-soft);
+}
+
+/*
+  A row that cannot be afforded carries the amount missing as well as
+  the price, and the two sit on one line: the mockup draws them that
+  way ("$2,900  Need $950 more"). Such a row is a band of its own
+  across the whole list, so the price can have the room it needs
+  instead of a share of the row.
+*/
+.bm__row--wide {
+  grid-template-columns: auto minmax(min-content, 1fr) minmax(0, auto);
 }
 
 .bm__row:focus-visible {
@@ -1476,6 +1634,10 @@ watch(
   overflow-wrap: break-word;
 }
 
+.bm__row--accessory {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
 .bm__row-label--x,
 .bm__row-price--x {
   color: var(--cant);
@@ -1483,23 +1645,19 @@ watch(
 }
 
 /*
-  The price, and the tags that go with it, are a stack on the right.
-
-  They stack rather than sit on one line because the shortfall is
-  long ("· Need $6,050 more") and a row is only 213px wide: on one
-  line the shortfall would squeeze the weapon's name down to "Kat /
-  ana". Stacked, the name keeps its width and the reason for the
-  row's colour stays readable under the price.
-
-  The block may shrink and may not take more than half the row, so a
-  shortfall wraps inside the row instead of running out of it.
+  The price and its state share the price line. The shortfall belongs
+  to the price, never to the weapon's name. A narrow browse row may
+  wrap the price block, but it stays in the price column.
 */
 .bm__row-price {
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 1px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: flex-end;
+  column-gap: 6px;
+  row-gap: 1px;
   color: var(--muted);
   font-weight: 400;
   font-variant-numeric: tabular-nums;
@@ -1517,17 +1675,14 @@ watch(
   color: var(--muted);
 }
 
-/*
-  The shortfall, under the name. Red, because the row is red, and
-  it is not struck through: the price is what is out of reach, this
-  is the reason why.
-*/
+/* The shortfall is on the price line, in the cannot-afford colour. */
 .bm__row-short {
-  grid-column: 2 / -1;
   color: var(--cant);
   font-size: 12px;
   font-weight: 500;
   line-height: 1.35;
+  min-width: 0;
+  text-align: right;
 }
 
 .bm__row-tag--x {
@@ -1563,7 +1718,12 @@ watch(
 .bm__grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-auto-flow: column;
+  /*
+    The rows are placed by hand (the panel knows which row cannot be
+    afforded, and that row needs a band of its own), so the grid's
+    own flow does not decide anything.
+  */
+  grid-auto-flow: row;
   gap: 8px;
   align-content: start;
   overflow-y: auto;
@@ -1613,7 +1773,21 @@ watch(
 
 .bm__ghost--flex {
   flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
   justify-content: center;
+  gap: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.bm__action-label {
+  line-height: 1.2;
+}
+
+.bm__col--rail > .bm__hint {
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .bm__rail-actions {
