@@ -114,8 +114,13 @@
 //             · X clear (which asks for a confirmation) · Enter
 //             deploys, which with apply-on-purchase is the port's
 //             close action (key 10).
-//   browse    1-9 and A pick the weapon · 0 goes back to the loadout.
-//   attach    1-5 toggle the attachments · Enter adds the gun and its
+//   browse    the list's own rows pick the weapon: 1-9 and then 11,
+//             12, ... — the tenth weapon is key 11, because the key
+//             10 is the game's own back key and stays reserved. The
+//             keycap the panel draws is the row's PLACE in the list
+//             (1-9, then A, B, C), and the port prints it. 0 (and the
+//             game's own 10) go back to the loadout.
+//   attach    1-4 toggle the attachments · Enter adds the gun and its
 //             attachments to the loadout.
 //
 // The rows carry their own keys and pages, so a click never needs this
@@ -177,7 +182,14 @@ export interface BuyTabInfo {
 }
 
 export interface BuyRow {
-  /** The key this row answers to (1..11). 0 = the row takes no key. */
+  /**
+   * The key this row answers to. 0 = the row takes no key.
+   *
+   * The classic flow's keys are 1..11. The modern flow's list rows
+   * run past the game's key alphabet: 1-9 and then 11, 12, ... (the
+   * key 10 is the game's own back key and stays reserved), so a long
+   * list's tenth row is key 11.
+   */
   key: number;
   /** The row's price. 0 = no price (a category row). */
   price: number;
@@ -1028,10 +1040,14 @@ function slotLimitFrom(raw: Record<string, string>): number {
  * is what the digit keys do.
  */
 export function sendBuyKey(key: number, page?: number): void {
-  // The modern flow's remove keys run through 16. The classic flow
-  // still uses only its own keys; widening the guard does not change
-  // what the classic menu does with them.
-  if (!Number.isInteger(key) || key < 1 || key > 16) return;
+  // The modern flow's remove keys run through 16, and its list rows
+  // run through the design's letter band: a list's rows are keyed
+  // 1-9 and then 11, 12, ..., and the keycap the panel draws for them
+  // is the row's place in the list (A for the tenth row). The band
+  // ends at "Z", which is key 36. The classic flow still uses only
+  // its own keys; widening the guard does not change what the classic
+  // menu does with them.
+  if (!Number.isInteger(key) || key < 1 || key > 36) return;
   // The engine's command pool does not exist until its first frame, and
   // a command sent before that makes the engine raise a fatal error.
   if (!XashLoader.isEngineUp()) return;

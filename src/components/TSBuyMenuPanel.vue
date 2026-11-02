@@ -808,13 +808,34 @@ const hasPurchaseSummary = computed(() => state.hasPurchaseSummary)
  * The number the row is drawn with.
  *
  * The port reports it: the key's own prefix ("1".."9", "0" for key
- * 10, "A" for key 11), or a number of its own.
+ * 10, "A" for key 11), or a number of its own — the browse list's
+ * rows carry the design's keycaps ("1".."9", then A, B, C).
+ *
+ * A row that carries no number of its own falls back to its key, in
+ * the design's keycap alphabet.
  */
 function badge(row: BuyRow): string {
   if (row.number) return row.number
-  if (row.key >= 1 && row.key <= 9) return String(row.key)
-  if (row.key === 10) return '0'
-  if (row.key === 11) return 'A'
+  return keyBadge(row.key)
+}
+
+/**
+ * The keycap a key draws.
+ *
+ * The design's alphabet: 1–9, then "0" for the game's own back key,
+ * then the letters — "A" for the tenth row, "B" for the eleventh, and
+ * so on.
+ *
+ * The port's browse rows skip the key 10, because it is the game's
+ * own back key and stays reserved, so the tenth weapon of a long list
+ * is the port's key 11 and wears the design's "A". The port prints
+ * that badge itself, so this is the fallback for a row that carries
+ * no number of its own.
+ */
+function keyBadge(key: number): string {
+  if (key >= 1 && key <= 9) return String(key)
+  if (key === 10) return '0'
+  if (key >= 11 && key <= 36) return String.fromCharCode(65 + (key - 11))
   return ''
 }
 

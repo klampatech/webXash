@@ -10,6 +10,15 @@
 // is $850 and 10 slots, a Katana is $2,900 and 10 slots, the M60E3 is
 // $8,000 and 70 slots. The budget is $30,000 and the slot pool is 81.
 //
+// THE LIST'S KEY NUMBERING
+// ------------------------
+// A weapon list's rows are keyed 1–9 and then 11, 12, … — the key 10
+// is the game's own back key and stays reserved — and the number the
+// port prints for a row is the row's PLACE in the list, not its key:
+// the tenth weapon wears the design's "A" and is keyed 11. The
+// fixture prints the port's own records, so it prints both the same
+// way.
+//
 // THE CLASSIC WEAPON SLOT
 // -----------------------
 // The slot a weapon belongs to is `WeaponInfo.hud[0]` — the HUD grid
@@ -185,6 +194,12 @@ const ATTACHMENTS = [
  * same keys, the game's own text, and the same parser — and a title
  * resolves in the harness exactly as it does in the game. This is the
  * mod's `ts/titles.txt`, verbatim.
+ *
+ * `Buy_ResetConfig` is the CLASSIC flow's own reset row: the classic
+ * canvas menu keeps the game's title, and the harness shows the
+ * modern flow only. The modern flow's clear row prints the design's
+ * own word ("Clear"), which is not a title at all — the browser
+ * passes a plain label through unchanged.
  */
 const MOCK_TITLES = `
 Buy_ResetConfig
@@ -310,12 +325,44 @@ const PAGE = {
   LOAD: 7,
 };
 
-/** The number the row is drawn with, for the port's key. */
-function keyNumber(key: number): string {
+/**
+ * The number the port prints for a row keyed in the game's alphabet.
+ *
+ * The port's own key prefix: "1".."9", "0" for the key ten and "A"
+ * for the key eleven. The attachments screen's rows are keyed 1–4, so
+ * they carry their own key as their number.
+ */
+function keyPrefix(key: number): string {
   if (key >= 1 && key <= 9) return String(key);
   if (key === 10) return '0';
   if (key === 11) return 'A';
   return '-';
+}
+
+/**
+ * The key a list's row takes.
+ *
+ * The port's own rule: a list's rows are keyed 1–9 and then 11, 12,
+ * …, because the key 10 is the game's own back key and stays
+ * reserved. The tenth weapon of a long list is therefore key 11.
+ */
+function browseKey(index: number): number {
+  return index < 9 ? index + 1 : index + 2;
+}
+
+/**
+ * The keycap the panel draws for a list's row.
+ *
+ * The port's own badge: the row's PLACE in the list and not its key.
+ * The design's browse list is keyed 1–9 and then A (the tenth row),
+ * and the letters carry on after it — so a slot with a dozen weapons
+ * reads 1…9, A, B, C.
+ */
+function browseBadge(index: number): string {
+  if (index <= 8) return String(index + 1);
+  if (index <= 34) return String.fromCharCode(65 + (index - 9));
+  // Past the alphabet the key is the badge, so the row is still identifiable.
+  return String(browseKey(index));
 }
 
 /**
@@ -418,15 +465,32 @@ function actionRows(): string[] {
     // The port's MAIN page's own reset row is key 4; the panel draws
     // the keycap the design asked for ("X"), which is what the row's
     // number field carries.
-    `TSBUY row 4 0 0 ${PAGE.MAIN} X #Buy_ResetConfig`,
+    //
+    // The LABEL is the design's own word: the port prints "Clear" and
+    // the browser passes a plain label through unchanged, so the row
+    // says what the design says. The classic flow's canvas row keeps
+    // the game's own "#Buy_ResetConfig" — the classic menu must not
+    // change.
+    `TSBUY row 4 0 0 ${PAGE.MAIN} X Clear`,
   ];
 }
 
-/** The rows of a weapon list, keyed 1..9 and then A. */
+/**
+ * The rows of a weapon list.
+ *
+ * The port's own numbering: the rows are keyed 1–9 and then 11, 12,
+ * … — the key 10 is the game's own back key and stays reserved — and
+ * the number the port prints is the row's PLACE in the list, so the
+ * tenth weapon wears the design's "A".
+ *
+ * The flags are keyed by the port's key. The first nine rows keep the
+ * keys they always had (1–9), so a flag on one of them is the same
+ * flag as before.
+ */
 function weaponRows(weapons: MockWeapon[], flags: Record<number, string> = {}): string[] {
   return weapons.map((weapon, i) => {
-    const key = i + 1;
-    const number = keyNumber(key);
+    const key = browseKey(i);
+    const number = browseBadge(i);
     const flag = flags[key] ?? '0';
     return `TSBUY row ${key} ${weapon.cost} ${flag} ${PAGE.WEAPONS} ${number} ${weapon.name}`;
   });
@@ -583,7 +647,7 @@ function attachScenario(state: MockState): MockScenario {
   const attachments = ATTACHMENTS.map((attachment, i) => {
     const key = i + 1;
     const on = selected && key <= 2 ? 'on' : '0';
-    return `TSBUY row ${key} ${attachment.cost} ${on} ${PAGE.OPTIONS} ${keyNumber(key)} ${attachment.key}`;
+    return `TSBUY row ${key} ${attachment.cost} ${on} ${PAGE.OPTIONS} ${keyPrefix(key)} ${attachment.key}`;
   });
   const gunCost = 850;
   const bundle = selected ? gunCost + ATTACHMENTS[0].cost + ATTACHMENTS[1].cost : gunCost;
