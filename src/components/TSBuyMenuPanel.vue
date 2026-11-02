@@ -118,7 +118,6 @@
                   {{ tab.label }}
                 </option>
               </select>
-              <span class="bm__autosave">Saves automatically</span>
             </div>
 
             <div class="bm__cards">
@@ -355,7 +354,7 @@
               <span class="bm__key bm__key--suffix">0</span>
             </button>
             <button v-if="screen === 'loadout'" class="bm__go" type="button" @click="primary()">
-              <span>Fight with Loadout #{{ activeTabSuffix }}</span>
+              <span>Use Loadout {{ activeTabSuffix }}</span>
               <span class="bm__key bm__key--suffix">Enter</span>
             </button>
             <button v-if="screen === 'attach'" class="bm__go" type="button" @click="primary()">
@@ -1550,11 +1549,6 @@ watch(
   margin-right: 10px;
 }
 
-.bm__autosave {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 13px;
-}
 
 /* ---- the cards ---- */
 .bm__cards {
@@ -2028,11 +2022,6 @@ watch(
 .bm__slot-select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
-}
-
-.bm__autosave {
-  color: var(--muted);
-  font-size: 12px;
 }
 
 /*
