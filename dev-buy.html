@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Buy menu — dev harness</title>
+
+    <!--
+      The design's own fonts: Barlow Condensed for the headings,
+      Inter for the UI. The mockup's instruction is to keep the layout
+      and swap the fonts if they cannot be loaded, so nothing here
+      depends on them arriving.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Inter:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #0b0907;
+        color: #f2e9d8;
+        font-family: Inter, system-ui, -apple-system, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      THE DEV HARNESS.
+
+      It mounts the real buy panel with mock data, so the design can be
+      iterated on in a browser without a game session. The mock data is
+      printed in the port's own record format and fed through the real
+      parser, so what is on screen is what the panel would draw in a
+      game.
+
+      The page is DEV ONLY: it is not in the production build's inputs,
+      so it never ships.
+    -->
+    <div id="dev-buy"></div>
+    <script type="module" src="/src/dev-buy.ts"></script>
+  </body>
+</html>

@@ -171,9 +171,16 @@ async function fetchManifest(
  * The value only has to be unique per attempt; it exists to change the CDN
  * cache key so the request misses the cached copy and is served fresh from
  * the origin.
+ *
+ * The URL may be RELATIVE — in development `VITE_ASSET_BASE` is unset, so
+ * the asset base is './' and the manifest URL is './hl/ts/manifest.json'.
+ * `new URL(relative)` throws "Invalid URL", and because the candidate list
+ * is built eagerly the throw happened before the fetch was ever attempted,
+ * so the dev server could not load the game data at all. Resolving against
+ * the document handles both the relative and the absolute form.
  */
 function bustCacheKey(url: string): string {
-  const u = new URL(url);
+  const u = new URL(url, window.location.href);
   u.searchParams.set('cb', Date.now().toString(36));
   return u.href;
 }

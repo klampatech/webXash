@@ -31,6 +31,10 @@ public/hl/valve
 !public/cl_dlls/client_emscripten_wasm32.wasm
 !public/dlls/hl_emscripten_wasm32.wasm
 
+# The deploy script's backups of the client WASM. One per deploy, and
+# they are build artifacts: the one that ships is the tracked .wasm.
+public/cl_dlls/*.bak
+
 # misc
 vite.config.d.ts
 vite.config.js
