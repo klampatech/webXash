@@ -10,6 +10,19 @@
 // is $850 and 10 slots, a Katana is $2,900 and 10 slots, the M60E3 is
 // $8,000 and 70 slots. The budget is $30,000 and the slot pool is 81.
 //
+// THE RAIL: SEVEN ENTRIES, AND TWO DIFFERENT NUMBERS
+// ---------------------------------------------------
+// The rail is the browse aid and it has SEVEN entries: the melee
+// weapons, the pistols, the SMGs, the rifles, the shotguns, the akimbo
+// weapons and the player's accessory. The port keys them 1..7.
+//
+// The loadout screen's cards are the game's own HUD slots — five of
+// them, plus the accessory — and those are a DIFFERENT set of numbers.
+// The rail's key 5 is the shotguns and the HUD slot 5 is the akimbo
+// weapons; the shotguns and the rifles share the HUD slot 4. So the
+// fixture keeps the two apart: RAIL below is what the browser sees on
+// the browse screen, and the loadout's cards keep their own labels.
+//
 // THE LIST'S KEY NUMBERING
 // ------------------------
 // A weapon list's rows are keyed 1–9 and then 11, 12, … — the key 10
@@ -60,6 +73,7 @@ export type MockState =
   | 'tabs'
   | 'smgs'
   | 'rifles'
+  | 'shotguns'
   | 'special';
 
 export interface MockOptions {
@@ -98,43 +112,65 @@ const BUDGET = 30000;
 const SLOT_LIMIT = 81;
 
 // ---------------------------------------------------------------------------
-// The game's own weapon table, by slot
+// The rail: the weapon categories the player browses by
 // ---------------------------------------------------------------------------
 
 /**
- * Slot 1 — melee, grenades and swords.
+ * The rail's seven entries.
  *
- * The order is the game's own (the HUD grid column), except in the
- * low-budget scenario, which follows the mockup's frame 4 so the
- * comparison is direct.
+ * The port's keys (1..7) and the port's labels, verbatim. These are
+ * NOT the HUD slots: the rail's key 4 is the rifles alone and the HUD
+ * slot 4 holds the rifles AND the shotguns.
+ */
+const RAIL: Array<{ key: number; label: string }> = [
+  { key: 1, label: 'Melee weapons' },
+  { key: 2, label: 'Pistols' },
+  { key: 3, label: 'SMGs' },
+  { key: 4, label: 'Rifles' },
+  { key: 5, label: 'Shotguns' },
+  { key: 6, label: 'Special' },
+  { key: 7, label: 'Player Accessory' },
+];
+
+// ---------------------------------------------------------------------------
+// The game's own weapon table, by the rail's entry
+// ---------------------------------------------------------------------------
+
+/**
+ * Rail 1 — the melee weapons.
+ *
+ * The order is the port's own: the HUD grid column, then the id. The
+ * M61 Grenade is in the first column, so it is the first row — which is
+ * how the port lists it, and the grenade is reachable because of it.
  */
 const MELEE: MockWeapon[] = [
+  { name: 'M61 Grenade', cost: 1000, slots: 7 },
+  { name: 'Katana', cost: 2900, slots: 10 },
   { name: 'Combat Knife', cost: 100, slots: 1 },
   { name: 'Seal Knife', cost: 100, slots: 1 },
-  { name: 'Katana', cost: 2900, slots: 10 },
-  { name: 'M61 Grenade', cost: 1000, slots: 7 },
 ];
 
 /**
- * Slot 2 — the pistols.
+ * Rail 2 — the pistols.
  *
- * The order is the design's own list (its §8), which is the order the
- * old screenshot showed. The Golden Colts are NOT here: they are an
- * akimbo weapon and they live in slot 5.
+ * The order is the port's own (the HUD grid column, then the id), which
+ * puts the Beretta 92F last — it is in the ninth column of the grid.
+ * The Golden Colts are NOT here: they are an akimbo weapon and they
+ * live in the rail's Special entry.
  */
 const PISTOLS: MockWeapon[] = [
   { name: 'Glock-18', cost: 850, slots: 10 },
   { name: 'SOCOM-MK23', cost: 700, slots: 10 },
   { name: 'Desert Eagle', cost: 1050, slots: 15 },
   { name: 'Five-seveN', cost: 1250, slots: 10 },
-  { name: 'Beretta 92F', cost: 900, slots: 10 },
   { name: 'Glock-20C', cost: 1300, slots: 10 },
   { name: 'Ruger-MK1', cost: 1500, slots: 5 },
   { name: 'Raging Bull', cost: 2100, slots: 15 },
   { name: 'Contender G2', cost: 1500, slots: 15 },
+  { name: 'Beretta 92F', cost: 900, slots: 10 },
 ];
 
-/** Slot 3 — the SMGs. */
+/** Rail 3 — the SMGs. */
 const SMGS: MockWeapon[] = [
   { name: 'Mini-Uzi', cost: 1300, slots: 20 },
   { name: 'MP5SD', cost: 2500, slots: 25 },
@@ -145,27 +181,40 @@ const SMGS: MockWeapon[] = [
 ];
 
 /**
- * Slot 4 — the rifles and the shotguns.
+ * Rail 4 — the rifles.
  *
- * The M60E3 and the Barrett are here: slot 4, not slot 5.
+ * The port splits the HUD slot 4 by the game's own weapon kind, so
+ * this list holds the rifles and the sniper rifle (the Barrett) and
+ * NOT the shotguns — they are the rail's own entry. The USAS-12 is
+ * here because the game's own `GetWeaponType` calls it a rifle.
  */
 const RIFLES: MockWeapon[] = [
-  { name: 'Benelli M3', cost: 3000, slots: 40 },
-  { name: 'M4A1', cost:  4500, slots: 40 },
+  { name: 'M4A1', cost: 4500, slots: 40 },
   { name: 'AK47', cost: 3000, slots: 40 },
   { name: 'STEYR-AUG', cost: 5000, slots: 30 },
   { name: 'Barrett M82A1', cost: 9000, slots: 70 },
-  { name: 'SPAS-12', cost: 2100, slots: 30 },
-  { name: 'Mossberg 500', cost: 2500, slots: 40 },
   { name: 'M16A4', cost: 2500, slots: 40 },
   { name: 'M60E3', cost: 8000, slots: 70 },
-  { name: 'Sawed-Off', cost: 1900, slots: 20 },
   { name: 'USAS-12', cost: 5100, slots: 40 },
 ];
 
-/** Slot 5 — the akimbo weapons, and the Golden Colts. */
+/**
+ * Rail 5 — the shotguns.
+ *
+ * The rest of the HUD slot 4. The Sawed-Off is here because the game's
+ * own `GetWeaponType` calls it a shotgun (the weapon table's `kind`
+ * says pistol).
+ */
+const SHOTGUNS: MockWeapon[] = [
+  { name: 'Benelli M3', cost: 3000, slots: 40 },
+  { name: 'SPAS-12', cost: 2100, slots: 30 },
+  { name: 'Mossberg 500', cost: 2500, slots: 40 },
+  { name: 'Sawed-off', cost: 1900, slots: 20 },
+];
+
+/** Rail 6 — the akimbo weapons, and the Golden Colts. */
 const SPECIAL: MockWeapon[] = [
-  { name: 'Akimbo Berettas', cost: 900, slots: 10 },
+  { name: 'Akimbo Berrettas', cost: 900, slots: 10 },
   { name: 'Akimbo MK23', cost: 700, slots: 10 },
   { name: 'Akimbo Mini-Uzi', cost: 1300, slots: 20 },
   { name: 'Golden Colts', cost: 2600, slots: 20 },
@@ -244,6 +293,9 @@ seedBuyTitles(MOCK_TITLES);
  * silencer and a lasersight ($2,550) next to a Desert Eagle in slot
  * 2. That is $6,600 of the $30,000 budget — the mockup's frame 1 says
  * "$23,400 left of $30,000" — and 36 of the 81 slots.
+ *
+ * The labels here are the CARDS' labels: the game's own HUD slots.
+ * The rail's labels are the categories' (see RAIL).
  */
 const LOADOUT_A: MockSlot[] = [
   {
@@ -315,6 +367,24 @@ const LOADOUT_LOW: MockSlot[] = [
     weapons: [{ name: 'Golden Colts', cost: 2600, slots: 1 }],
   },
 ];
+
+/**
+ * The loadout of the "poor" scenario — the melee list with a shortfall.
+ *
+ * The mockup's frame 4: the Katana out of reach, the Seal Knife
+ * already owned and the Combat Knife focused.
+ *
+ * The slot 1 entry is the Seal Knife rather than the low scenario's
+ * Katana, because the Katana is the row that must be OUT of reach: a
+ * row the loadout holds is owned, and an owned row is never out of
+ * reach (the port's own rule — buying it would take it off the
+ * loadout, and that costs nothing).
+ */
+const LOADOUT_POOR: MockSlot[] = LOADOUT_LOW.map((slot) =>
+  slot.number === 1
+    ? { ...slot, weapons: [{ name: 'Seal Knife', cost: 100, slots: 1 }] }
+    : slot,
+);
 
 /** The port's pages, as the port numbers them. */
 const PAGE = {
@@ -447,14 +517,17 @@ function tabRecords(count: number, active: number): string[] {
  * The port prints them dimmed, because they answer on the rail's own
  * page — the same way a parent column's row answers on the parent's
  * page in the classic menu.
+ *
+ * Their keys are the RAIL's keys (1..7), which are not the HUD slots:
+ * the rail's key 5 is the shotguns and the HUD slot 5 is the akimbo
+ * weapons. The port prints the rail's rows before the tabs' (both are
+ * dimmed and both use the same keys), so a browser that finds the
+ * rail's rows by their key finds the rail and not a tab.
  */
-function railRows(slots: MockSlot[]): string[] {
-  const out: string[] = [];
-  for (const slot of slots) {
-    out.push(`TSBUY row ${slot.number} 0 dim ${PAGE.CATEGORY} ${slot.number} ${slot.label}`);
-  }
-  out.push(`TSBUY row 6 0 dim ${PAGE.CATEGORY} 6 Player Accessory`);
-  return out;
+function railRows(): string[] {
+  return RAIL.map(
+    (entry) => `TSBUY row ${entry.key} 0 dim ${PAGE.CATEGORY} ${entry.key} ${entry.label}`,
+  );
 }
 
 /** The loadout screen's rows: the accessory, random and clear. */
@@ -462,16 +535,17 @@ function actionRows(): string[] {
   return [
     `TSBUY row 6 0 0 ${PAGE.MAIN} 6 #Buy_PlayerAccessory`,
     `TSBUY row 7 0 0 ${PAGE.MAIN} R #Buy_Random`,
-    // The port's MAIN page's own reset row is key 4; the panel draws
-    // the keycap the design asked for ("X"), which is what the row's
-    // number field carries.
+    // The port's MAIN page's own reset row is key EIGHT now, so that every
+    // card's own digit opens its card (the card 4 digit used to wipe the
+    // loadout instead). The panel draws the keycap the design asked for
+    // ("X"), which is what the row's number field carries.
     //
     // The LABEL is the design's own word: the port prints "Clear" and
     // the browser passes a plain label through unchanged, so the row
     // says what the design says. The classic flow's canvas row keeps
     // the game's own "#Buy_ResetConfig" — the classic menu must not
     // change.
-    `TSBUY row 4 0 0 ${PAGE.MAIN} X Clear`,
+    `TSBUY row 8 0 0 ${PAGE.MAIN} X Clear`,
   ];
 }
 
@@ -551,31 +625,40 @@ function loadoutScenario(state: MockState): MockScenario {
 /** The browse screen — the mockup's frame 2. */
 function browseScenario(state: MockState): MockScenario {
   const rifles = state === 'rifles';
+  const shotguns = state === 'shotguns';
   const special = state === 'special';
   const smgs = state === 'smgs';
+  const poor = state === 'poor';
+
+  // The rail's entry the player is browsing: its key is the RAIL's key,
+  // not the HUD slot, and the page's title is the entry's own name.
   const weapons = rifles
     ? RIFLES
-    : special
-      ? SPECIAL
-      : smgs
-        ? SMGS
-        : state === 'poor'
-          ? MELEE
-          : PISTOLS;
-  const slot = rifles ? 4 : special ? 5 : smgs ? 3 : state === 'poor' ? 1 : 2;
+    : shotguns
+      ? SHOTGUNS
+      : special
+        ? SPECIAL
+        : smgs
+          ? SMGS
+          : poor
+            ? MELEE
+            : PISTOLS;
+  const railKey = rifles ? 4 : shotguns ? 5 : special ? 6 : smgs ? 3 : poor ? 1 : 2;
   const label = rifles
-    ? 'Rifles · Shotguns'
-    : special
-      ? 'Special'
-      : smgs
-        ? 'SMGs'
-        : state === 'poor'
-          ? 'Melee · Grenades · Swords'
-          : 'Pistols';
+    ? 'Rifles'
+    : shotguns
+      ? 'Shotguns'
+      : special
+        ? 'Special'
+        : smgs
+          ? 'SMGs'
+          : poor
+            ? 'Melee weapons'
+            : 'Pistols';
 
   // The low-budget scenarios are the ones with an unaffordable row.
-  const low = state === 'poor' || rifles;
-  const loadout = low ? LOADOUT_LOW : LOADOUT_A;
+  const low = poor || rifles;
+  const loadout = poor ? LOADOUT_POOR : low ? LOADOUT_LOW : LOADOUT_A;
   const total = loadout.reduce((n, s) => n + s.weapons.reduce((m, w) => m + w.cost, 0), 0);
   const used = loadout.reduce((n, s) => n + s.weapons.reduce((m, w) => m + w.slots, 0), 0);
 
@@ -583,22 +666,26 @@ function browseScenario(state: MockState): MockScenario {
   const short: Array<[number, number]> = [];
   let rows: string[];
 
-  if (state === 'poor') {
+  if (poor) {
     // The mockup's frame 4: the melee list with the Katana out of
     // reach, the Seal Knife already owned and the Combat Knife
     // focused. The Katana carries the `x` flag — the port's own way
     // of saying the row cannot be bought — so the row is red, struck
     // through and its keycap dimmed.
-    rows = weaponRows(weapons, { 1: 'on', 3: 'x' });
-    owned.push(2);
-    short.push([3, 950]);
+    //
+    // The rows are the port's own order: the M61 Grenade (1), the
+    // Katana (2), the Combat Knife (3) and the Seal Knife (4).
+    rows = weaponRows(weapons, { 3: 'on' });
+    owned.push(4);
+    short.push([2, 950]);
   } else if (rifles) {
-    // The low budget again, this time in slot 4: the M60E3 needs
-    // $6,050 more. The mockup draws that row in slot 5, which is the
-    // mockup's mistake — the M60E3 is a rifle.
-    rows = weaponRows(weapons, { 9: 'x' });
-    owned.push(5);
-    short.push([9, 6050]);
+    // The low budget again, this time in the rifles: the USAS-12 needs
+    // $3,150 more. The rows the loadout holds — the Barrett and the
+    // M60E3 — are the owned ones, because an owned row is never out of
+    // reach (the port's own rule).
+    rows = weaponRows(weapons, { 7: 'x' });
+    owned.push(4, 6);
+    short.push([7, 3150]);
   } else if (state === 'owned') {
     rows = weaponRows(weapons);
     owned.push(3);
@@ -623,7 +710,7 @@ function browseScenario(state: MockState): MockScenario {
       att: 0,
       mode: 'modern',
       screen: 'browse',
-      slot,
+      slot: railKey,
       tab: 0,
       slots_in_use: slotsInUse(loadout),
       slot_limit: SLOT_LIMIT,
@@ -631,7 +718,7 @@ function browseScenario(state: MockState): MockScenario {
     `TSBUY page ${PAGE.WEAPONS} ${label.toUpperCase()}`,
     ...slotRecords(loadout),
     ...tabRecords(3, 0),
-    ...railRows(loadout),
+    ...railRows(),
     ...rows,
     ...owned.map((key) => `TSBUY owned ${key} 1`),
     ...short.map(([key, amount]) => `TSBUY short ${key} ${amount}`),
@@ -704,11 +791,13 @@ function labelFor(state: MockState): string {
     case 'tabs':
       return 'all nine tabs';
     case 'smgs':
-      return 'SMGs (slot 3)';
+      return 'SMGs (rail 3)';
     case 'rifles':
-      return 'rifles (slot 4)';
+      return 'rifles (rail 4)';
+    case 'shotguns':
+      return 'shotguns (rail 5)';
     case 'special':
-      return 'special (slot 5)';
+      return 'special (rail 6)';
   }
 }
 
@@ -730,6 +819,7 @@ export const MOCK_SCENARIOS: MockScenario[] = [
   browseScenario('poor'),
   browseScenario('smgs'),
   browseScenario('rifles'),
+  browseScenario('shotguns'),
   browseScenario('special'),
   attachScenario('default'),
   attachScenario('selected'),

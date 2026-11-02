@@ -62,6 +62,14 @@
         </button>
         <button
           class="harness__btn"
+          :class="{ 'harness__btn--on': size === 'scaled' }"
+          type="button"
+          @click="size = 'scaled'"
+        >
+          scaled
+        </button>
+        <button
+          class="harness__btn"
           :class="{ 'harness__btn--on': size === 'fill' }"
           type="button"
           @click="size = 'fill'"
@@ -122,8 +130,8 @@ function screenLabel(screen: BuyMenuScreen): string {
 const screen = ref<BuyMenuScreen>('loadout')
 const state = ref<MockState>('default')
 
-/** The frame: the mockup's own size, or the whole window. */
-const size = ref<'frame' | 'fill'>('frame')
+/** The frame: the mockup's own size, scaled to the window, or the whole window. */
+const size = ref<'frame' | 'scaled' | 'fill'>('frame')
 
 /** The keys the panel sent, for the tester to see what it would ask the port. */
 const keys = ref<string[]>([])
@@ -160,7 +168,9 @@ function readUrl(): void {
     if (found) state.value = found.state
   }
   const wantedSize = params.get('size')
-  if (wantedSize === 'frame' || wantedSize === 'fill') size.value = wantedSize
+  if (wantedSize === 'frame' || wantedSize === 'scaled' || wantedSize === 'fill') {
+    size.value = wantedSize
+  }
 }
 
 /**
@@ -317,6 +327,19 @@ onMounted(() => {
 .harness__stage--fill {
   --bm-w: 100%;
   --bm-h: 100%;
+  --bm-pad: 0px;
+}
+
+/*
+  The mockup's frame, SCALED to the window.
+
+  This is what the game does on a big screen: the frame is the
+  mockup's own 960 x 620 and the panel scales it to the viewport, so
+  the type and the spacing grow together. The harness can show it.
+*/
+.harness__stage--scaled {
+  --bm-w: 960px;
+  --bm-h: 620px;
   --bm-pad: 0px;
 }
 

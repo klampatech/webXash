@@ -33,7 +33,7 @@
     @keyup.stop
     @keypress.stop
   >
-    <div class="bm__frame">
+    <div ref="frame" class="bm__frame">
       <!-- ============ the header: the screen, the budget ============ -->
       <header class="bm__head" :class="{ 'bm__head--loadout': screen === 'loadout' }">
         <div class="bm__head-text">
@@ -102,41 +102,23 @@
         <section v-else-if="screen === 'loadout'" class="bm__split">
           <div class="bm__col bm__col--main">
             <!-- The loadout tabs are the config save slots. The port
-                 prints them all; three are visible and the rest are
-                 one click away. -->
-            <div class="bm__tabrow">
-              <button
-                v-for="tab in visibleTabs"
-                :key="tab.index"
-                class="bm__tab"
-                :class="{ 'bm__tab--on': tab.active }"
-                type="button"
-                @click="pickTab(tab)"
+                 prints all nine; the picker shows the active one and
+                 reaches every other one without a "More" tab. -->
+            <div class="bm__slot-picker">
+              <label class="bm__slot-picker-label" for="buy-loadout-slot">
+                Loadout slot
+              </label>
+              <select
+                id="buy-loadout-slot"
+                class="bm__slot-select"
+                :value="activeTab?.index ?? ''"
+                @change="onSlotPickerChange"
               >
-                {{ tab.label }}
-              </button>
-              <button
-                v-if="hiddenTabs.length"
-                class="bm__tab bm__tab--more"
-                type="button"
-                @click="moreOpen = !moreOpen"
-              >
-                More
-              </button>
+                <option v-for="tab in tabs" :key="tab.index" :value="tab.index">
+                  {{ tab.label }}
+                </option>
+              </select>
               <span class="bm__autosave">Saves automatically</span>
-            </div>
-
-            <div v-if="moreOpen && hiddenTabs.length" class="bm__tabrow bm__tabrow--more">
-              <button
-                v-for="tab in hiddenTabs"
-                :key="tab.index"
-                class="bm__tab"
-                :class="{ 'bm__tab--on': tab.active }"
-                type="button"
-                @click="pickTab(tab)"
-              >
-                {{ tab.label }}
-              </button>
             </div>
 
             <div class="bm__cards">
@@ -146,31 +128,42 @@
                 class="bm__card bm__card--slot"
                 :class="{ 'bm__card--empty': !slot.weapons }"
               >
-                <div class="bm__card-head">
+                <!--
+                  The card's head is the way into the slot's list: the
+                  card wears the HUD slot's own digit, and the port's
+                  loadout screen maps that digit to the list. (The
+                  "+ Add pistol" button the design had is gone — the
+                  card itself is the button now.)
+                -->
+                <button class="bm__card-head" type="button" @click="openSlotCard(slot)">
                   <span class="bm__key">{{ slot.number }}</span>
                   <span class="bm__card-label">{{ slot.text }}</span>
                   <span v-if="!slot.weapons" class="bm__card-empty">Empty</span>
-                  <button class="bm__ghost bm__ghost--sm" type="button" @click="openSlot(slot)">
-                    + Add {{ slotNoun(slot) }}
-                  </button>
-                </div>
+                </button>
                 <div v-if="slot.weapons" class="bm__items">
-                  <button
-                    v-for="entry in weaponsIn(slot)"
-                    :key="entry.index"
-                    class="bm__item"
-                    type="button"
-                    :aria-label="`Remove ${entry.name}`"
-                    @click="removeEntry(entry)"
-                  >
-                    <span class="bm__item-name">{{ entry.name }}</span>
-                    <span v-if="entry.attachments.length" class="bm__item-attachments">
-                      <span v-for="attachment in entry.attachments" :key="attachment" class="bm__chip">
-                        {{ attachment }}
+                  <template v-for="(entry, entryIndex) in weaponsIn(slot)" :key="entry.index">
+                    <button
+                      class="bm__item"
+                      type="button"
+                      :aria-label="`Remove ${entry.name}`"
+                      @click="removeEntry(entry)"
+                    >
+                      <span class="bm__item-name">{{ entry.name }}</span>
+                      <span v-if="entry.attachments.length" class="bm__item-attachments">
+                        <span v-for="attachment in entry.attachments" :key="attachment" class="bm__chip">
+                          {{ attachment }}
+                        </span>
                       </span>
+                      <span class="bm__item-price">{{ money(entry.cost) }}</span>
+                    </button>
+                    <span
+                      v-if="entryIndex < weaponsIn(slot).length - 1"
+                      class="bm__item-separator"
+                      aria-hidden="true"
+                    >
+                      ,
                     </span>
-                    <span class="bm__item-price">{{ money(entry.cost) }}</span>
-                  </button>
+                  </template>
                 </div>
               </article>
             </div>
@@ -183,7 +176,7 @@
               v-if="accessory"
               class="bm__row bm__row--accessory"
               type="button"
-              @click="openSlot(accessory)"
+              @click="openAccessory()"
             >
               <span class="bm__key">{{ accessory.number }}</span>
               <span class="bm__row-label">{{ accessory.text }}</span>
@@ -196,8 +189,8 @@
                 type="button"
                 @click="activate(row)"
               >
-                <span class="bm__key">{{ badge(row) }}</span>
                 <span class="bm__action-label">{{ row.text }}</span>
+                <span class="bm__key bm__key--suffix">{{ badge(row) }}</span>
               </button>
             </div>
             <p class="bm__hint">
@@ -209,20 +202,21 @@
 
         <!-- ============ 2. browse a slot ============ -->
         <section v-else-if="screen === 'browse'" class="bm__split bm__split--browse">
-          <!-- the slot rail: switch slots without going back -->
+          <!-- the rail: the weapon categories, so the player can jump
+               between them without going back -->
           <aside class="bm__col bm__col--slots">
-            <p class="bm__label">Slots</p>
+            <p class="bm__label">Categories</p>
             <button
-              v-for="slot in railSlots"
-              :key="slot.number"
+              v-for="rail in railRows"
+              :key="rail.key"
               class="bm__tab bm__tab--rail"
-              :class="{ 'bm__tab--on': slot.number === state.slot }"
+              :class="{ 'bm__tab--on': rail.key === state.slot }"
               type="button"
-              @click="openSlot(slot)"
+              @click="openRail(rail)"
             >
-              <b class="bm__rail-num">{{ slot.number }}</b>{{ slot.text }}
+              <b class="bm__rail-num">{{ rail.key }}</b>{{ rail.text }}
             </button>
-            <p class="bm__hint">Switch slots without going back. No stacked menus.</p>
+            <p class="bm__hint">Switch categories without going back. No stacked menus.</p>
           </aside>
 
           <!-- the weapons, in two columns, keyed 1–9 then A -->
@@ -262,25 +256,12 @@
                 class="bm__card bm__card--slim"
                 :class="{
                   'bm__card--empty': !slot.weapons,
-                  'bm__card--on': slot.number === state.slot,
                 }"
               >
                 <span class="bm__num">{{ slot.number }}</span>
-                <span class="bm__row-label">
+                <span class="bm__row-label" :class="{ 'bm__row-label--empty': !slot.weapons }">
                   {{ slot.weapons ? namesIn(slot) : 'Empty' }}
                 </span>
-              </div>
-              <!--
-                The slot being bought into gets a dashed card of its
-                own, right under it: the design says where the next
-                weapon is going.
-              -->
-              <div
-                v-if="slot.number === state.slot && slot.weapons"
-                class="bm__card bm__card--slim bm__card--empty"
-              >
-                <span class="bm__num"></span>
-                <span class="bm__muted">Adding a {{ slotNoun(slot) }}</span>
               </div>
             </template>
           </aside>
@@ -356,7 +337,10 @@
           </span>
           <div class="bm__foot-actions">
             <button class="bm__ghost" type="button" @click="cancelConfirm()">Cancel</button>
-            <button class="bm__go" type="button" @click="commitConfirm()">Enter · Clear</button>
+            <button class="bm__go" type="button" @click="commitConfirm()">
+              <span>Clear</span>
+              <span class="bm__key bm__key--suffix">Enter</span>
+            </button>
           </div>
         </template>
         <template v-else>
@@ -368,16 +352,20 @@
               type="button"
               @click="emit('close')"
             >
-              <span class="bm__key bm__key--inline">B</span>Close
+              <span>Close</span>
+              <span class="bm__key bm__key--suffix">B</span>
             </button>
             <button v-else class="bm__ghost" type="button" @click="back()">
-              <span class="bm__key bm__key--inline">0</span>{{ backLabel }}
+              <span>{{ backLabel }}</span>
+              <span class="bm__key bm__key--suffix">0</span>
             </button>
             <button v-if="screen === 'loadout'" class="bm__go" type="button" @click="primary()">
-              Enter · Deploy with {{ activeTabLabel }}
+              <span>Deploy with {{ activeTabLabel }}</span>
+              <span class="bm__key bm__key--suffix">Enter</span>
             </button>
             <button v-if="screen === 'attach'" class="bm__go" type="button" @click="primary()">
-              Enter · Add to loadout · {{ money(purchaseTotal) }}
+              <span>Add to loadout · {{ money(purchaseTotal) }}</span>
+              <span class="bm__key bm__key--suffix">Enter</span>
             </button>
           </div>
         </template>
@@ -431,9 +419,6 @@ const BACK_KEY = 10
  */
 const COMMIT_KEY = 6
 
-/** How many tabs the strip shows before the rest go behind "More". */
-const VISIBLE_TABS = 3
-
 // ---------------------------------------------------------------------------
 // The port's data
 // ---------------------------------------------------------------------------
@@ -462,21 +447,39 @@ const weaponSlots = computed(() =>
 /** The player accessory — slot 6, which is not one of the five. */
 const accessory = computed(() => slotInfos.value.find((s) => s.number === 6))
 
-/** The rail on the browse screen: the five slots and the accessory. */
-const railSlots = computed(() => slotInfos.value.slice().sort((a, b) => a.number - b.number))
-
-/** The slot numbers the port knows about. */
-const slotNumbers = computed(() => new Set(slotInfos.value.map((s) => s.number)))
+/**
+ * The browse rail's category rows.
+ *
+ * The port prints the rail's rows and the config-save rows dimmed: both
+ * answer on their own page. The tab records carry the save slots' exact
+ * labels, so those rows can be removed from the rail without teaching
+ * the browser a table of port page numbers.
+ *
+ * A rail key is a CATEGORY key. It is not the weapon's HUD slot: the
+ * port's rifles and shotguns now have separate rail keys even though
+ * both kinds still live in HUD slot four.
+ */
+const railRows = computed(() => {
+  const tabLabels = new Set(tabs.value.map((tab) => tab.label))
+  return rows.value.filter((row) => row.dim && !tabLabels.has(row.label))
+})
 
 /**
- * The rows that belong to a slot.
+ * The rail row the port is browsing.
  *
- * The port prints the rail's rows dimmed, because they answer on the
- * rail's own page — the same way a parent column's row answers on the
- * parent's page in the classic menu.
+ * The attachment screen carries no rail rows, so remember the last
+ * category while the player is in the attachments. The remembered label
+ * is only for navigation text; every action still sends the port's key.
  */
-const slotRows = computed(
-  () => rows.value.filter((r) => r.dim && slotNumbers.value.has(r.key)),
+const rememberedRail = ref<BuyRow | null>(null)
+
+watch(
+  () => [state.screen, state.slot] as const,
+  () => {
+    const current = railRows.value.find((row) => row.key === state.slot)
+    if (current) rememberedRail.value = current
+  },
+  { immediate: true },
 )
 
 /**
@@ -496,7 +499,7 @@ const ownRows = computed(() => rows.value.filter((r) => !r.dim && r.key !== 0))
  * so the row that carries it is not drawn twice.
  */
 const actionRows = computed(() =>
-  ownRows.value.filter((r) => r.key !== (accessory.value?.number ?? 6)),
+  ownRows.value.filter((row) => !isAccessoryRow(row)),
 )
 
 /** The browse screen's weapon list. */
@@ -685,46 +688,21 @@ function namesIn(slot: BuySlotInfo): string {
     .join(', ')
 }
 
-/**
- * The word the design uses for a slot's kind of weapon.
- *
- * "+ Add pistol" reads better than "+ Add", and the design's mockups
- * use a word per slot (melee, pistol, SMG, gun, item). The port
- * prints the slot's LABEL, which the game's own titles can rename,
- * so this is a lookup with a fallback rather than a table of truth:
- * a label the lookup does not know gets the neutral word, and the
- * button still says what it does.
- */
-const SLOT_NOUNS: Array<[RegExp, string]> = [
-  [/melee|grenade|sword|knife/i, 'melee'],
-  [/pistol|handgun/i, 'pistol'],
-  [/smg|submachine/i, 'SMG'],
-  [/rifle|shotgun/i, 'gun'],
-  [/special/i, 'item'],
-]
-
-function slotNoun(slot: BuySlotInfo): string {
-  for (const [pattern, noun] of SLOT_NOUNS) {
-    if (pattern.test(slot.text) || pattern.test(slot.label)) return noun
-  }
-  return 'weapon'
-}
-
 // ---------------------------------------------------------------------------
 // The screens' headings
 // ---------------------------------------------------------------------------
 
-/** The slot the port is browsing. */
-const currentSlot = computed(() => slotInfos.value.find((s) => s.number === state.slot))
+/** The rail category the port is browsing. */
+const currentRail = computed(
+  () =>
+    railRows.value.find((row) => row.key === state.slot) ??
+    (state.screen === 'attach' ? rememberedRail.value : null),
+)
 
 /** The live loadout tab. */
 const activeTab = computed(() => tabs.value.find((t) => t.active) ?? tabs.value[state.tab])
 
 const activeTabLabel = computed(() => activeTab.value?.label ?? 'Loadout')
-
-const visibleTabs = computed(() => tabs.value.slice(0, VISIBLE_TABS))
-const hiddenTabs = computed(() => tabs.value.slice(VISIBLE_TABS))
-const moreOpen = ref(false)
 
 const gunName = computed(() => gunRow.value?.text ?? '')
 const gunPrice = computed(() => gunRow.value?.price ?? 0)
@@ -736,34 +714,38 @@ const gunPrice = computed(() => gunRow.value?.price ?? 0)
  * says are in it.
  */
 const gunNote = computed(() => {
-  const slot = currentSlot.value
-  if (!slot) return ''
-  const pending = gunName.value.trim().toLowerCase()
-  // The gun being added is not one of the slot's OTHER weapons.
-  const others = weaponsIn(slot)
-    .filter((entry) => entry.name.trim().toLowerCase() !== pending)
-    .map((entry) => entry.name)
-  const where = `Slot ${slot.number} (${slot.text})`
-  return others.length ? `Added to ${where}, next to ${others.join(', ')}` : `Added to ${where}`
+  const rail = currentRail.value
+  if (!rail) return ''
+  return `Added to ${rail.text} (rail slot ${rail.key})`
 })
 
 const title = computed(() => {
   if (!modern.value) return state.pageName || 'BUY MENU'
   if (state.screenTitle) return state.screenTitle
   if (screen.value === 'attach') return gunName.value.toUpperCase()
-  if (screen.value === 'browse') return (currentSlot.value?.text ?? '').toUpperCase()
+  if (screen.value === 'browse') return (currentRail.value?.text ?? '').toUpperCase()
   return 'BUY MENU'
 })
 
 const crumb = computed(() => {
   if (!modern.value) return state.pageName || ''
   if (screen.value === 'loadout') return 'Slots match the in-game weapon slots'
-  const slot = currentSlot.value
+  /*
+    The position, not the name: the heading above carries the name of
+    the category being browsed, so the breadcrumb carries where the
+    player is — the loadout they are buying into, and the screen.
+
+    It used to say "Slot 2 · Buy", but the rail's entries are the
+    weapon CATEGORIES now and the rail's key is not the HUD slot: the
+    shotguns are the rail's key five and the HUD slot four, so "Slot 5"
+    would have been a lie. The port owns the mapping and the browser
+    does not guess it.
+  */
   const bits: string[] = []
-  bits.push(slot ? `Slot ${slot.number} · Buy` : 'Buy')
-  if (slot) bits.push(slot.text)
-  if (screen.value === 'attach' && gunName.value) bits.push(gunName.value)
-  return bits.join(' › ')
+  if (activeTabLabel.value) bits.push(activeTabLabel.value)
+  bits.push('Buy')
+  if (screen.value === 'attach') bits.push('Attachments')
+  return bits.join(' · ')
 })
 
 const footHint = computed(() => {
@@ -776,7 +758,7 @@ const footHint = computed(() => {
 
 const backLabel = computed(() =>
   screen.value === 'attach'
-    ? `Back to ${currentSlot.value?.text ?? 'the list'}`
+    ? `Back to ${currentRail.value?.text ?? 'the list'}`
     : 'Back to loadout',
 )
 
@@ -921,6 +903,17 @@ function isClearRow(row: BuyRow): boolean {
   return badge(row).toLowerCase() === 'x'
 }
 
+/**
+ * The accessory's action row.
+ *
+ * The rail category and the HUD slot are different numbers now, so
+ * the accessory is found by the port's own label rather than by a key
+ * copied from either one.
+ */
+function isAccessoryRow(row: BuyRow): boolean {
+  return /player\s*accessory|accessory/i.test(row.text)
+}
+
 /** The Clear confirmation is up. */
 const confirming = ref(false)
 
@@ -935,14 +928,41 @@ function commitConfirm(): void {
   if (row) send(row.key, row.page)
 }
 
-/** Open a slot: the port's own page answers, or its current one. */
-function openSlot(slot: BuySlotInfo): void {
-  const row = slotRows.value.find((r) => r.key === slot.number)
+/**
+ * Open a slot's list.
+ *
+ * The card wears the HUD slot's own digit, and the port's loadout
+ * screen maps that digit to the slot's list. The browser sends the
+ * digit to the port's own page — exactly what a typed digit does — and
+ * the port decides what it means. The browser never works out which
+ * list a slot holds.
+ */
+function openSlotCard(slot: BuySlotInfo): void {
+  if (!slot.number) return
+  send(slot.number, state.page)
+}
+
+/** Open a rail category. Its row carries the port's key and page. */
+function openRail(row: BuyRow): void {
+  if (!row.key) return
+  send(row.key, row.page)
+}
+
+/**
+ * Open the player accessory.
+ *
+ * The accessory's action row is the port's own; its key is not the
+ * accessory's HUD-slot number and must not be guessed from the loadout
+ * card.
+ */
+function openAccessory(): void {
+  const row = ownRows.value.find((candidate) => isAccessoryRow(candidate))
   if (row) {
     send(row.key, row.page)
     return
   }
-  send(slot.number)
+  const fallback = accessory.value
+  if (fallback) send(fallback.number, state.page)
 }
 
 /**
@@ -965,6 +985,19 @@ function pickTab(tab: BuyTabInfo): void {
     return
   }
   send(tab.index + 1)
+}
+
+/** The dropdown changed: pick the tab the port gave that index. */
+function pickTabByIndex(index: number): void {
+  const tab = tabs.value.find((candidate) => candidate.index === index)
+  if (tab) pickTab(tab)
+}
+
+/** Native select events carry the option's value. */
+function onSlotPickerChange(event: Event): void {
+  const target = event.target
+  if (!(target instanceof HTMLSelectElement)) return
+  pickTabByIndex(Number(target.value))
 }
 
 /** Go back: the port's own "go back" key. */
@@ -1037,9 +1070,28 @@ function onKeydown(e: KeyboardEvent): void {
   }
   if (key >= '0' && key <= '9') {
     const n = key === '0' ? BACK_KEY : Number(key)
-    const slot = slotRows.value.find((r) => r.key === n)
-    if (slot) send(slot.key, slot.page)
-    else send(n)
+    /*
+      The digit means what the port's CURRENT screen means by it.
+
+      On the loadout screen that is the card's own number: 1 opens the
+      melee weapons, 2 the pistols, 3 the SMGs, 4 the rifles and 5 the
+      akimbo weapons. The port maps it — the rail's key and the HUD slot
+      are two different numbers now (the rail's key 5 is the shotguns
+      and the HUD slot 5 is the akimbo weapons), so the browser must
+      never guess one from the other. It sends the digit to the port's
+      own page and lets the port answer.
+
+      On the browse screen a digit that names no weapon switches the
+      rail, and the rail's row carries the rail's own page.
+    */
+    if (screen.value === 'browse') {
+      const rail = railRows.value.find((row) => row.key === n)
+      if (rail) {
+        send(rail.key, rail.page)
+        return
+      }
+    }
+    send(n, state.page)
   }
 }
 
@@ -1087,19 +1139,63 @@ function shortMessage(row: BuyRow): string {
 // ---------------------------------------------------------------------------
 
 const root = ref<HTMLElement | null>(null)
+const frame = ref<HTMLElement | null>(null)
 
 function focusPanel(): void {
   root.value?.focus({ preventScroll: true })
 }
 
+/**
+ * The panel scales to the viewport.
+ *
+ * The frame is the mockup's own 960 x 620 and is always DRAWN at that
+ * size; the scale factor is what changes. CSS cannot divide one length
+ * by another, so the factor is computed here — from the layer's box
+ * (minus its padding) against the frame's own size — and handed to the
+ * CSS as --bm-scale.
+ *
+ * The harness sets --bm-w and --bm-h itself: the mockup's frame, or
+ * the whole window. In both cases the frame already fills the box it was
+ * given, so the factor comes out as 1 and the harness shows the panel
+ * at exactly the size it asked for.
+ */
+const MAX_SCALE = 1.8
+const MIN_SCALE = 0.45
+
+function updateScale(): void {
+  const layer = root.value
+  const panel = frame.value
+  if (!layer || !panel) return
+  const style = window.getComputedStyle(layer)
+  const padX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
+  const padY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+  const availW = layer.clientWidth - (Number.isFinite(padX) ? padX : 0)
+  const availH = layer.clientHeight - (Number.isFinite(padY) ? padY : 0)
+  const baseW = panel.offsetWidth
+  const baseH = panel.offsetHeight
+  if (availW <= 0 || availH <= 0 || baseW <= 0 || baseH <= 0) return
+  const factor = Math.min(availW / baseW, availH / baseH)
+  const scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, factor))
+  panel.style.setProperty('--bm-scale', scale.toFixed(4))
+}
+
+let resizeObserver: ResizeObserver | null = null
+
 onMounted(() => {
   window.addEventListener('keydown', onWindowKeydown, { capture: true })
   focusPanel()
+  updateScale()
+  if (typeof ResizeObserver !== 'undefined' && root.value) {
+    resizeObserver = new ResizeObserver(() => updateScale())
+    resizeObserver.observe(root.value)
+  }
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onWindowKeydown, { capture: true })
   if (toastTimer !== null) window.clearTimeout(toastTimer)
+  resizeObserver?.disconnect()
+  resizeObserver = null
 })
 
 // The panel takes the focus when it opens, so the keys it owns reach
@@ -1179,8 +1275,21 @@ watch(
 .bm__frame {
   pointer-events: auto;
   position: relative;
-  width: var(--bm-w, min(960px, 96vw));
-  height: var(--bm-h, min(620px, 92vh));
+  /*
+    The frame is the mockup's own 960 x 620, and it SCALES to the
+    viewport: the panel is drawn once, at the design's proportions, and
+    then blown up (or shrunk) to fit the window — so the type, the
+    borders and the spacing all grow together. On a big screen the
+    panel is a panel, not a small card in the middle of it, and it
+    stays centred.
+
+    CSS cannot divide one length by another, so the factor is computed
+    in the component and handed over as --bm-scale.
+  */
+  width: var(--bm-w, 960px);
+  height: var(--bm-h, 620px);
+  transform: scale(var(--bm-scale, 1));
+  transform-origin: center center;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -1458,6 +1567,20 @@ watch(
   flex: none;
 }
 
+/*
+  The live loadout's column: the slot's weapons are a comma-separated
+  list of names, and they carry the row the way the mockup draws them
+  (the mockup's own weight-600 label). "Empty" stays a quiet note.
+*/
+.bm__card--slim .bm__row-label {
+  font-weight: 600;
+}
+
+.bm__row-label--empty {
+  color: var(--muted);
+  font-weight: 400;
+}
+
 .bm__card--stack {
   flex-direction: column;
   align-items: stretch;
@@ -1476,10 +1599,34 @@ watch(
   border-style: dashed;
 }
 
+/*
+  The card's head is a button: it opens the slot's list.
+
+  The design had a separate "+ Add pistol" button in the card's head,
+  and the playtest said the label was out of place. The card itself is
+  the affordance now, so the head is a button that opens the slot.
+*/
 .bm__card-head {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bm__card-head:hover .bm__card-label {
+  color: var(--text);
+}
+
+.bm__card-head:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .bm__card-label {
@@ -1499,21 +1646,35 @@ watch(
   font-style: italic;
 }
 
+/*
+  The slot card's weapons.
+
+  The playtest: a slot holding two bought pistols was nearly invisible
+  next to an empty one. Two things were wrong with it. The list was one
+  row per weapon, so a slot with two pistols grew the card and sank the
+  names into it; and the attachment chips were filled blocks of colour
+  that caught the eye before the names did.
+
+  So the weapons are the loudest thing on the card: the names are bold
+  and full contrast, and they read as a comma-separated list on one
+  line — the form the live loadout's own column already uses. The chips
+  and the price keep their facts, but they drop to a supporting voice.
+*/
 .bm__items {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
 }
 
 .bm__item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 36px;
-  padding: 0 14px;
-  background: var(--card-2);
-  border: 1px solid transparent;
-  border-radius: 8px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
   color: var(--text);
   font-family: inherit;
   font-size: 15px;
@@ -1522,8 +1683,14 @@ watch(
   cursor: pointer;
 }
 
-.bm__item:hover {
-  border-color: var(--border-soft);
+/*
+  The name is what the player is looking for, so the hover is on the
+  name: the row is a button that removes that weapon, and the underline
+  is what says so.
+*/
+.bm__item:hover .bm__item-name {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .bm__item:focus-visible {
@@ -1534,28 +1701,30 @@ watch(
 .bm__item-name {
   min-width: 0;
   overflow-wrap: anywhere;
-  font-weight: 600;
+  font-weight: 700;
+  color: var(--text);
 }
 
 .bm__item-price {
-  margin-left: auto;
   color: var(--muted);
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
 .bm__item-attachments {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
   min-width: 0;
 }
 
 .bm__chip {
-  padding: 3px 10px;
-  border-radius: 12px;
-  background: var(--border);
-  color: var(--text);
-  font-size: 12px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
   font-weight: 500;
   white-space: nowrap;
 }
@@ -1635,6 +1804,17 @@ watch(
 
 .bm__row--owned {
   background: var(--card-2);
+}
+
+/*
+  An owned weapon, in the browse list.
+
+  The port marks it and the row says "· Owned", but the NAME also
+  carries the row: a weapon the player already has should read at a
+  glance, next to the ones they do not have.
+*/
+.bm__row--owned .bm__row-label {
+  font-weight: 700;
 }
 
 .bm__row--dim {
@@ -1739,8 +1919,107 @@ watch(
   margin-right: 8px;
 }
 
+/*
+  A keycap that trails a label.
+
+  The design's rule is that the LABEL comes first and the key is a quiet
+  suffix after it: the eye reads "Random" and then learns "R". The
+  keycap is therefore smaller and dimmer than the label it follows, and
+  it never sits on its own line above the words — the whole button is
+  one line.
+*/
+.bm__key--suffix {
+  flex: 0 0 auto;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.62;
+}
+
+/*
+  A button that carries a label and a trailing keycap puts them on one
+  line: the label first, the keycap pushed to the far end.
+*/
+.bm__go,
+.bm__ghost {
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.bm__go > span:first-child,
+.bm__ghost > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .bm__key--dim {
   opacity: 0.55;
+}
+
+/* ---- the loadout slot picker ---- */
+
+/*
+  The nine config save slots, as a dropdown.
+
+  The tab strip showed three and hid the rest behind a "More" button,
+  which hid the thing the player was looking for. The dropdown shows
+  the active slot's name and reaches every other one in one click.
+*/
+.bm__slot-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.bm__slot-picker-label {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.bm__slot-select {
+  min-width: 190px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-2);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.bm__slot-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.bm__autosave {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/*
+  The comma between two bought weapons.
+
+  The design asks for the slot's weapons comma-separated on one line,
+  so the separator rides with the weapons it separates rather than
+  ending the row.
+*/
+.bm__item-separator {
+  flex: 0 0 auto;
+  /* It hugs the weapon it follows: the list reads as one sentence. */
+  margin-left: -5px;
+  margin-right: -3px;
+  color: var(--muted);
 }
 
 /* ---- the grid ---- */
@@ -1800,17 +2079,28 @@ watch(
   font-size: 13px;
 }
 
+/*
+  The rail's two actions sit side by side in the column, so they are
+  narrow. The label and its keycap still share ONE line: the keycap
+  trails the label, it does not sit above it. (The design's mockup
+  stacked them, and the playtest said the stacked keycap is what the
+  eye reads first — which is the opposite of what the button does.)
+*/
 .bm__ghost--flex {
   flex: 1;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 0;
-  padding-top: 0;
-  padding-bottom: 0;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 12px;
 }
 
 .bm__action-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   line-height: 1.2;
 }
 
