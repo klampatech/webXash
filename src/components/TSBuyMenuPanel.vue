@@ -332,7 +332,7 @@
           </span>
           <div class="bm__foot-actions">
             <button class="bm__ghost" type="button" @click="cancelConfirm()">Cancel</button>
-            <button class="bm__go" type="button" @click="commitConfirm()">
+            <button class="bm__go bm__go--danger" type="button" @click="commitConfirm()">
               <span>Clear</span>
               <span class="bm__key bm__key--suffix">Enter</span>
             </button>
@@ -355,7 +355,7 @@
               <span class="bm__key bm__key--suffix">0</span>
             </button>
             <button v-if="screen === 'loadout'" class="bm__go" type="button" @click="primary()">
-              <span>Deploy with {{ activeTabLabel }}</span>
+              <span>Fight with Loadout #{{ activeTabSuffix }}</span>
               <span class="bm__key bm__key--suffix">Enter</span>
             </button>
             <button v-if="screen === 'attach'" class="bm__go" type="button" @click="primary()">
@@ -707,6 +707,14 @@ const currentRail = computed(
 const activeTab = computed(() => tabs.value.find((t) => t.active) ?? tabs.value[state.tab])
 
 const activeTabLabel = computed(() => activeTab.value?.label ?? 'Loadout')
+
+/**
+ * The slot's suffix, for "Fight with Loadout #A".
+ *
+ * The port names the save slots with letters ("Loadout A"), so the button takes
+ * the letter off the end of that name.
+ */
+const activeTabSuffix = computed(() => activeTabLabel.value.split(/\s+/).pop() ?? '')
 
 const gunName = computed(() => gunRow.value?.text ?? '')
 const gunPrice = computed(() => gunRow.value?.price ?? 0)
@@ -1237,6 +1245,7 @@ watch(
   --text: #f2e9d8;
   --muted: #b3a68e;
   --accent: #f2b84b;
+  --danger: #e5484d;
   --cant: #ff8a73;
   --cant-border: #5a2a22;
   --cant-bg: #2a1713;
@@ -1431,6 +1440,16 @@ watch(
 .bm__col--rail {
   width: 250px;
   flex: none;
+}
+
+/* The rail's first row is a label; the main column's first row is the slot
+   picker, and the picker is taller. Left alone, the label rides high and the
+   accessory button starts above the first card. The label takes the picker's
+   height so the two columns' first rows sit level. */
+.bm__col--rail > .bm__label {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
 }
 
 .bm__col--slots {
@@ -2124,6 +2143,9 @@ watch(
 }
 
 .bm__go {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
   min-height: 48px;
   padding: 0 28px;
   background: var(--accent);
@@ -2139,6 +2161,14 @@ watch(
 
 .bm__go:hover {
   filter: brightness(1.06);
+}
+
+/* A destructive action wears red. The Clear confirmation is the one button in
+   the panel that throws the player's loadout away, so it does not look like
+   the button that starts the game. */
+.bm__go--danger {
+  background: var(--danger);
+  color: var(--bg);
 }
 
 /* ---- the footer ---- */
