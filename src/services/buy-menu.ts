@@ -38,6 +38,28 @@
 // not poll: it listens, and asks for a state once (`ts_buy_state`) when
 // it mounts.
 
+// THE FLOW
+// --------
+// The port has TWO flows and it picks one: the CLASSIC flow is the
+// game's own canvas menu, and it is the port's DEFAULT. The modern
+// flow is asked for, never assumed:
+//
+//   ts_buy_mode classic   the game's own canvas menu
+//   ts_buy_mode modern    the loadout flow the redesigned panel draws
+//
+// The mode is on the state line (`mode=modern` / `mode=classic`), and
+// the port is the one that has it: the redesigned panel is drawn when
+// the state says `modern`, and the classic canvas menu is the port's
+// own when it says `classic`. So the browser's setting is what the
+// port was TOLD, and the state line is what the port IS — the panel
+// follows the state, never the setting.
+//
+// The canvas menu's hidden flag (`ts_buy_hide`) is NOT the flow
+// switch: the modern flow draws no canvas of its own accord, and the
+// classic flow's canvas menu is the port's own. So the flag is
+// cleared, never set — a flag left on would leave a player in the
+// classic flow with no menu at all.
+
 // THE MODERN FLOW
 // ---------------
 // The redesigned buy panel is the port's own buy menu, reorganised by
@@ -253,6 +275,15 @@ export interface BuyMenuState {
    * it, so the panel shows a limit only when the port says what it is.
    */
   slotLimit: number;
+  /**
+   * How many of the five weapon slots hold something.
+   *
+   * The port's own number (`slots_in_use`), for the modern flow: it
+   * counts the slots, the way the port counts them. Zero when the
+   * port did not report one (the classic flow does not have it), and
+   * the panel counts the slots itself then.
+   */
+  slotsInUse: number;
   /** What the ammo fill spent. */
   ammoSpend: number;
   /** The config differs from the last one used. */
@@ -328,6 +359,7 @@ function emptyState(): BuyMenuState {
     total: 0,
     slots: 0,
     slotLimit: 0,
+    slotsInUse: 0,
     ammoSpend: 0,
     newConfig: false,
     category: 0,
@@ -480,6 +512,28 @@ function loadGameTitles(): void {
 }
 
 /**
+ * The game's titles, from a text.
+ *
+ * The production path reads them out of the engine's filesystem (see
+ * `loadGameTitles`), and the engine resolves the very same keys. The
+ * dev harness has no engine, so it seeds the same file here — through
+ * the same parser — and a title resolves in the harness exactly as it
+ * does in the game.
+ *
+ * This is not a table of English the browser invented: it is the
+ * game's own titles file, handed over. The engine's own copy still
+ * wins if it becomes readable later.
+ */
+export function seedBuyTitles(raw: string): number {
+  const parsed = parseTitles(raw);
+  for (const [key, value] of parsed) gameTitles.set(key, value);
+  // A state that arrived before the titles were seeded gets its
+  // labels now.
+  relabelState();
+  return parsed.size;
+}
+
+/**
  * Resolve every label of the current state again.
  *
  * The labels are the game's, and the game's titles file may only
@@ -495,6 +549,10 @@ function relabelState(): void {
     ...entry,
     name: resolveBuyLabel(entry.label),
     attachments: entry.attachmentLabels.map((label) => resolveBuyLabel(label)),
+  }));
+  buyMenuState.slotInfos = buyMenuState.slotInfos.map((slot) => ({
+    ...slot,
+    text: resolveBuyLabel(slot.label),
   }));
   buyMenuState.pageTitle = resolveBuyLabel(lastPageTitleRaw);
   buyMenuState.pageName = buyPageName(lastPageTitleRaw, buyMenuState.pageTitle);
@@ -870,6 +928,10 @@ function commitDump(): void {
   buyMenuState.total = toNumber(raw.total);
   buyMenuState.slots = toNumber(raw.slots);
   buyMenuState.slotLimit = slotLimitFrom(raw);
+  // How many of the five weapon slots hold something — the port's own
+  // count (`slots_in_use`). The classic flow does not report it, and
+  // then the panel counts the slots itself.
+  buyMenuState.slotsInUse = toNumber(raw.slots_in_use);
   buyMenuState.ammoSpend = toNumber(raw.ammo_spend ?? raw.ammo);
   buyMenuState.newConfig = toBool(raw.new);
   buyMenuState.category = toNumber(raw.cat ?? raw.category);
@@ -1018,15 +1080,36 @@ export function setBuyMenuHidden(hidden: boolean): void {
 }
 
 /**
+ * Ask the port for a flow.
+ *
+ * `ts_buy_mode classic|modern` is the port's own switch between the
+ * game's own canvas menu and the modern loadout flow. The classic is
+ * the port's DEFAULT, so the browser asks for the modern one and
+ * never assumes it: the port answers with its state, and the state
+ * line's `mode=` is what the frontend draws from.
+ */
+export function sendBuyMenuMode(mode: BuyMenuMode): void {
+  if (!XashLoader.isEngineUp()) return;
+  logDebug(`[buy] mode ${mode}`);
+  XashLoader.exec(`ts_buy_mode ${mode}`);
+}
+
+/**
  * Put the buy menu into the mode the player chose.
  *
  * Called when the player changes the setting, and once at session start
- * (see the engine-up hook at the bottom of this file). The flag is
+ * (see the engine-up hook at the bottom of this file). The command is
  * idempotent, so the retries below are safe: the port may not have
  * registered its commands yet on the very first frame.
+ *
+ * The hidden flag is cleared and never set: the modern flow draws no
+ * canvas of its own accord, and in the classic flow the canvas menu
+ * IS the buy menu — a flag left on would leave the player with no
+ * menu at all.
  */
 export function applyBuyMenuMode(mode: BuyMenuMode): void {
-  setBuyMenuHidden(mode === 'modern');
+  sendBuyMenuMode(mode);
+  setBuyMenuHidden(false);
   // The client library registers its commands while it initialises. If
   // the first attempt was too early, the engine answered "Unknown
   // command" and the flag was never set — so try again, a few times.
@@ -1035,7 +1118,8 @@ export function applyBuyMenuMode(mode: BuyMenuMode): void {
   // switched menus in the meantime is not overruled by a stale retry.
   for (const delayMs of [1000, 3000, 7000]) {
     window.setTimeout(() => {
-      setBuyMenuHidden(storedBuyMenuMode() === 'modern');
+      sendBuyMenuMode(storedBuyMenuMode());
+      setBuyMenuHidden(false);
     }, delayMs);
   }
 }

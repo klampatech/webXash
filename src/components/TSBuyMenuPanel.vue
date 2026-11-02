@@ -606,9 +606,17 @@ const barPercent = computed(() => {
  */
 const lowBudget = computed(() => budget.value > 0 && remaining.value / budget.value < 0.1)
 
-/** How many of the five weapon slots hold something. */
+/**
+ * How many of the five weapon slots hold something.
+ *
+ * The port counts them (`slots_in_use`), and the port's count is the
+ * one that is shown. The browser's own count is the fallback for a
+ * state that does not carry one (the classic flow).
+ */
 const slotsInUse = computed(
-  () => weaponSlots.value.filter((s) => s.weapons > 0 || s.slots > 0).length,
+  () =>
+    state.slotsInUse ||
+    weaponSlots.value.filter((s) => s.weapons > 0 || s.slots > 0).length,
 )
 
 /** The slot pool: how much of it the loadout takes, and how big it is. */

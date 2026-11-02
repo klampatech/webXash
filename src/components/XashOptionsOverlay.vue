@@ -226,7 +226,7 @@ const models = TS_MODELS;
 const nameInput = ref<HTMLInputElement | null>(null);
 
 // The buy menu's style. It lives in the store (and is persisted), but
-// it is NOT a cvar: it is the port's `ts_buy_hide` flag, a client
+// it is NOT a cvar: it is the port's `ts_buy_mode` command, a client
 // library switch, so it never reaches the launch args.
 const store = useXashStore();
 const { tsConfig } = storeToRefs(store);
@@ -240,8 +240,13 @@ const buyMenu = computed<BuyMenuMode>(() =>
  *
  * The store keeps the choice; the port is told immediately, because a
  * player who switches to Modern expects the canvas menu to go away
- * now, not at the next session. The flag is idempotent, so repeating
- * it is harmless.
+ * now, not at the next session. The command is idempotent, so
+ * repeating it is harmless.
+ *
+ * The port owns the choice afterwards: it answers with its state, and
+ * the state line's `mode=` is what the panel follows. The classic
+ * flow is the port's default, so "modern" is asked for — never
+ * assumed.
  */
 function setBuyMenu(mode: BuyMenuMode): void {
   if (!tsConfig.value) return;

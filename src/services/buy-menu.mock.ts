@@ -33,7 +33,11 @@
 // scenario borrows the design's numbers to show the amber state, and
 // says so in its own records.
 
-import { feedBuyMenuRecords, type BuyMenuScreen } from './buy-menu.ts';
+import {
+  feedBuyMenuRecords,
+  seedBuyTitles,
+  type BuyMenuScreen,
+} from './buy-menu.ts';
 
 /** The states the harness can show. */
 export type MockState =
@@ -61,7 +65,13 @@ interface MockWeapon {
   name: string;
   cost: number;
   slots: number;
-  /** The attachment labels the entry record carries. */
+  /**
+   * The attachment labels the entry record carries.
+   *
+   * The port prints the game's own title keys here (`#HUD_Silencer`),
+   * the same keys the OPTIONS rows use — so the browser resolves them
+   * exactly as it resolves every other label.
+   */
   attachments?: string[];
 }
 
@@ -156,10 +166,61 @@ const SPECIAL: MockWeapon[] = [
 
 /** The attachments, and what they cost. */
 const ATTACHMENTS = [
-  { name: 'Silencer', cost: 900 },
-  { name: 'Lasersight', cost: 800 },
-  { name: 'Flashlight', cost: 500 },
+  // The port's own labels: the game's title keys, the ones the
+  // OPTIONS rows use.
+  { key: '#HUD_Silencer', cost: 900 },
+  { key: '#HUD_Lasersight', cost: 800 },
+  { key: '#HUD_Flashlight', cost: 500 },
 ];
+
+/**
+ * The game's own titles — the entries the harness needs.
+ *
+ * The port prints TITLE KEYS (`#Buy_Random`, `#HUD_Silencer`), and
+ * the browser resolves them through the game's own titles file, which
+ * the engine holds: `services/buy-menu.ts` reads it out of the
+ * engine's filesystem, and the engine resolves the very same keys.
+ *
+ * The harness has no engine, so it seeds the same file here — the
+ * same keys, the game's own text, and the same parser — and a title
+ * resolves in the harness exactly as it does in the game. This is the
+ * mod's `ts/titles.txt`, verbatim.
+ */
+const MOCK_TITLES = `
+Buy_ResetConfig
+{
+Reset Config
+}
+
+Buy_Random
+{
+Random
+}
+
+Buy_PlayerAccessory
+{
+Player Accessory
+}
+
+HUD_Silencer
+{
+Silencer
+}
+
+HUD_Lasersight
+{
+Lasersight
+}
+
+HUD_Flashlight
+{
+Flashlight
+}
+`;
+
+// Seed the titles before the first state is parsed, so the very first
+// record already resolves its labels.
+seedBuyTitles(MOCK_TITLES);
 
 /**
  * The loadout of Loadout A — the mockup's example, to the dollar.
@@ -186,7 +247,7 @@ const LOADOUT_A: MockSlot[] = [
         name: 'Glock-18',
         cost: 2550,
         slots: 10,
-        attachments: ['Silencer', 'Lasersight'],
+        attachments: ['#HUD_Silencer', '#HUD_Lasersight'],
       },
       { name: 'Desert Eagle', cost: 1050, slots: 15 },
     ],
@@ -283,6 +344,17 @@ function slotRecords(slots: MockSlot[]): string[] {
 }
 
 /**
+ * How many of the five weapon slots hold something.
+ *
+ * The port's own count (`slots_in_use`): the weapon slots that hold
+ * at least one weapon, counted the way the port counts them. The
+ * player accessory (slot 6) is not one of the five.
+ */
+function slotsInUse(slots: MockSlot[]): number {
+  return slots.filter((slot) => slot.number <= 5 && slot.weapons.length > 0).length;
+}
+
+/**
  * The config's entries.
  *
  * The modern entry record carries the attachment labels, the
@@ -293,9 +365,9 @@ function slotRecords(slots: MockSlot[]): string[] {
  *   entry <index> <cost> <slots> <attachments> <slot> <remove_key> <name>
  *
  * The attachment field is a comma-separated list of the port's own
- * labels — title keys in the game, plain names here, because the
- * harness has no game files to resolve them against. The browser
- * resolves them the way it resolves every other label.
+ * labels: the game's title keys, the same ones the OPTIONS rows use
+ * (`#HUD_Silencer,#HUD_Lasersight`). The browser resolves them the
+ * way it resolves every other label.
  */
 function entryRecords(slots: MockSlot[]): string[] {
   const out: string[] = [];
@@ -341,12 +413,12 @@ function railRows(slots: MockSlot[]): string[] {
 /** The loadout screen's rows: the accessory, random and clear. */
 function actionRows(): string[] {
   return [
-    `TSBUY row 6 0 0 ${PAGE.MAIN} 6 Player Accessory`,
-    `TSBUY row 7 0 0 ${PAGE.MAIN} R Random`,
+    `TSBUY row 6 0 0 ${PAGE.MAIN} 6 #Buy_PlayerAccessory`,
+    `TSBUY row 7 0 0 ${PAGE.MAIN} R #Buy_Random`,
     // The port's MAIN page's own reset row is key 4; the panel draws
     // the keycap the design asked for ("X"), which is what the row's
     // number field carries.
-    `TSBUY row 4 0 0 ${PAGE.MAIN} X Clear`,
+    `TSBUY row 4 0 0 ${PAGE.MAIN} X #Buy_ResetConfig`,
   ];
 }
 
@@ -385,7 +457,7 @@ function loadoutScenario(state: MockState): MockScenario {
   const records = [
     stateRecord({
       open: 1,
-      hidden: 1,
+      hidden: 0,
       page: PAGE.MAIN,
       budget: BUDGET,
       total: low ? 28050 : total,
@@ -399,6 +471,7 @@ function loadoutScenario(state: MockState): MockScenario {
       screen: 'loadout',
       slot: 0,
       tab: 0,
+      slots_in_use: slotsInUse(loadout),
       slot_limit: SLOT_LIMIT,
     }),
     `TSBUY page ${PAGE.MAIN} BUY MENU`,
@@ -474,7 +547,7 @@ function browseScenario(state: MockState): MockScenario {
   const records = [
     stateRecord({
       open: 1,
-      hidden: 1,
+      hidden: 0,
       page: PAGE.WEAPONS,
       budget: BUDGET,
       total: low ? 28050 : total,
@@ -488,6 +561,7 @@ function browseScenario(state: MockState): MockScenario {
       screen: 'browse',
       slot,
       tab: 0,
+      slots_in_use: slotsInUse(loadout),
       slot_limit: SLOT_LIMIT,
     }),
     `TSBUY page ${PAGE.WEAPONS} ${label.toUpperCase()}`,
@@ -509,14 +583,14 @@ function attachScenario(state: MockState): MockScenario {
   const attachments = ATTACHMENTS.map((attachment, i) => {
     const key = i + 1;
     const on = selected && key <= 2 ? 'on' : '0';
-    return `TSBUY row ${key} ${attachment.cost} ${on} ${PAGE.OPTIONS} ${keyNumber(key)} ${attachment.name}`;
+    return `TSBUY row ${key} ${attachment.cost} ${on} ${PAGE.OPTIONS} ${keyNumber(key)} ${attachment.key}`;
   });
   const gunCost = 850;
   const bundle = selected ? gunCost + ATTACHMENTS[0].cost + ATTACHMENTS[1].cost : gunCost;
   const records = [
     stateRecord({
       open: 1,
-      hidden: 1,
+      hidden: 0,
       page: PAGE.OPTIONS,
       budget: BUDGET,
       total: 6600,
@@ -530,6 +604,7 @@ function attachScenario(state: MockState): MockScenario {
       screen: 'attach',
       slot: 2,
       tab: 0,
+      slots_in_use: slotsInUse(LOADOUT_A),
       slot_limit: SLOT_LIMIT,
     }),
     `TSBUY page ${PAGE.OPTIONS} GLOCK-18`,

@@ -188,8 +188,27 @@ onBeforeMount(() => {
  */
 const buyState = buyMenuState
 
-/** The player wants the DOM panel rather than the game's own menu. */
-const modernBuyMenu = computed(() => tsConfig.value?.buyMenu === 'modern')
+/**
+ * The flow the PORT is in.
+ *
+ * The port's state line carries the mode, and the port is the one
+ * that has it: the classic flow is the game's own canvas menu, and
+ * the modern flow is the loadout flow this panel draws. So the panel
+ * follows the PORT, not the local setting — the setting is what the
+ * port was told (`ts_buy_mode`), and the state line is what the port
+ * is. A port that never answered stays in its classic flow.
+ */
+const modernBuyMenu = computed(() => buyState.mode === 'modern')
+
+/**
+ * The player wants the DOM panel rather than the game's own menu.
+ *
+ * The setting is the player's choice — it is what the port was told.
+ * It is not what is drawn (the port's mode is), but it is what the
+ * bridge notice is about: a player who asked for the modern menu and
+ * got nothing is owed an explanation.
+ */
+const wantsModernMenu = computed(() => tsConfig.value?.buyMenu === 'modern')
 
 /**
  * The player closed the panel while the game's own menu stayed open.
@@ -217,11 +236,12 @@ const showBuyPanel = computed(
  * The bridge is not there: this client build does not carry the port's
  * buy-menu commands.
  *
- * The game's own menu keeps working in that case (the hidden flag was
- * never set), so this is a notice, not an error.
+ * The game's own menu keeps working in that case (the port is in its
+ * classic flow, and the classic flow is the port's default), so this
+ * is a notice, not an error.
  */
 const showBridgeNotice = computed(
-  () => modernBuyMenu.value && buyState.bridgeMissing && !showBuyPanel.value,
+  () => wantsModernMenu.value && buyState.bridgeMissing && !showBuyPanel.value,
 )
 
 // === Reactive state — fed by the engine via stdout intercept ===
