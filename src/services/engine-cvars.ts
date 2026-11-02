@@ -57,9 +57,3 @@ export function writeCvar(name: string, value: string | number): void {
   logDebug(`[cvar] write ${name} = ${value}`);
   XashLoader.exec(`${name} ${value}`);
 }
-
-/** Run an engine command (not a cvar). */
-export function runCommand(cmd: string): void {
-  logDebug(`[cvar] exec ${cmd}`);
-  XashLoader.exec(cmd);
-}
