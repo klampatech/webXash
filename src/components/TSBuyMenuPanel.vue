@@ -32,32 +32,53 @@
     @keydown.stop="onKeydown"
     @keyup.stop
     @keypress.stop
+    @wheel.stop
   >
     <div ref="frame" class="bm__frame">
-      <!-- ============ the header: the screen, the budget ============ -->
-      <header class="bm__head" :class="{ 'bm__head--loadout': screen === 'loadout' }">
+      <!-- ============ the header: the screen, the money, the counters ============ -->
+      <div class="bm__headblock">
+        <header class="bm__head" :class="{ 'bm__head--loadout': screen === 'loadout' }">
         <div class="bm__head-text">
           <h1 class="bm__title">{{ title }}</h1>
-          <p class="bm__crumb">{{ crumb }}</p>
+          <p v-if="crumb" class="bm__crumb">{{ crumb }}</p>
         </div>
-        <div class="bm__budget">
-          <p class="bm__budget-line">
+        <!--
+          The money and the two counters, as three blocks.
+
+          Every number here is the port's: the money left of the budget, the HUD
+          slots in use (out of the five) and the shared slot pool (out of the
+          81). The browser computes none of them — it draws what the port
+          printed.
+        -->
+        <div class="bm__stats">
+          <div class="bm__stat bm__stat--money">
             <b class="bm__money" :class="{ 'bm__money--low': lowBudget }">{{ money(remaining) }}</b>
-            left of {{ money(budget) }}
-            <span class="bm__dot">·</span>
-            {{ slotsInUse }} of {{ WEAPON_SLOTS }} slots in use
-            <span class="bm__dot">·</span>
-            {{ poolText }}
-          </p>
-          <div class="bm__bar" role="img" :aria-label="barLabel">
-            <i
-              class="bm__bar-fill"
-              :class="{ 'bm__bar-fill--low': lowBudget }"
-              :style="{ width: barPercent + '%' }"
-            />
+            <span class="bm__stat-cap">LEFT OF {{ money(budget) }}</span>
+          </div>
+          <div class="bm__stat">
+            <span class="bm__stat-cap">SLOTS</span>
+            <b class="bm__stat-val">{{ slotsInUse }} of {{ WEAPON_SLOTS }}</b>
+          </div>
+          <div class="bm__stat" :aria-label="poolLabel">
+            <span class="bm__stat-cap">ITEMS</span>
+            <b class="bm__stat-val">{{ poolText }}</b>
           </div>
         </div>
       </header>
+
+      <!--
+        The budget's bar: the share of the budget that is spent, across the
+        panel's full width. It sits under the header rather than inside it,
+        because it measures the whole loadout and not the money block.
+      -->
+      <div class="bm__bar" role="img" :aria-label="barLabel">
+        <i
+          class="bm__bar-fill"
+          :class="{ 'bm__bar-fill--low': lowBudget }"
+          :style="{ width: barPercent + '%' }"
+        />
+      </div>
+      </div>
 
       <!-- ============ the body: one screen at a time ============ -->
       <div class="bm__body">
@@ -372,7 +393,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   BUY_REMOVE_PAGE,
   buyMenuState,
@@ -625,9 +646,21 @@ const slotsInUse = computed(
     weaponSlots.value.filter((s) => s.weapons > 0 || s.slots > 0).length,
 )
 
-/** The slot pool: how much of it the loadout takes, and how big it is. */
+/**
+ * The slot pool: how much of it the loadout takes, and how big it is.
+ *
+ * The header's ITEMS block. The port's own two numbers: the shared pool's
+ * use and its limit (81). The browser does not count the weapons itself.
+ */
 const poolText = computed(() =>
-  state.slotLimit ? `${state.slots}/${state.slotLimit} slots` : `${state.slots} slots`,
+  state.slotLimit ? `${state.slots} / ${state.slotLimit}` : `${state.slots}`,
+)
+
+/** The pool's numbers, said out loud: the label alone is not enough. */
+const poolLabel = computed(() =>
+  state.slotLimit
+    ? `${state.slots} of ${state.slotLimit} shared item slots used`
+    : `${state.slots} shared item slots used`,
 )
 
 const barLabel = computed(() => `${money(spent.value)} spent of ${money(budget.value)}`)
@@ -740,7 +773,16 @@ const title = computed(() => {
 
 const crumb = computed(() => {
   if (!modern.value) return state.pageName || ''
-  if (screen.value === 'loadout') return 'Slots match the in-game weapon slots'
+  /*
+    The loadout screen has no crumb.
+
+    It used to carry "Slots match the in-game weapon slots" — a line that
+    explained the panel rather than telling the player where they were,
+    and the panel's own rule is that it does not explain itself. It also
+    cost the height the slot cards need: the design's budget bar sits
+    under the header now, and the cards have to fit above the footer.
+  */
+  if (screen.value === 'loadout') return ''
   /*
     The position, not the name: the heading above carries the name of
     the category being browsed, so the breadcrumb carries where the
@@ -1222,6 +1264,31 @@ watch(
     if (open) focusPanel()
   },
 )
+
+/**
+ * Keep the focused row in sight.
+ *
+ * The lists scroll now, and the focus is the PORT's: the browser never
+ * moves it, it only draws it. So a row the player picks with a digit can
+ * be below the fold — the player would pick the tenth gun and not see it.
+ * `block: 'nearest'` scrolls the list only as far as it has to.
+ */
+function scrollFocusIntoView(): void {
+  const panel = frame.value
+  if (!panel) return
+  const on = panel.querySelector<HTMLElement>('.bm__row--on')
+  if (!on) return
+  on.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+}
+
+watch(
+  () => [
+    state.screen,
+    state.slot,
+    state.rows.map((row) => (row.selected ? row.key : 0)).join(','),
+  ].join('|'),
+  () => nextTick(scrollFocusIntoView),
+)
 </script>
 
 <style scoped>
@@ -1341,11 +1408,11 @@ watch(
 
 /*
   The loadout's title is 40px in the mockup. Its height is part of the
-  frame's layout: with the 30px title the five slot cards do not fit
-  above the pinned footer.
+  frame's layout: the slot cards have to fit above the pinned footer, and
+  the budget's bar sits under the header.
 */
 .bm__head--loadout .bm__title {
-  margin: 4px 0 12px;
+  margin: 4px 0 0;
   font-size: 40px;
   line-height: 1.125;
 }
@@ -1360,37 +1427,73 @@ watch(
   line-height: 1.6;
 }
 
-.bm__budget {
+/*
+  The header's three blocks: the money, the HUD slots and the shared pool.
+
+  The money is the hero — it is the number the player is shopping against —
+  and the two counters sit beside it, each a small label over its value.
+*/
+.bm__headblock {
+  flex: none;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
+  gap: 10px;
 }
 
-.bm__budget-line {
-  margin: 0;
+.bm__stats {
+  display: flex;
+  align-items: flex-start;
+  gap: 28px;
+}
+
+.bm__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: right;
+}
+
+.bm__stat--money {
+  align-items: flex-end;
+}
+
+/* The small label over a counter, and the caption under the money. */
+.bm__stat-cap {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  line-height: 1.2;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.bm__stat-val {
+  color: var(--text);
+  font-size: 19px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
   white-space: nowrap;
 }
 
 .bm__money {
-  color: var(--text);
-  font-size: 18px;
+  color: var(--accent);
+  font-size: 36px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.015em;
+  line-height: 1;
 }
 
 .bm__money--low {
   color: var(--low);
 }
 
-.bm__dot {
-  padding: 0 4px;
-}
-
+/* The budget's bar: the panel's full width, under the header. */
 .bm__bar {
-  width: 260px;
+  width: 100%;
   height: 6px;
+  flex: none;
   background: var(--bar-bg);
   border-radius: 3px;
   overflow: hidden;
@@ -1557,6 +1660,51 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /*
+    The loadout screen SCROLLS.
+
+    A slot can hold several guns — the pistols slot holds nine — and the
+    panel's frame is fixed, so the list has to be able to grow past it.
+    Before this the cards were squeezed to fit instead (flex-shrink), and
+    the last row of a busy slot was clipped with nothing to scroll to: the
+    guns were there and the player could not see or reach them.
+
+    The browse screen's weapon grid scrolls the same way (`.bm__grid`).
+  */
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/*
+  The scrollbars are the panel's own: a thin one in the panel's border
+  colour, so the list reads as part of the design rather than as the
+  browser's furniture.
+*/
+.bm__cards,
+.bm__grid {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.bm__cards::-webkit-scrollbar,
+.bm__grid::-webkit-scrollbar {
+  width: 8px;
+}
+
+.bm__cards::-webkit-scrollbar-track,
+.bm__grid::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.bm__cards::-webkit-scrollbar-thumb,
+.bm__grid::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+.bm__cards::-webkit-scrollbar-thumb:hover,
+.bm__grid::-webkit-scrollbar-thumb:hover {
+  background: var(--border-soft);
 }
 
 .bm__card {
@@ -1576,11 +1724,12 @@ watch(
   gap: 6px;
   padding: 8px 10px;
   /*
-    The mockup's first two cards shrink to make room for all five.
-    Their extra rows are clipped by the next card, while the three
-    empty cards stay one line tall.
+    A slot card takes the height its guns need. It does NOT shrink to fit
+    the frame: the list scrolls instead, so a busy slot is taller and the
+    player scrolls to it — rather than the card squashing and hiding its
+    last row.
   */
-  flex: 0 1 auto;
+  flex: none;
 }
 
 .bm__card--slim {

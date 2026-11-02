@@ -977,6 +977,7 @@ function commitDump(): void {
   buyMenuState.hasPurchaseSummary = dump.hasPurchaseSummary;
   buyMenuState.raw = raw;
   buyMenuState.updatedAt = Date.now();
+  resyncModeIfItDrifted();
 }
 
 /**
@@ -1153,6 +1154,45 @@ export function storedBuyMenuMode(): BuyMenuMode {
   } catch (_) {
     return 'classic';
   }
+}
+
+/**
+ * The port drifted from the player's preference: put it back.
+ *
+ * The port's flow is the browser's to choose, and the port now keeps it
+ * across a map change (the client's HUD is re-initialised there, and the
+ * game's own `Init` starts the classic flow). This is the belt to that
+ * braces: the state line says which flow the port is in, and the
+ * preference says which one the player chose, so a port that came back as
+ * the classic menu is told again.
+ *
+ * It is a no-op when they agree, which is the normal case — and the guard
+ * below keeps it from turning into a loop if the port ever refuses.
+ */
+let modeResyncPending = false;
+let modeResyncAttempts = 0;
+
+/** How many times the port is told again before the session gives up. */
+const MODE_RESYNC_LIMIT = 3;
+
+function resyncModeIfItDrifted(): void {
+  if (modeResyncPending) return;
+  if (modeResyncAttempts >= MODE_RESYNC_LIMIT) return;
+  if (buyMenuState.unsupported || buyMenuState.bridgeMissing) return;
+  const wanted = storedBuyMenuMode();
+  if (buyMenuState.mode === wanted) {
+    // They agree: the port took the command, or it never drifted.
+    modeResyncAttempts = 0;
+    return;
+  }
+  modeResyncPending = true;
+  modeResyncAttempts += 1;
+  sendBuyMenuMode(wanted);
+  // The port answers with its state; if it took the command, the next
+  // dump agrees and the guard is released.
+  window.setTimeout(() => {
+    modeResyncPending = false;
+  }, 2000);
 }
 
 // ---------------------------------------------------------------------------
