@@ -61,6 +61,8 @@ interface MockWeapon {
   name: string;
   cost: number;
   slots: number;
+  /** The attachment labels the entry record carries. */
+  attachments?: string[];
 }
 
 /** One slot of the loadout. */
@@ -180,7 +182,12 @@ const LOADOUT_A: MockSlot[] = [
     number: 2,
     label: 'Pistols',
     weapons: [
-      { name: 'Glock-18', cost: 2550, slots: 10 },
+      {
+        name: 'Glock-18',
+        cost: 2550,
+        slots: 10,
+        attachments: ['Silencer', 'Lasersight'],
+      },
       { name: 'Desert Eagle', cost: 1050, slots: 15 },
     ],
   },
@@ -195,32 +202,28 @@ const LOADOUT_A: MockSlot[] = [
  * The mockup's frame 4: $1,950 left of $30,000 and 78 of the 81 slots
  * in use. The weapon set is the game's own; the slot counts are a
  * ruleset's, because the stock pool cannot be spent that fast.
+ *
+ * The modern flow has seven remove keys (10..16), so this synthetic
+ * loadout has seven entries. It still fills all five weapon slots.
  */
 const LOADOUT_LOW: MockSlot[] = [
   {
     number: 1,
     label: 'Melee · Grenades · Swords',
-    weapons: [
-      { name: 'Katana', cost: 2900, slots: 10 },
-      { name: 'Combat Knife', cost: 100, slots: 1 },
-      { name: 'Seal Knife', cost: 100, slots: 1 },
-    ],
+    weapons: [{ name: 'Katana', cost: 2900, slots: 10 }],
   },
   {
     number: 2,
     label: 'Pistols',
     weapons: [
-      { name: 'Glock-18', cost: 2550, slots: 10 },
-      { name: 'Desert Eagle', cost: 1050, slots: 15 },
+      { name: 'Raging Bull', cost: 2100, slots: 10 },
+      { name: 'Desert Eagle', cost: 1050, slots: 10 },
     ],
   },
   {
     number: 3,
     label: 'SMGs',
-    weapons: [
-      { name: 'Skorpion', cost: 1100, slots: 15 },
-      { name: 'Mini-Uzi', cost: 1300, slots: 12 },
-    ],
+    weapons: [{ name: 'UMP', cost: 2400, slots: 20 }],
   },
   {
     number: 4,
@@ -233,10 +236,7 @@ const LOADOUT_LOW: MockSlot[] = [
   {
     number: 5,
     label: 'Special',
-    weapons: [
-      { name: 'Akimbo MK23', cost: 700, slots: 3 },
-      { name: 'Akimbo Five-seveN', cost: 1250, slots: 3 },
-    ],
+    weapons: [{ name: 'Golden Colts', cost: 2600, slots: 1 }],
   },
 ];
 
@@ -282,13 +282,31 @@ function slotRecords(slots: MockSlot[]): string[] {
   return out;
 }
 
-/** The config's entries, grouped by slot, in slot order. */
+/**
+ * The config's entries.
+ *
+ * The modern entry record carries the attachment labels, the
+ * weapon's classic slot, and the key that removes it. The classic
+ * four-field shape is still parsed by the browser for the classic
+ * flow, but this harness exercises the modern shape.
+ *
+ *   entry <index> <cost> <slots> <attachments> <slot> <remove_key> <name>
+ *
+ * The attachment field is a comma-separated list of the port's own
+ * labels — title keys in the game, plain names here, because the
+ * harness has no game files to resolve them against. The browser
+ * resolves them the way it resolves every other label.
+ */
 function entryRecords(slots: MockSlot[]): string[] {
   const out: string[] = [];
   let index = 0;
   for (const slot of slots) {
     for (const weapon of slot.weapons) {
-      out.push(`TSBUY entry ${index} ${weapon.cost} ${weapon.slots} ${weapon.name}`);
+      const attachments = weapon.attachments?.join(',') ?? '';
+      const removeKey = 10 + index;
+      out.push(
+        `TSBUY entry ${index} ${weapon.cost} ${weapon.slots} ${attachments} ${slot.number} ${removeKey} ${weapon.name}`,
+      );
       index += 1;
     }
   }
@@ -520,6 +538,7 @@ function attachScenario(state: MockState): MockScenario {
     `TSBUY row 0 ${gunCost} 0 ${PAGE.OPTIONS} - Glock-18`,
     ...attachments,
     `TSBUY row 6 ${bundle} 0 ${PAGE.OPTIONS} 6 Add to loadout`,
+    `TSBUY sum ${bundle} ${BUDGET - 6600 - bundle}`,
     ...entryRecords(LOADOUT_A),
     'TSBUY end',
   ];

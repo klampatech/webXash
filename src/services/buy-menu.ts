@@ -44,12 +44,14 @@
 // slot. The port grows a second flow for it and prints the same kind
 // of records, plus four new ones:
 //
-//   TSBUY state ... mode=modern screen=loadout slot=2 tab=0 title=...
+//   TSBUY state ... mode=modern screen=loadout slot=2 tab=0 slot_limit=81 ...
 //   TSBUY slot 1 11 2 Melee - Grenades - Swords
 //   TSBUY tab 0 Loadout A 1
 //   TSBUY row 1 850 0 2 1 Glock-18
 //   TSBUY short 4 950
 //   TSBUY owned 3 1
+//   TSBUY entry 0 2550 10 #Buy_Silencer,#Buy_Laser 2 11 Glock-18
+//   TSBUY sum 2550 20850
 //
 //   - `mode`   is `classic` or `modern`.
 //   - `screen` is `loadout`, `browse` or `attach`.
@@ -71,15 +73,15 @@
 //     its key acts on, and a click sends the key with that page; the
 //     slot cards have no page of their own, so they send the key to
 //     the port's current page, which is the screen the port is on.
-//   - The port prints the loadout's entries grouped by slot, in slot
-//     order, and each slot record says how many weapons it holds — so
-//     the browser places the entries by counting, and knows nothing
-//     about which slot a weapon belongs to.
+//   - The modern entry record carries the weapon's classic slot. The
+//     browser puts an entry in exactly that slot; it does not infer a
+//     slot from the weapon's name or from the order of the records.
+//     The old four-field entry record has no slot, so that shape keeps
+//     the classic flow's counting fallback.
 //   - "Need $X more" is the port's number (the `short` record), never
 //     the browser's subtraction.
-//   - The browser adds up the prices of the pending purchase for the
-//     attachment screen's total — it does not decide what is in the
-//     loadout, and it does not decide whether a purchase is allowed.
+//   - The pending purchase's total and the money left after it are the
+//     port's numbers (`sum`), never arithmetic in the browser.
 
 // THE MODERN FLOW'S KEYS
 // ----------------------
@@ -104,6 +106,14 @@ import { logDebug } from './debug-log';
 
 /** The prefix every record the port prints carries. */
 const PREFIX = 'TSBUY ';
+
+/**
+ * The port's remove page.
+ *
+ * A loadout weapon is removed by running its remove key on this
+ * page, exactly as the classic menu's remove column does.
+ */
+export const BUY_REMOVE_PAGE = 5;
 
 /** The flags a row can carry. The port writes `0` for "no flags". */
 const ROW_FLAGS = ['on', 'dim', 'x', 'sep'] as const;
@@ -188,8 +198,27 @@ export interface BuyEntry {
   cost: number;
   /** The inventory slots the entry takes. */
   slots: number;
-  /** The entry's name. */
+  /** The entry's name, as the port printed it. */
+  label: string;
+  /** The entry's name, resolved through the game's own titles. */
   name: string;
+  /**
+   * The classic weapon slot the entry belongs to (1..5).
+   *
+   * The modern entry record carries this. The old four-field record
+   * does not, and then this is 0.
+   */
+  slot: number;
+  /**
+   * The key that removes this entry on the port's remove page.
+   *
+   * Zero means the record did not carry a removal key.
+   */
+  removeKey: number;
+  /** The attachment labels, as the port printed them. */
+  attachmentLabels: string[];
+  /** The attachment labels, resolved through the game's own titles. */
+  attachments: string[];
 }
 
 export interface BuyMenuState {
@@ -270,6 +299,17 @@ export interface BuyMenuState {
   shortfalls: Record<number, number>;
   /** The rows that are already in the loadout: the row's key. */
   owned: Record<number, boolean>;
+  /**
+   * The pending gun and its attachments' total, from `TSBUY sum`.
+   *
+   * This is the port's total, because akimbo and full-load
+   * multipliers can make it different from the gun's base price.
+   */
+  pendingTotal: number;
+  /** The money left after the pending purchase, from `TSBUY sum`. */
+  remainingAfterPurchase: number;
+  /** True when the port printed a pending-purchase summary. */
+  hasPurchaseSummary: boolean;
   /** Every key=value the port printed, including ones this file does not know. */
   raw: Record<string, string>;
   /** When the state arrived (ms since the epoch). */
@@ -306,6 +346,9 @@ function emptyState(): BuyMenuState {
     tabs: [],
     shortfalls: {},
     owned: {},
+    pendingTotal: 0,
+    remainingAfterPurchase: 0,
+    hasPurchaseSummary: false,
     raw: {},
     updatedAt: 0,
   };
@@ -448,6 +491,11 @@ function relabelState(): void {
     ...row,
     text: resolveBuyLabel(row.label, row.key),
   }));
+  buyMenuState.entries = buyMenuState.entries.map((entry) => ({
+    ...entry,
+    name: resolveBuyLabel(entry.label),
+    attachments: entry.attachmentLabels.map((label) => resolveBuyLabel(label)),
+  }));
   buyMenuState.pageTitle = resolveBuyLabel(lastPageTitleRaw);
   buyMenuState.pageName = buyPageName(lastPageTitleRaw, buyMenuState.pageTitle);
 }
@@ -538,6 +586,9 @@ interface Dump {
   tabs: BuyTabInfo[];
   shortfalls: Record<number, number>;
   owned: Record<number, boolean>;
+  pendingTotal: number;
+  remainingAfterPurchase: number;
+  hasPurchaseSummary: boolean;
 }
 
 function newDump(): Dump {
@@ -550,6 +601,9 @@ function newDump(): Dump {
     tabs: [],
     shortfalls: {},
     owned: {},
+    pendingTotal: 0,
+    remainingAfterPurchase: 0,
+    hasPurchaseSummary: false,
   };
 }
 
@@ -604,6 +658,61 @@ function makeRow(
     dim: flags.includes('dim'),
     unaffordable: flags.includes('x'),
     separator: flags.includes('sep'),
+  };
+}
+
+/**
+ * Parse one entry record.
+ *
+ * The modern record is:
+ *
+ *   entry <index> <cost> <slots> <attachments> <slot> <remove_key> <name>
+ *
+ * The attachment field is a comma-separated list of the same title
+ * keys the port prints everywhere else. It may be empty.
+ *
+ * The classic record is:
+ *
+ *   entry <index> <cost> <slots> <name>
+ *
+ * Both shapes are accepted. The classic one has no slot or removal
+ * key, so those stay zero.
+ */
+function parseEntry(rest: string): BuyEntry {
+  const modern = rest.match(
+    /^(\d+)\s+(\d+)\s+(\d+)(?:[ \t]+([^\s]*))[ \t]+(\d+)\s+(\d+)\s+(.+)$/,
+  );
+  if (modern) {
+    const label = modern[7].trim();
+    const attachmentLabels = (modern[4] ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter((value) => value && value !== '-');
+    return {
+      index: toNumber(modern[1]),
+      cost: toNumber(modern[2]),
+      slots: toNumber(modern[3]),
+      label,
+      name: resolveBuyLabel(label),
+      slot: toNumber(modern[5]),
+      removeKey: toNumber(modern[6]),
+      attachmentLabels,
+      attachments: attachmentLabels.map((value) => resolveBuyLabel(value)),
+    };
+  }
+
+  const parts = rest.split(/\s+/);
+  const label = parts.slice(3).join(' ');
+  return {
+    index: toNumber(parts[0]),
+    cost: toNumber(parts[1]),
+    slots: toNumber(parts[2]),
+    label,
+    name: resolveBuyLabel(label),
+    slot: 0,
+    removeKey: 0,
+    attachmentLabels: [],
+    attachments: [],
   };
 }
 
@@ -675,13 +784,7 @@ function onEngineLine(rawLine: string): void {
     }
     case 'entry': {
       if (!pendingDump) pendingDump = newDump();
-      const parts = rest.split(/\s+/);
-      pendingDump.entries.push({
-        index: toNumber(parts[0]),
-        cost: toNumber(parts[1]),
-        slots: toNumber(parts[2]),
-        name: parts.slice(3).join(' '),
-      });
+      pendingDump.entries.push(parseEntry(rest));
       break;
     }
     case 'slot': {
@@ -728,6 +831,16 @@ function onEngineLine(rawLine: string): void {
       // `owned <key> <flag>` — the row is already in the loadout.
       const parts = rest.split(/\s+/);
       pendingDump.owned[toNumber(parts[0])] = parts[1] === undefined ? true : toBool(parts[1]);
+      break;
+    }
+    case 'sum': {
+      if (!pendingDump) pendingDump = newDump();
+      // `sum <total> <remaining_after>` — the port's pending-purchase
+      // total and the money that would be left after it.
+      const parts = rest.split(/\s+/);
+      pendingDump.hasPurchaseSummary = true;
+      pendingDump.pendingTotal = toNumber(parts[0]);
+      pendingDump.remainingAfterPurchase = toNumber(parts[1]);
       break;
     }
     case 'end': {
@@ -780,6 +893,9 @@ function commitDump(): void {
   buyMenuState.tabs = dump.tabs;
   buyMenuState.shortfalls = dump.shortfalls;
   buyMenuState.owned = dump.owned;
+  buyMenuState.pendingTotal = dump.pendingTotal;
+  buyMenuState.remainingAfterPurchase = dump.remainingAfterPurchase;
+  buyMenuState.hasPurchaseSummary = dump.hasPurchaseSummary;
   buyMenuState.raw = raw;
   buyMenuState.updatedAt = Date.now();
 }
@@ -850,7 +966,10 @@ function slotLimitFrom(raw: Record<string, string>): number {
  * is what the digit keys do.
  */
 export function sendBuyKey(key: number, page?: number): void {
-  if (!Number.isInteger(key) || key < 1 || key > 11) return;
+  // The modern flow's remove keys run through 16. The classic flow
+  // still uses only its own keys; widening the guard does not change
+  // what the classic menu does with them.
+  if (!Number.isInteger(key) || key < 1 || key > 16) return;
   // The engine's command pool does not exist until its first frame, and
   // a command sent before that makes the engine raise a fatal error.
   if (!XashLoader.isEngineUp()) return;
