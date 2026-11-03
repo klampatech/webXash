@@ -60,6 +60,7 @@
   import TSHud from '/@/components/TSHud.vue';
   import XashOptionsOverlay from '/@/components/XashOptionsOverlay.vue';
   import { notePointerLocked } from '/@/services/escape-gate';
+  import { isDomMenuOnScreen, installCanvasMouseGuard } from '/@/services/pointer-ownership.ts';
   import {
     startKeyboardBridge,
     tryAttachMouseBridge,
@@ -284,7 +285,24 @@ const connectingLabel = computed(() => 'Connecting to server');
     // Re-engaging the game restarts the Escape sequence: the next Escape
     // releases the mouse again rather than opening the overlay.
     notePointerLocked()
-    if (document.pointerLockElement !== canvas) {
+    // A DOM MENU OWNS THE POINTER WHILE IT IS ON SCREEN.
+    //
+    // Under the pointer lock the browser delivers every mouse event to the
+    // lock target - the canvas - no matter what is painted over it. So a
+    // lock taken back while the buy panel is open makes the panel's
+    // buttons DEAD: they look enabled, and clicking them does nothing.
+    // That was issue #118.
+    //
+    // `syncPointerLock()` in `TSHud.vue` normally keeps the lock out while
+    // the panel is up, but this handler is a SECOND way in: it is bound to
+    // the canvas's `@pointerdown`, so one click on the game view used to
+    // take the lock back and break the panel.
+    //
+    // The focus and the Escape-sequence reset above still happen - the
+    // player did press something, and the game should know. Only the LOCK
+    // is withheld, because the lock is what steals the panel's clicks.
+    const menuOwnsPointer = isDomMenuOnScreen()
+    if (!menuOwnsPointer && document.pointerLockElement !== canvas) {
       canvas.requestPointerLock?.().catch(() => {
         // Rejection just means the next click will do it.
       })
@@ -318,6 +336,9 @@ const connectingLabel = computed(() => 'Connecting to server');
    */
   let stopKeyboardBridge: (() => void) | null = null;
 
+  /** Uninstalls the canvas mouse guard (see `pointer-ownership.ts`). */
+  let stopCanvasMouseGuard: (() => void) | null = null;
+
   onMounted(() => {
     if (new URLSearchParams(window.location.search).get('nohud') !== '1') {
       // `give` and friends are gated behind sv_cheats; TS's own rules
@@ -338,6 +359,17 @@ const connectingLabel = computed(() => 'Connecting to server');
 
   onMounted(() => {
     xashCanvas.value = xashCanvasElement.value;
+    // A DOM menu owns the pointer while it is on screen: the canvas must
+    // not take the mouse, or the menu's buttons go dead under the pointer
+    // lock. Installed here, on the component that owns the canvas.
+    if (xashCanvasElement.value) {
+      stopCanvasMouseGuard = installCanvasMouseGuard(xashCanvasElement.value);
+    }
+  });
+
+  onBeforeUnmount(() => {
+    stopCanvasMouseGuard?.();
+    stopCanvasMouseGuard = null;
   });
 </script>
 
