@@ -1499,7 +1499,24 @@ class XashLoader {
       );
     }
 
-    const launch = [...baseArgs, ...videoArgs, ...args];
+    // 2026-11-02: `+con_notifytime 0` retires the engine's notify
+    // window — the last few console lines it draws OVER the game in the
+    // top-left corner (FWGS engine/client/console.c, Con_DrawNotify).
+    // That window is a debug-console feature, and the console is not
+    // reachable in the browser build (the backquote and tilde binds are
+    // cleared). It was showing the port's TSBUY buy-menu records and the
+    // engine's boot chatter as player-visible garbage in the corner.
+    //
+    // The records still reach the browser on stdout — the DOM buy menu
+    // reads them there — they just stop being drawn over the game.
+    //
+    // It goes in BEFORE the caller's launch options for the same reason
+    // D.7.18 puts the cvars first: a cvar value that follows a
+    // `+<cmd> <arg>` on the command line can be swallowed by that
+    // command's argument. The engine runs the whole command line in
+    // Host_ChangeGame, before the first frame, so even the boot chatter
+    // never gets drawn.
+    const launch = [...baseArgs, ...videoArgs, '+con_notifytime', '0', ...args];
 
     if (options.enableConsole) {
       launch.push(CONSOLE_ARG);

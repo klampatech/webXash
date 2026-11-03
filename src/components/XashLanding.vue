@@ -50,20 +50,27 @@
           ><span class="ts-landing__title-second">Ballet</span>
         </h1>
 
-        <!-- the dashed rule: a phosphor scan line with a solid cap -->
-        <svg class="ts-landing__rule" viewBox="0 0 560 24" preserveAspectRatio="none" aria-hidden="true">
-          <line
-            x1="0"
-            y1="12"
-            x2="520"
-            y2="12"
-            stroke="currentColor"
-            stroke-width="3"
-            stroke-dasharray="2 10"
-            stroke-linecap="round"
-          />
-          <path d="M520 6h30v12h-30z" fill="var(--ts-lime)" />
-        </svg>
+        <!-- the dashed rule: a phosphor scan line with a bullet in flight.
+             The line stretches to fill the width; the bullet is its own SVG so
+             it keeps its aspect ratio and still reads as a bullet at any size.
+             The trail meets the bullet's flat base and the nose leads. -->
+        <div class="ts-landing__rule" aria-hidden="true">
+          <svg class="ts-landing__rule-line" viewBox="0 0 520 24" preserveAspectRatio="none">
+            <line
+              x1="0"
+              y1="12"
+              x2="520"
+              y2="12"
+              stroke="currentColor"
+              stroke-width="3"
+              stroke-dasharray="2 10"
+              stroke-linecap="round"
+            />
+          </svg>
+          <svg class="ts-landing__rule-bullet" viewBox="0 0 31 14">
+            <path d="M31 7 L16 11 L5 11 L5 12.5 L1 12.5 L1 1.5 L5 1.5 L5 3 L16 3 Z" fill="var(--ts-lime)" />
+          </svg>
+        </div>
 
         <p class="ts-landing__lede">
           The Specialists Mod 3.0 with the original ruleset — ported to
@@ -141,11 +148,11 @@
         </section>
 
         <section
-          v-show="activeTab === 'how'"
+          v-show="activeTab === 'faq'"
           role="tabpanel"
           class="ts-landing__section"
         >
-          <TSHowToPlay />
+          <TSFaq />
         </section>
       </div>
 
@@ -190,7 +197,7 @@ import {
   type TsServer,
 } from '/@/services/ts-server-list.ts';
 import TSServerList from '/@/components/TSServerList.vue';
-import TSHowToPlay from '/@/components/TSHowToPlay.vue';
+import TSFaq from '/@/components/TSFaq.vue';
 import TSLeaderboard from '/@/components/TSLeaderboard.vue';
 import PlayerIdentityModal from '/@/components/PlayerIdentityModal.vue';
 import { enterFullscreen } from '/@/services/fullscreen.ts';
@@ -202,7 +209,7 @@ import {
 const tabs = [
   { id: 'servers', label: 'Servers' },
   { id: 'leaderboard', label: 'Leaderboard' },
-  { id: 'how', label: 'How It Works' },
+  { id: 'faq', label: 'FAQ' },
 ] as const;
 
 const activeTab = ref<(typeof tabs)[number]['id']>('servers');
@@ -528,6 +535,18 @@ onMounted(() => {
   background: var(--ts-void);
   pointer-events: auto;
 
+  // The scrollbar must not move the content. This panel is the only
+  // scroll container on the page, and the panels behind the tabs have
+  // different heights — the FAQ is long, the server list is short — so
+  // switching tabs made the scrollbar appear or vanish and the centred
+  // content hopped about seven pixels sideways.
+  //
+  // `stable` reserves the gutter whether or not there is a scrollbar.
+  // `both-edges` reserves it on BOTH sides, so the content box stays
+  // centred in the viewport instead of centred in a box that is always
+  // fifteen pixels narrower than the viewport.
+  scrollbar-gutter: stable both-edges;
+
   /* ---- the fixed bars ------------------------------------------------ */
   &__topbar,
   &__bottombar {
@@ -851,12 +870,27 @@ onMounted(() => {
     color: var(--ts-signal);
   }
 
-  /* The dashed rule: a phosphor scan line with a solid cap. */
+  /* The dashed rule: a phosphor scan line with a bullet in flight. The line
+     stretches; the bullet keeps its aspect ratio. */
   &__rule {
+    display: flex;
+    align-items: center;
     width: min(520px, 72vw);
     height: 16px;
     margin-top: 0.7rem;
     color: var(--ts-signal);
+  }
+
+  &__rule-line {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 16px;
+  }
+
+  &__rule-bullet {
+    flex: 0 0 auto;
+    width: 31px;
+    height: 14px;
   }
 
   &__lede {
