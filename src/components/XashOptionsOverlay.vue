@@ -150,7 +150,7 @@
             step="0.05"
           />
         </label>
-        <button class="opts__btn" type="button" @click="applySettings">Apply</button>
+        <button class="opts__btn opts__btn--primary" type="button" @click="applySettings">Apply</button>
       </section>
 
       <!--
@@ -342,12 +342,48 @@ function quitToWebUi() {
 
 <style scoped lang="scss">
 .opts {
+  /*
+   * THE AMBER SCHEME — the GAME's palette, not the shell's.
+   *
+   * Everything else in this app is a phosphor-green operator terminal:
+   * the landing page, the boot screen, the disconnect panel. This panel
+   * is the exception, and it is not arbitrary: it opens INSIDE the
+   * match, over the game's own amber HUD, so a green menu in the middle
+   * of an amber game read as two systems fighting. The game's amber is
+   * TS's own — `iTeamColors[0]`, rgb(255,170,0) — and these values are
+   * sampled from the design mock Kyle sent, not eyeballed.
+   *
+   * The tokens are scoped here on purpose: the shell's `--ts-*` palette
+   * is unchanged for every other surface, and this one panel gets the
+   * game's.
+   *
+   *   --opts-ground   #13110d  the panel ground, and the text on amber
+   *   --opts-surface  #1e1a14  inputs, buttons, card bodies
+   *   --opts-raise    #292217  the character's portrait tile
+   *   --opts-amber    #e9bb5f  THE accent: headings, selected states
+   *   --opts-amber-dim #c5b381 the section legends
+   *   --opts-ink      #f1e9da  body text
+   *   --opts-ink-muted #b1a791 labels, unselected states
+   *   --opts-edge     #493c22  field and card borders
+   *   --opts-divider  #32291f  the hairlines between sections
+   */
+  --opts-ground: #13110d;
+  --opts-surface: #1e1a14;
+  --opts-raise: #292217;
+  --opts-amber: #e9bb5f;
+  --opts-amber-hot: #f2c87b;
+  --opts-amber-dim: #c5b381;
+  --opts-ink: #f1e9da;
+  --opts-ink-muted: #b1a791;
+  --opts-edge: #493c22;
+  --opts-divider: #32291f;
+
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(1, 10, 4, 0.9);
+  background: rgba(19, 17, 13, 0.92);
   /* Above the HUD (1000) and the buy panel (1001): the overlay is a
      MODAL, and the panel can be open when the player reaches for the
      options (the game opens its own buy menu when the player becomes
@@ -360,8 +396,14 @@ function quitToWebUi() {
     max-height: 88vh;
     overflow-y: auto;
     padding: 1.1rem 1.2rem 1.3rem;
-    background: var(--ts-panel, #06150a);
-    border: 1px solid rgba(0, 255, 65, 0.3);
+    background: var(--opts-ground);
+    border: 1px solid var(--opts-edge);
+    /* The buy menu's frame radius. The settings panel and the buy menu
+       are both in-game surfaces, and one square and one rounded read as
+       two different products. These are the same numbers the modern
+       buy menu uses: 14 for the frame, 10 for a card, 8 for a row, a
+       button or a tab, 6 for a key. */
+    border-radius: 14px;
     box-shadow: 0 1.5rem 3rem rgba(0, 0, 0, 0.6);
   }
 
@@ -383,7 +425,7 @@ function quitToWebUi() {
     width: 9px;
     height: 21px;
     flex: none;
-    background-color: var(--ts-signal);
+    background-color: var(--opts-amber);
     -webkit-mask: url('../assets/brand/bb-mark.svg') no-repeat center / contain;
     mask: url('../assets/brand/bb-mark.svg') no-repeat center / contain;
   }
@@ -393,7 +435,7 @@ function quitToWebUi() {
     font-family: var(--ts-font-display);
     font-size: 1.1rem;
     letter-spacing: 0.08em;
-    color: var(--ts-lime);
+    color: var(--opts-amber);
   }
 
   /* The close button.
@@ -420,21 +462,22 @@ function quitToWebUi() {
     min-width: 2rem;
     min-height: 2rem;
     padding: 0;
-    background: rgba(0, 255, 65, 0.06);
+    background: rgba(233, 187, 95, 0.08);
     border: none;
-    color: var(--ts-ink-muted);
+    border-radius: 8px;
+    color: var(--opts-ink-muted);
     font-size: 0.95rem;
     line-height: 1;
     cursor: pointer;
 
     &:hover {
-      background: rgba(0, 255, 65, 0.12);
-      color: var(--ts-lime);
+      background: rgba(233, 187, 95, 0.16);
+      color: var(--opts-amber);
     }
 
     &:focus-visible {
       outline: none;
-      box-shadow: 0 0 0 1px var(--ts-signal);
+      box-shadow: 0 0 0 1px var(--opts-amber);
 
       /* Forced colours force `box-shadow` to none, so the phosphor
          ring is gone. Keep an outline, or a keyboard user in Windows
@@ -456,7 +499,7 @@ function quitToWebUi() {
 
   &__group {
     padding: 0.7rem 0 0.5rem;
-    border-top: 1px solid rgba(0, 255, 65, 0.14);
+    border-top: 1px solid var(--opts-divider);
   }
 
   &__legend {
@@ -465,7 +508,7 @@ function quitToWebUi() {
     font-size: 0.68rem;
     letter-spacing: 0.18em;
     text-transform: uppercase;
-    color: var(--ts-signal);
+    color: var(--opts-amber-dim);
   }
 
   &__row {
@@ -485,15 +528,16 @@ function quitToWebUi() {
 
   &__label {
     font-size: 0.82rem;
-    color: var(--ts-ink);
+    color: var(--opts-ink);
   }
 
   &__input {
     width: 9rem;
     padding: 0.28rem 0.45rem;
-    background: rgba(0, 0, 0, 0.45);
-    border: 1px solid rgba(0, 255, 65, 0.25);
-    color: var(--ts-ink-bright);
+    background: var(--opts-surface);
+    border: 1px solid var(--opts-edge);
+    border-radius: 8px;
+    color: var(--opts-ink);
     font-family: var(--ts-font-mono);
     font-size: 0.82rem;
 
@@ -501,8 +545,8 @@ function quitToWebUi() {
        focus is unmistakable without a browser-default blue outline. */
     &:focus {
       outline: none;
-      border-color: var(--ts-signal);
-      box-shadow: 0 0 0 1px var(--ts-signal), 0 0 12px rgba(0, 255, 65, 0.3);
+      border-color: var(--opts-amber);
+      box-shadow: 0 0 0 1px var(--opts-amber), 0 0 12px rgba(233, 187, 95, 0.25);
     }
 
     &--num {
@@ -524,9 +568,10 @@ function quitToWebUi() {
     align-items: center;
     gap: 0.3rem;
     padding: 0.22rem 0.5rem;
-    background: rgba(0, 255, 65, 0.06);
-    border: 1px solid rgba(0, 255, 65, 0.28);
-    color: var(--ts-ink-muted);
+    background: var(--opts-surface);
+    border: 1px solid var(--opts-edge);
+    border-radius: 10px;
+    color: var(--opts-ink-muted);
     font-family: var(--ts-font-mono);
     font-size: 0.68rem;
     letter-spacing: 0.06em;
@@ -534,20 +579,22 @@ function quitToWebUi() {
     cursor: pointer;
 
     &:hover {
-      border-color: var(--ts-lime);
-      color: var(--ts-ink);
+      border-color: var(--opts-amber);
+      color: var(--opts-ink);
     }
 
     &:focus-visible {
       outline: none;
-      border-color: var(--ts-signal);
-      box-shadow: 0 0 0 1px var(--ts-signal);
+      border-color: var(--opts-amber);
+      box-shadow: 0 0 0 1px var(--opts-amber);
     }
 
+    /* The chosen character: the game's amber for the border, the letter
+       and the name. The card's own fill stays put — in the mock the
+       selected card is the same dark tile with a lit edge. */
     &--on {
-      background: rgba(0, 255, 65, 0.16);
-      border-color: var(--ts-signal);
-      color: var(--ts-ink-bright);
+      border-color: var(--opts-amber);
+      color: var(--opts-amber);
     }
   }
 
@@ -567,8 +614,15 @@ function quitToWebUi() {
     height: 72px;
     object-fit: contain;
     image-rendering: auto;
-    background: rgba(0, 0, 0, 0.35);
-    border-radius: 2px;
+    background: var(--opts-raise);
+    border-radius: 10px;
+
+    /* The old blacksteam theme puts a 2px grey-teal frame on EVERY img
+       in the app (`img { border: solid 2px #7b8484 }`). It is not part
+       of this palette, so the portrait takes the tile's edge instead —
+       or nothing at all, which is what the mock shows: a warm square
+       with the character in it. */
+    border: none;
   }
 
   &__model-name {
@@ -578,17 +632,18 @@ function quitToWebUi() {
   &__btn {
     margin-top: 0.35rem;
     padding: 0.35rem 0.7rem;
-    background: rgba(0, 255, 65, 0.08);
-    border: 1px solid rgba(0, 255, 65, 0.32);
-    color: var(--ts-ink-bright);
+    background: var(--opts-surface);
+    border: 1px solid var(--opts-edge);
+    border-radius: 8px;
+    color: var(--opts-ink);
     font-family: var(--ts-font-mono);
     font-size: 0.75rem;
     letter-spacing: 0.06em;
     cursor: pointer;
 
     &:hover:not(:disabled) {
-      background: rgba(0, 255, 65, 0.18);
-      border-color: var(--ts-lime);
+      background: var(--opts-raise);
+      border-color: var(--opts-amber);
     }
 
     &:disabled {
@@ -596,6 +651,25 @@ function quitToWebUi() {
       cursor: default;
     }
 
+    /* The mock's Apply: a solid amber plate with the ground colour as
+       the label. It is the only filled button in the panel, so it is
+       the only one that reads as the primary action. */
+    &--primary {
+      background: var(--opts-amber);
+      border-color: var(--opts-amber);
+      color: var(--opts-ground);
+      font-weight: 600;
+
+      &:hover:not(:disabled) {
+        background: var(--opts-amber-hot);
+        border-color: var(--opts-amber-hot);
+        color: var(--opts-ground);
+      }
+    }
+
+    /* The Quit button stays red: it is the one control here that ends
+       the session, and red is the system's danger colour in every
+       palette it has. */
     &--danger {
       border-color: rgba(255, 92, 92, 0.5);
       color: #ffb4b4;
@@ -611,14 +685,19 @@ function quitToWebUi() {
      shape as the character picker above, with the chosen one lit. */
   &__switch {
     display: inline-flex;
-    border: 1px solid rgba(0, 255, 65, 0.28);
+    border: 1px solid var(--opts-edge);
+    border-radius: 8px;
+    /* Clip the lit half to the container's own radius, so the selected
+       side is a rounded plate and not a square block inside a rounded
+       frame — which is what the mock shows. */
+    overflow: hidden;
   }
 
   &__switch-btn {
-    background: rgba(0, 0, 0, 0.35);
+    background: var(--opts-surface);
     border: none;
-    border-right: 1px solid rgba(0, 255, 65, 0.18);
-    color: var(--ts-ink-muted, #6fa67c);
+    border-right: 1px solid var(--opts-divider);
+    color: var(--opts-ink-muted);
     font-family: var(--ts-font-mono);
     font-size: 0.7rem;
     letter-spacing: 0.08em;
@@ -631,18 +710,20 @@ function quitToWebUi() {
     }
 
     &:hover {
-      color: var(--ts-lime);
+      color: var(--opts-ink);
     }
 
     &:focus-visible {
       outline: none;
-      border-color: var(--ts-signal);
-      box-shadow: 0 0 0 1px var(--ts-signal);
+      border-color: var(--opts-amber);
+      box-shadow: 0 0 0 1px var(--opts-amber);
     }
 
+    /* The chosen side is the amber plate, with the ground colour as its
+       label — the mock's Modern. */
     &--on {
-      background: rgba(0, 255, 65, 0.16);
-      color: var(--ts-ink-bright);
+      background: var(--opts-amber);
+      color: var(--opts-ground);
     }
   }
 }
