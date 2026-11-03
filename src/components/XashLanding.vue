@@ -141,11 +141,11 @@
         </section>
 
         <section
-          v-show="activeTab === 'how'"
+          v-show="activeTab === 'faq'"
           role="tabpanel"
           class="ts-landing__section"
         >
-          <TSHowToPlay />
+          <TSFaq />
         </section>
       </div>
 
@@ -190,7 +190,7 @@ import {
   type TsServer,
 } from '/@/services/ts-server-list.ts';
 import TSServerList from '/@/components/TSServerList.vue';
-import TSHowToPlay from '/@/components/TSHowToPlay.vue';
+import TSFaq from '/@/components/TSFaq.vue';
 import TSLeaderboard from '/@/components/TSLeaderboard.vue';
 import PlayerIdentityModal from '/@/components/PlayerIdentityModal.vue';
 import { enterFullscreen } from '/@/services/fullscreen.ts';
@@ -202,7 +202,7 @@ import {
 const tabs = [
   { id: 'servers', label: 'Servers' },
   { id: 'leaderboard', label: 'Leaderboard' },
-  { id: 'how', label: 'How It Works' },
+  { id: 'faq', label: 'FAQ' },
 ] as const;
 
 const activeTab = ref<(typeof tabs)[number]['id']>('servers');
