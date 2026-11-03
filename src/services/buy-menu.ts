@@ -1150,9 +1150,12 @@ export function applyBuyMenuMode(mode: BuyMenuMode): void {
 export function storedBuyMenuMode(): BuyMenuMode {
   try {
     const store = useXashStore();
-    return store.tsConfig?.buyMenu === 'modern' ? 'modern' : 'classic';
+    const mode = store.tsConfig?.buyMenu;
+    // The store's default is 'modern', so a player who never chose keeps
+    // the DOM panel; a player who chose 'classic' keeps the canvas menu.
+    return mode === 'classic' ? 'classic' : 'modern';
   } catch (_) {
-    return 'classic';
+    return 'modern';
   }
 }
 

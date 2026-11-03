@@ -232,7 +232,7 @@ const store = useXashStore();
 const { tsConfig } = storeToRefs(store);
 const buyMenuModes: BuyMenuMode[] = ['classic', 'modern'];
 const buyMenu = computed<BuyMenuMode>(() =>
-  tsConfig.value?.buyMenu === 'modern' ? 'modern' : 'classic',
+  tsConfig.value?.buyMenu === 'classic' ? 'classic' : 'modern',
 );
 
 /**
