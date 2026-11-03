@@ -50,20 +50,27 @@
           ><span class="ts-landing__title-second">Ballet</span>
         </h1>
 
-        <!-- the dashed rule: a phosphor scan line with a solid cap -->
-        <svg class="ts-landing__rule" viewBox="0 0 560 24" preserveAspectRatio="none" aria-hidden="true">
-          <line
-            x1="0"
-            y1="12"
-            x2="520"
-            y2="12"
-            stroke="currentColor"
-            stroke-width="3"
-            stroke-dasharray="2 10"
-            stroke-linecap="round"
-          />
-          <path d="M520 6h30v12h-30z" fill="var(--ts-lime)" />
-        </svg>
+        <!-- the dashed rule: a phosphor scan line with a bullet in flight.
+             The line stretches to fill the width; the bullet is its own SVG so
+             it keeps its aspect ratio and still reads as a bullet at any size.
+             The trail meets the bullet's flat base and the nose leads. -->
+        <div class="ts-landing__rule" aria-hidden="true">
+          <svg class="ts-landing__rule-line" viewBox="0 0 520 24" preserveAspectRatio="none">
+            <line
+              x1="0"
+              y1="12"
+              x2="520"
+              y2="12"
+              stroke="currentColor"
+              stroke-width="3"
+              stroke-dasharray="2 10"
+              stroke-linecap="round"
+            />
+          </svg>
+          <svg class="ts-landing__rule-bullet" viewBox="0 0 31 14">
+            <path d="M31 7 L16 11 L5 11 L5 12.5 L1 12.5 L1 1.5 L5 1.5 L5 3 L16 3 Z" fill="var(--ts-lime)" />
+          </svg>
+        </div>
 
         <p class="ts-landing__lede">
           The Specialists Mod 3.0 with the original ruleset — ported to
@@ -851,12 +858,27 @@ onMounted(() => {
     color: var(--ts-signal);
   }
 
-  /* The dashed rule: a phosphor scan line with a solid cap. */
+  /* The dashed rule: a phosphor scan line with a bullet in flight. The line
+     stretches; the bullet keeps its aspect ratio. */
   &__rule {
+    display: flex;
+    align-items: center;
     width: min(520px, 72vw);
     height: 16px;
     margin-top: 0.7rem;
     color: var(--ts-signal);
+  }
+
+  &__rule-line {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 16px;
+  }
+
+  &__rule-bullet {
+    flex: 0 0 auto;
+    width: 31px;
+    height: 14px;
   }
 
   &__lede {
