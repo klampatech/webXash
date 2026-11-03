@@ -535,6 +535,18 @@ onMounted(() => {
   background: var(--ts-void);
   pointer-events: auto;
 
+  // The scrollbar must not move the content. This panel is the only
+  // scroll container on the page, and the panels behind the tabs have
+  // different heights — the FAQ is long, the server list is short — so
+  // switching tabs made the scrollbar appear or vanish and the centred
+  // content hopped about seven pixels sideways.
+  //
+  // `stable` reserves the gutter whether or not there is a scrollbar.
+  // `both-edges` reserves it on BOTH sides, so the content box stays
+  // centred in the viewport instead of centred in a box that is always
+  // fifteen pixels narrower than the viewport.
+  scrollbar-gutter: stable both-edges;
+
   /* ---- the fixed bars ------------------------------------------------ */
   &__topbar,
   &__bottombar {
