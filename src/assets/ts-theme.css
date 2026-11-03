@@ -3,12 +3,19 @@
  *
  * GREEN SHELL, AMBER GAME.
  *
- * The site chrome — landing page, boot screen, options overlay,
- * disconnect panel — is a phosphor-green operator terminal. The GAME
- * keeps TS's own amber, because TS's HUD, scoreboard and menus are
- * amber in the original, and that amber is the nostalgia. A player sees
- * a green terminal with an amber match playing inside it, and the seam
- * reads as intentional.
+ * The site chrome — landing page, boot screen, disconnect panel — is a
+ * phosphor-green operator terminal. The GAME keeps TS's own amber,
+ * because TS's HUD, scoreboard and menus are amber in the original, and
+ * that amber is the nostalgia. A player sees a green terminal with an
+ * amber match playing inside it, and the seam reads as intentional.
+ *
+ * ONE EXCEPTION: the options overlay (the ESC menu) is amber too. It
+ * used to be green shell, and that was wrong — it opens INSIDE the
+ * match, over the game's own amber HUD, so a green menu in the middle
+ * of an amber game read as two systems fighting rather than one system.
+ * Its palette is scoped to the component (`--opts-*` in
+ * `XashOptionsOverlay.vue`), so every other surface keeps the shell's
+ * green untouched and nothing here has to change with it.
  *
  * The shell speaks in three colours and nothing else:
  *
