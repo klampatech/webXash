@@ -34,6 +34,14 @@
   -->
   <XashOptionsOverlay />
   <!--
+    The escape hint. The mouse was let go (Escape #1), and the player is
+    told so, because with the pointer released the engine's own cursor is
+    gone and there is no other sign that the game is waiting for them.
+  -->
+  <div v-if="escapeHint" class="escape-hint" data-escape-hint role="status">
+    {{ escapeHint }}
+  </div>
+  <!--
     Shown when the transport to the game server goes away.
 
     The engine does not notice this on its own: a closed WebSocket just
@@ -55,6 +63,7 @@
 
 <script setup lang="ts">
   import { storeToRefs } from 'pinia';
+  import { hint as escapeHint } from '/@/services/escape-gate.ts';
   import { useXashStore } from '/@/stores/store.ts';
   import {onMounted,onBeforeUnmount,ref, computed, watch } from 'vue';
   import TSHud from '/@/components/TSHud.vue';
@@ -374,6 +383,25 @@ const connectingLabel = computed(() => 'Connecting to server');
 </script>
 
 <style scoped lang="scss">
+  /* The escape hint: a quiet toast at the top of the canvas. */
+  .escape-hint {
+    position: absolute;
+    top: 1.25rem;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 0.5rem 1rem;
+    border: 1px solid rgba(120, 220, 150, 0.55);
+    border-radius: 0.35rem;
+    background: rgba(2, 14, 7, 0.86);
+    color: #b9e9c9;
+    font-family: var(--xash-font-mono, monospace);
+    font-size: 0.85rem;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 18;
+  }
+
   .lost {
     position: absolute;
     inset: 0;

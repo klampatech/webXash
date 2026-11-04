@@ -113,10 +113,31 @@ function keyboardApi(): KeyboardLockCapable | null {
  * which Chromium honours it. The request is idempotent — Chrome allows
  * a second lock() over an existing one, and rejects the request only if
  * the document is not allowed to hold a lock at all.
+ *
+ * AND ONLY WHILE THE GAME HAS THE POINTER (2026-11-04)
+ * ----------------------------------------------------
+ * The lock claims Escape, and the first Escape has to keep the
+ * fullscreen — which it only does while the lock is held. So the lock
+ * is held exactly while the game has the pointer: the player is
+ * playing, the mouse is captured, and the chords need protecting.
+ *
+ * When the pointer is let go (the Escape, the buy panel, the options
+ * overlay) the lock is handed BACK. That is what lets the second
+ * Escape reach the browser at all: a locked Escape is swallowed by the
+ * lock, so ESC #2 would be lost and the options overlay would never
+ * open. With the lock gone, ESC #2 leaves the fullscreen and the page
+ * sees it as `fullscreenchange`.
+ *
+ * The reserved chords fall back to the `beforeunload` guard while the
+ * lock is handed back, which is the defence that does not need it.
  */
 async function takeKeyboardLock(): Promise<void> {
   if (!armed) return;
   if (!document.fullscreenElement) return;
+  if (pointerReleased) {
+    releaseKeyboardLock();
+    return;
+  }
   const kb = keyboardApi();
   if (!kb) return;
   try {
@@ -132,7 +153,26 @@ async function takeKeyboardLock(): Promise<void> {
   }
 }
 
-/** Give the keyboard lock back, if we hold one. */
+/**
+ * Is the pointer lock gone — i.e. does the game NOT have the mouse?
+ *
+ * The keyboard lock follows it (see `takeKeyboardLock`). Set from the
+ * `pointerlockchange` event, and at arming time.
+ */
+let pointerReleased = false;
+
+function onPointerLockChange(): void {
+  pointerReleased = !document.pointerLockElement;
+  if (pointerReleased) {
+    // The mouse is free: hand the keyboard back, so the next Escape can
+    // reach the browser (and the page).
+    releaseKeyboardLock();
+    return;
+  }
+  // The player is back in the game: take the protection again.
+  void takeKeyboardLock();
+}
+
 function releaseKeyboardLock(): void {
   if (!lockHeld) return;
   const kb = keyboardApi();
@@ -288,6 +328,10 @@ function startRelockHeartbeat(): void {
   if (relockTimer !== null) return;
   relockTimer = setInterval(() => {
     if (!armed) return;
+    // While the pointer is released the lock is deliberately NOT held:
+    // it claims Escape, and a locked Escape never reaches the browser
+    // or the page.
+    if (pointerReleased) return;
     void takeKeyboardLock();
   }, RELOCK_INTERVAL_MS);
 }
@@ -315,6 +359,7 @@ export function installBrowserChordGate(): () => void {
   window.addEventListener('keydown', onKeyDown, { capture: true });
   document.addEventListener('fullscreenchange', onFullscreenChange);
   document.addEventListener('visibilitychange', onVisibilityChange);
+  document.addEventListener('pointerlockchange', onPointerLockChange);
   window.addEventListener('focus', onWindowFocus);
   logDebug('[chords] gate installed');
 
@@ -322,6 +367,7 @@ export function installBrowserChordGate(): () => void {
     window.removeEventListener('keydown', onKeyDown, { capture: true });
     document.removeEventListener('fullscreenchange', onFullscreenChange);
     document.removeEventListener('visibilitychange', onVisibilityChange);
+    document.removeEventListener('pointerlockchange', onPointerLockChange);
     window.removeEventListener('focus', onWindowFocus);
     stopRelockHeartbeat();
     releaseKeyboardLock();
@@ -340,6 +386,10 @@ export function armBrowserChordGate(): void {
   if (armed) return;
   armed = true;
   logDebug('[chords] gate armed');
+  // The lock follows the pointer: at the start of a match the player has
+  // not clicked into the game yet, so the mouse is free and the lock is
+  // not taken.
+  pointerReleased = !document.pointerLockElement;
   void takeKeyboardLock();
   startRelockHeartbeat();
 }
@@ -353,6 +403,7 @@ export function armBrowserChordGate(): void {
 export function disarmBrowserChordGate(): void {
   if (!armed) return;
   armed = false;
+  pointerReleased = false;
   stopRelockHeartbeat();
   releaseKeyboardLock();
   logDebug('[chords] gate disarmed');
