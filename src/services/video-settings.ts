@@ -277,34 +277,110 @@ export function currentRenderResolution(): RenderResolution | null {
 }
 
 /**
+ * The canvas's size in DEVICE pixels: the CSS box times the device pixel
+ * ratio.
+ *
+ * This is the size the browser has to put on the screen. The canvas's
+ * DRAWING BUFFER (`canvas.width` x `canvas.height`) is scaled to it on
+ * every single frame, and the scaling is the browser's compositor work.
+ *
+ * MEASURED (2026-11-04, real Chrome headful, the local rig): the buffer
+ * was 1600x1000 while the canvas showed 1050x837 — so the browser was
+ * scaling 1.6 million pixels down to 0.88 million, EVERY FRAME. That is
+ * the lag Kyle sees when the screen size changes.
+ */
+export function displayedRenderResolution(): RenderResolution | null {
+  if (typeof document === 'undefined' || typeof window === 'undefined') return null;
+  const canvas = document.getElementById('canvas') as HTMLCanvasElement | null;
+  if (!canvas || !canvas.clientWidth || !canvas.clientHeight) return null;
+  const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+  return {
+    width: Math.round(canvas.clientWidth * dpr),
+    height: Math.round(canvas.clientHeight * dpr),
+  };
+}
+
+/**
+ * Fit a target inside a cap, keeping the target's aspect.
+ *
+ * The cap is what the screen can actually show. Rendering more pixels
+ * than that is pure waste: the browser scales the extra away on every
+ * frame, and the scaling is not free.
+ */
+export function fitRenderResolution(
+  target: RenderResolution,
+  cap: RenderResolution,
+): RenderResolution {
+  if (target.width * target.height <= cap.width * cap.height) return target;
+  const scale = Math.sqrt(
+    (cap.width * cap.height) / (target.width * target.height),
+  );
+  return {
+    width: Math.max(2, Math.round(target.width * scale)),
+    height: Math.max(2, Math.round(target.height * scale)),
+  };
+}
+
+/**
+ * The resolution the engine should ACTUALLY render at.
+ *
+ * The policy's target is a budget (the display's size, capped). But the
+ * browser can only show what the canvas's box holds, and it scales the
+ * drawing buffer to that box on EVERY FRAME. So the target is capped by
+ * what is displayed:
+ *
+ *   - The engine renders at the policy's target (the display's size).
+ *   - The window is smaller than the display, so the browser scales the
+ *     whole frame down, every frame, for as long as the game is running.
+ *   - Leaving the fullscreen makes the window smaller still, so the
+ *     scaling gets WORSE — that is the "screen resize lag" Kyle
+ *     described, and why going back into the fullscreen is seamless
+ *     (the ratio returns to 1) while the transition out of it is not.
+ *
+ * So: never render more pixels than the screen shows. The fullscreen
+ * then renders at the display's resolution (sharp), and the windowed
+ * game renders at the window's resolution (no scaling, no lag).
+ */
+export function effectiveRenderResolution(
+  policyTarget: RenderResolution | null,
+  displayed: RenderResolution | null,
+): RenderResolution | null {
+  if (!policyTarget) return null;
+  if (!displayed) return policyTarget;
+  return fitRenderResolution(policyTarget, displayed);
+}
+
+/**
  * Does the engine need to be moved to the target?
  *
- * THE TARGET IS A PIXEL BUDGET, NOT A FIXED SIZE (2026-11-04)
- * ------------------------------------------------------------
- * This used to be "the engine's size is not exactly the target". That
- * is what made the fullscreen exit lag, and the mechanism was measured:
+ * THE TARGET IS CAPPED BY WHAT THE SCREEN SHOWS (2026-11-04)
+ * -----------------------------------------------------------
+ * The target the caller passes in is already the EFFECTIVE one: the
+ * policy's resolution, capped by the canvas's displayed size (see
+ * `effectiveRenderResolution`). With that cap in place the engine's size
+ * and the target are simply two numbers that either agree or they do
+ * not.
+ *
+ * Why the cap is the whole fix, measured (real Chrome headful, the local
+ * rig):
  *
  *   - The engine re-syncs to the VIEWPORT on every resize (SDL resize ->
  *     `VID_SaveWindowSize` -> `R_SaveVideoMode` rewrites `width`,
  *     `height`, `vid_width` and `vid_height` from the new window size).
- *     So leaving the fullscreen puts the engine at the WINDOW's size.
- *   - The old rule then pushed it back UP to the target - the display's
- *     size - which means the engine renders more pixels than the window
- *     can show and the browser downscales every frame. That is the
- *     "the screen scaling catches up" the player sees, and it does not
- *     go away: measured on the local rig, the frame rate went 14/s ->
- *     9/s and STAYED there, with the canvas backing store at 1600x900
- *     and the window at 1100x700.
+ *   - The policy's target is the DISPLAY's size. A window is smaller
+ *     than the display, so the engine was rendering more pixels than the
+ *     window could show, and the browser was scaling the whole frame down
+ *     on EVERY FRAME: the canvas backing store at 1600x1000 against a
+ *     canvas showing 1050x837 - a 1.82x downscale, at 12 frames/s.
+ *   - Leaving the fullscreen makes the window smaller still, so the
+ *     scaling gets worse. That is the "screen resize lag" Kyle
+ *     described on 2026-11-04, and going back into the fullscreen is
+ *     seamless because the ratio returns to 1.
  *
- * So the rule is now the one the policy already speaks: **'auto' spends
- * a pixel budget**, and so does every preset. The engine must not
- * exceed it. A window SMALLER than the budget is already inside it,
- * so there is nothing to correct - and correcting it is exactly what
- * caused the rescale, the extra fill rate and the catch-up.
- *
- * A preset SMALLER than the window is still enforced (the engine is
- * shrunk back down to it), because that is the case the player chose
- * for performance.
+ * So the engine renders at what is DISPLAYED (times the device pixel
+ * ratio, which is what the screen has), never more. The fullscreen is
+ * sharp - it shows the whole display, so the whole display's pixels - and
+ * the windowed game has nothing to scale.
  */
 export function renderResolutionNeedsApplying(
   target: RenderResolution | null,
@@ -312,7 +388,7 @@ export function renderResolutionNeedsApplying(
 ): boolean {
   if (!target) return false;
   if (!current) return true;
-  return current.width * current.height > target.width * target.height;
+  return current.width !== target.width || current.height !== target.height;
 }
 
 /**
@@ -406,11 +482,20 @@ export function applyRenderResolution(
   // Nothing may be sent to an engine that cannot take commands yet.
   if (!armed && !force) return false;
 
+  // The EFFECTIVE target: the policy's resolution, capped by what the
+  // canvas actually shows. Rendering more than the screen shows is
+  // waste, and the browser's per-frame scaling of the extra is the lag.
+  const effective = effectiveRenderResolution(
+    target,
+    displayedRenderResolution(),
+  );
+  if (!effective) return false;
+
   const current = currentRenderResolution();
-  if (!force && !renderResolutionNeedsApplying(target, current)) return true;
+  if (!force && !renderResolutionNeedsApplying(effective, current)) return true;
 
   try {
-    if (exec(renderResolutionCommand(target)) === false) {
+    if (exec(renderResolutionCommand(effective)) === false) {
       log?.('[video] the engine did not take the video command');
       return false;
     }
@@ -420,7 +505,7 @@ export function applyRenderResolution(
   }
 
   log?.(
-    `[video] render resolution -> ${target.width}x${target.height}` +
+    `[video] render resolution -> ${effective.width}x${effective.height}` +
       (current ? ` (was ${current.width}x${current.height})` : ''),
   );
   return true;
