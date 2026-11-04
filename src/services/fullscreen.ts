@@ -65,6 +65,30 @@ export function isFullscreen(): boolean {
  */
 export async function enterFullscreen(): Promise<boolean> {
   if (!fullscreenSupported() || isFullscreen()) return isFullscreen();
+
+  // Ask the browser to keep the Escape for the PAGE.
+  //
+  // "browser" keyboard lock mode is the standard way to stop the
+  // browser's own "Escape leaves fullscreen" from firing: the browser
+  // forwards the key to the page instead, and the page cancels it with
+  // preventDefault() (the escape gate does exactly that).
+  //
+  // Browsers that do not implement it reject with NotSupportedError,
+  // and then the plain request is the fallback. The same option is also
+  // how the browser is asked to keep the reserved chords for the game,
+  // which is what the chord gate does on top of this.
+  try {
+    await document.documentElement.requestFullscreen({
+      navigationUI: 'hide',
+      keyboardLock: 'browser',
+    } as FullscreenOptions);
+    return true;
+  } catch (e) {
+    if (!isKeyboardLockUnsupported(e)) {
+      console.warn('[fullscreen] the browser refused:', e);
+      return false;
+    }
+  }
   try {
     await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
     return true;
@@ -72,6 +96,22 @@ export async function enterFullscreen(): Promise<boolean> {
     console.warn('[fullscreen] the browser refused:', e);
     return false;
   }
+}
+
+/**
+ * Did the browser refuse because it does not know the `keyboardLock`
+ * option (rather than because it refused the fullscreen itself)?
+ *
+ * A `NotSupportedError` is the documented answer for an unsupported
+ * option. Anything else (a TypeError, a SecurityError) means the
+ * request itself was refused, and the fallback would fail too.
+ */
+function isKeyboardLockUnsupported(e: unknown): boolean {
+  return (
+    typeof DOMException !== 'undefined' &&
+    e instanceof DOMException &&
+    e.name === 'NotSupportedError'
+  );
 }
 
 /** Leave fullscreen, if we are in it. */

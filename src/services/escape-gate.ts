@@ -76,6 +76,8 @@ import { ref } from 'vue';
 import { logDebug } from './debug-log';
 import { enterFullscreen } from './fullscreen';
 import { isKeyboardLockHeld } from './browser-chord-gate';
+import { exitFullscreen } from './fullscreen';
+import { logBrowserCapabilities } from './browser-capabilities';
 
 /** Is the options overlay open? */
 export const overlayOpen = ref(false);
@@ -339,6 +341,27 @@ export function installEscapeGate(): () => void {
     restoreFullscreen();
   };
 
+  /**
+   * The browser refused to lock the pointer.
+   *
+   * Safari cannot lock the pointer while the page is fullscreen (a
+   * WebKit bug, reported in 2024): the lock is refused outright, and a
+   * game with the mouse free and no cursor is unplayable.
+   *
+   * So when the lock fails while we are fullscreen, LEAVE the
+   * fullscreen: the mouse is worth more than the screen, and the
+   * options overlay's fullscreen toggle is there for the player who
+   * wants it back.
+   */
+  const onPointerLockError = () => {
+    if (!document.fullscreenElement) return;
+    logDebug('[escape] the pointer lock failed while fullscreen; leaving it');
+    exitFullscreen();
+    showHint(
+      'This browser cannot capture the mouse in fullscreen — left fullscreen',
+    );
+  };
+
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.code !== 'Escape' && e.key !== 'Escape') return;
     // Stop the engine from seeing it. See the note at the top of the file.
@@ -349,12 +372,19 @@ export function installEscapeGate(): () => void {
 
   window.addEventListener('keydown', onKeyDown, { capture: true });
   document.addEventListener('pointerlockchange', onPointerLockChange);
+  document.addEventListener('pointerlockerror', onPointerLockError);
   document.addEventListener('fullscreenchange', onFullscreenChange);
   logDebug('[escape] gate installed');
+
+  // What this browser can do, on the console, at `info` level so it is
+  // always there. It is the first thing to ask for when a player
+  // reports something browser-shaped.
+  logBrowserCapabilities();
 
   return () => {
     window.removeEventListener('keydown', onKeyDown, { capture: true });
     document.removeEventListener('pointerlockchange', onPointerLockChange);
+    document.removeEventListener('pointerlockerror', onPointerLockError);
     document.removeEventListener('fullscreenchange', onFullscreenChange);
     (window as unknown as Record<string, unknown>)[key] = false;
   };
