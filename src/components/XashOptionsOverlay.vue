@@ -188,6 +188,23 @@
 
       <section class="opts__group">
         <h3 class="opts__legend">Session</h3>
+        <!--
+          THE WAY OUT OF FULLSCREEN.
+
+          Chromium's keyboard lock claims Escape (see `browser-chords.ts`),
+          so a tap of Escape no longer leaves the fullscreen - it releases
+          the mouse instead, which is what the player wants mid-match.
+          The price is that Escape is no longer the way out of fullscreen,
+          so this button is: Escape, Escape, then "Leave fullscreen".
+        -->
+        <button
+          v-if="inFullscreen"
+          class="opts__btn"
+          type="button"
+          @click="leaveFullscreen"
+        >
+          Leave fullscreen
+        </button>
         <button class="opts__btn opts__btn--danger" type="button" @click="quitToWebUi">
           Quit
         </button>
@@ -197,10 +214,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, computed } from 'vue';
+import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useXashStore } from '/@/stores/store.ts';
 import { overlayOpen, closeOverlay } from '/@/services/escape-gate';
+import { isFullscreen, exitFullscreen } from '/@/services/fullscreen';
 import { readCvar, writeCvar } from '/@/services/engine-cvars';
 import { logDebug } from '/@/services/debug-log';
 import { setBridgeSuspended } from '/@/services/keyboard-bridge';
@@ -316,6 +334,34 @@ function chooseModel(m: string) {
     model.value = m;
     logDebug(`[opts] model set to "${m}"`);
   }
+}
+
+/**
+ * Is the page in fullscreen right now?
+ *
+ * The "Leave fullscreen" button is only useful when it is, and the
+ * fullscreen can change without the overlay knowing (the browser's own
+ * chrome can leave it), so it is tracked from the event.
+ */
+const inFullscreen = ref(isFullscreen());
+
+function onFullscreenChange(): void {
+  inFullscreen.value = isFullscreen();
+}
+
+onMounted(() => document.addEventListener('fullscreenchange', onFullscreenChange));
+onBeforeUnmount(() => document.removeEventListener('fullscreenchange', onFullscreenChange));
+
+/**
+ * Leave the fullscreen.
+ *
+ * The keyboard lock claims Escape in Chromium, so a tap of Escape
+ * releases the mouse instead of leaving the fullscreen (which is what
+ * the player wants mid-match). This is the way out.
+ */
+function leaveFullscreen(): void {
+  exitFullscreen();
+  logDebug('[opts] left fullscreen');
 }
 
 /**
