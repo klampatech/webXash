@@ -173,6 +173,20 @@ function onPointerLockChange(): void {
   void takeKeyboardLock();
 }
 
+/**
+ * Is the keyboard lock currently held?
+ *
+ * The escape gate needs this: when the lock is held, the browser cannot
+ * take the fullscreen with an Escape (the lock claims the key), so
+ * there is nothing to put back. When it is NOT held — the browsers that
+ * do not implement the Keyboard Lock API, or a lock the browser
+ * refused — the browser is free to leave the fullscreen, and the page
+ * can ask for it back.
+ */
+export function isKeyboardLockHeld(): boolean {
+  return lockHeld;
+}
+
 function releaseKeyboardLock(): void {
   if (!lockHeld) return;
   const kb = keyboardApi();

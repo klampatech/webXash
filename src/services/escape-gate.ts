@@ -74,6 +74,8 @@
 
 import { ref } from 'vue';
 import { logDebug } from './debug-log';
+import { enterFullscreen } from './fullscreen';
+import { isKeyboardLockHeld } from './browser-chord-gate';
 
 /** Is the options overlay open? */
 export const overlayOpen = ref(false);
@@ -167,6 +169,64 @@ let pointerReleasedAt = 0;
 const SAME_MOMENT_MS = 120;
 
 /**
+ * The player asked to leave the fullscreen (the options overlay's
+ * toggle). The browser taking it is what they wanted, so it is not put
+ * back.
+ */
+let fullscreenExitRequested = false;
+
+/**
+ * We asked for the fullscreen back, and are waiting to see whether the
+ * browser kept it.
+ *
+ * The browser can take the fullscreen with an Escape when the keyboard
+ * lock is not held — the browsers that do not implement the Keyboard
+ * Lock API (Vivaldi among them, measured on Kyle's MacBook), or a lock
+ * the browser refused. In those, the Escape leaves the fullscreen and
+ * the page hears nothing, because the browser ate the key.
+ *
+ * So the page asks for the fullscreen back: the Escape press is still a
+ * live user gesture, and `requestFullscreen()` only works from one.
+ */
+let restoreInFlight = false;
+
+/**
+ * The player asked to leave the fullscreen.
+ *
+ * Called by the options overlay's toggle, so that the browser's exit is
+ * not undone.
+ */
+export function noteFullscreenExitRequested(): void {
+  fullscreenExitRequested = true;
+}
+
+/**
+ * Put the fullscreen back.
+ *
+ * The keyboard lock does NOT stop the browser leaving the fullscreen in
+ * every browser: Vivaldi 8.2 implements the Keyboard Lock API (the
+ * Blink bindings are in its binary) and still leaves the fullscreen on
+ * Escape, because the browser UI's "Escape leaves fullscreen" is not
+ * gated by the page's key lock. So the lock's state is only worth
+ * LOGGING here, not deciding on.
+ *
+ * In Chromium the lock IS honoured, the browser never takes the
+ * fullscreen, and this is never called — so there is no flicker there.
+ */
+function restoreFullscreen(): void {
+  restoreInFlight = true;
+  logDebug(
+    '[escape] asking for the fullscreen back (keyboard lock held:',
+    isKeyboardLockHeld(),
+    ')',
+  );
+  void enterFullscreen().then((ok) => {
+    logDebug('[escape] fullscreen restored:', ok);
+    if (!ok) restoreInFlight = false;
+  });
+}
+
+/**
  * The pointer lock went away (or came back).
  *
  * THIS IS THE "ESCAPE #1" SIGNAL (2026-11-04). The keyboard lock claims
@@ -220,49 +280,63 @@ export function installEscapeGate(): () => void {
   // `browser-chords.ts`). It still fires when the player leaves the
   // fullscreen deliberately — the options overlay's "Leave fullscreen".
   const onFullscreenChange = () => {
-    if (document.fullscreenElement) return;
+    if (document.fullscreenElement) {
+      // The fullscreen is back — our restore landed.
+      restoreInFlight = false;
+      return;
+    }
     const pointerHeld = !!document.pointerLockElement;
     const sameMoment = performance.now() - pointerReleasedAt < SAME_MOMENT_MS;
 
-    if (pointerHeld) {
-      // The browser is letting go of the pointer as it leaves the
-      // fullscreen: one press, two effects (this is what Firefox and
-      // Safari do on the FIRST Escape).
-      document.exitPointerLock?.();
-      if (stage.value === 'game') {
-        stage.value = 'released';
-        showHint('Mouse released — press Esc again for options');
-      }
+    if (fullscreenExitRequested) {
+      // The player asked for this (the options overlay's toggle). Leave
+      // it alone.
+      fullscreenExitRequested = false;
+      restoreInFlight = false;
+      if (document.pointerLockElement) document.exitPointerLock?.();
+      stage.value = 'released';
       pointerReleasedAt = performance.now();
-      logDebug('[escape] left fullscreen; pointer released');
+      logDebug('[escape] left fullscreen at the player\'s request');
       return;
     }
 
-    // The pointer was ALREADY free. In Chromium that is ESC #2: the
-    // browser eats the Escape that leaves the fullscreen, so the keydown
-    // never arrives and this event is the only signal there is.
-    if (stage.value === 'released' && !sameMoment) {
+    if (restoreInFlight) {
+      // The browser dropped the fullscreen we asked for. That is the
+      // browser's own exit, not a second Escape, so it must not be read
+      // as one.
+      restoreInFlight = false;
+      logDebug('[escape] the browser kept the fullscreen exit');
+      return;
+    }
+
+    if (stage.value === 'released' && !sameMoment && !pointerHeld) {
+      // ESC #2: the browser took the fullscreen (it eats that key, so
+      // the keydown never arrives) and this event is the only signal
+      // there is. The options overlay opens over it.
       logDebug('[escape] left fullscreen after the pointer was let go; options');
       openOverlay();
-      // The fullscreen is NOT put back here on purpose. The browser
-      // latches "the user pressed Escape to leave the fullscreen", and a
-      // fullscreen entered while that latch is set is dropped again
-      // immediately - measured: the fullscreen came back and left again
-      // in the same tick. That is a flicker, not a fix.
-      //
-      // So the browser's exit stands, the options overlay opens over it,
-      // and the resize behind it is painless: the render resolution is a
-      // pixel budget, so the engine never renders more pixels than the
-      // window can show. The overlay has an "Enter fullscreen" button
-      // for the player who wants it back.
       return;
     }
 
+    // ESC #1, or the browser leaving the fullscreen on its own: the
+    // player pressed Escape to let go of the MOUSE, not to leave the
+    // fullscreen. So ask for the fullscreen back.
+    //
+    // This is the Vivaldi case: it implements the Keyboard Lock API and
+    // still leaves the fullscreen on Escape, because the browser UI's
+    // "Escape leaves fullscreen" is not gated by the page's key lock.
+    // The Escape press is still a live user gesture, and
+    // `requestFullscreen()` only works from one.
+    if (pointerHeld) {
+      document.exitPointerLock?.();
+    }
     if (stage.value === 'game') {
       stage.value = 'released';
       showHint('Mouse released — press Esc again for options');
     }
-    logDebug('[escape] left fullscreen; pointer released');
+    pointerReleasedAt = performance.now();
+    logDebug('[escape] left fullscreen; pointer released; asking for it back');
+    restoreFullscreen();
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
