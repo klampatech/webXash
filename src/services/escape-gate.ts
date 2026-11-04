@@ -354,8 +354,21 @@ export function installEscapeGate(): () => void {
       document.exitPointerLock?.();
     }
     if (stage.value === 'game') {
+      // ESC #1: the mouse is free and the player is told what to do next.
       stage.value = 'released';
       showHint('Mouse released — press Esc again for options');
+    } else if (stage.value === 'released') {
+      // ESC #2 in a browser that CANCELS the fullscreen exit — Vivaldi,
+      // measured on Kyle's MacBook: the browser tries to leave the
+      // fullscreen, the page asks for it back, and the fullscreen stays.
+      //
+      // So the press that would have been "ESC #2" (the options) has to
+      // be recognised HERE, or it does nothing visible at all and the
+      // player has to press Escape a third time to get the options.
+      // Opening the overlay over the fullscreen is what ESC #2 means
+      // everywhere else.
+      logDebug('[escape] the fullscreen exit was cancelled; opening the options');
+      openOverlay();
     }
     pointerReleasedAt = performance.now();
     logDebug('[escape] left fullscreen; pointer released; asking for it back');
