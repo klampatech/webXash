@@ -113,12 +113,15 @@ export const useXashStore = defineStore(
       // ('classic') or the DOM panel ('modern').
       //
       // NOT a cvar. It is a client-library switch — the port's
-      // `ts_buy_hide` flag — so it must never be spliced into the
+      // `ts_buy_mode` command — so it must never be spliced into the
       // launch args (see `effectiveLaunchOptions`).
       //
-      // The default is 'classic', so nobody's experience changes
-      // without them asking for it.
-      buyMenu: 'classic' as 'classic' | 'modern',
+      // The default is 'modern': the DOM panel is the buy menu now,
+      // and a NEW player gets it without looking for a toggle. A
+      // player who already chose 'classic' keeps it — the choice is
+      // persisted, so this only decides what a first-time player
+      // sees.
+      buyMenu: 'modern' as 'classic' | 'modern',
     });
 
     const fullScreen = ref(false);

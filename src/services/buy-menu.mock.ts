@@ -43,9 +43,16 @@
 //   4  the rifles and shotguns       (and the Barrett and the M60E3)
 //   5  the akimbo weapons            (and the Golden Colts)
 //
-// The design mockup puts the M60E3 in slot 5 and the Golden Colts in
-// the pistol list. Both are the mockup's mistake and neither is
-// encoded here: the M60E3 is slot 4 and the Golden Colts are slot 5.
+// The design mockup puts the M60E3 in slot 5, and that is the
+// mockup's mistake: the M60E3 is slot 4, with the rifles.
+//
+// The Golden Colts are slot 5 AND a pistol, and both are true. The
+// slot is where the game keeps them, so the loadout's card 5 holds
+// them — but the game's own handguns CATEGORY holds them too
+// (`GetWeaponType` reads them as a pistol, and both rulesets list
+// them among the handguns), so the pistols list carries them as well.
+// The HUD slot and the category are two different numberings, and for
+// the Golden Colts they are two different answers.
 //
 // THE ONE PLACE THE NUMBERS ARE THE MOCKUP'S
 // ------------------------------------------
@@ -161,21 +168,28 @@ const MELEE: MockWeapon[] = [
 /**
  * Rail 2 — the pistols.
  *
- * The order is the port's own (the HUD grid column, then the id), which
- * puts the Beretta 92F last — it is in the ninth column of the grid.
- * The Golden Colts are NOT here: they are an akimbo weapon and they
- * live in the HUD slot 5 — the loadout's card 5.
+ * The order is the game's own: the classic menu's handguns column, which
+ * is the RULESET's list of pistols. The HUD grid column and the category
+ * column are two different numberings and they disagree here — the HUD
+ * slot 2 grid holds nine guns and the category holds ten.
+ *
+ * The tenth is the Golden Colts. The game calls them a pistol
+ * (`GetWeaponType` reads them as one) and both rulesets list them among
+ * the handguns, so they belong with the pistols even though the game
+ * keeps them in the HUD slot 5 — the loadout's card 5, where they still
+ * live once bought.
  */
 const PISTOLS: MockWeapon[] = [
   { name: 'Glock-18', cost: 850, slots: 10 },
   { name: 'SOCOM-MK23', cost: 700, slots: 10 },
   { name: 'Desert Eagle', cost: 1050, slots: 15 },
   { name: 'Five-seveN', cost: 1250, slots: 10 },
+  { name: 'Beretta 92F', cost: 900, slots: 10 },
+  { name: 'Golden Colts', cost: 2600, slots: 20 },
   { name: 'Glock-20C', cost: 1300, slots: 10 },
   { name: 'Ruger-MK1', cost: 1500, slots: 5 },
   { name: 'Raging Bull', cost: 2100, slots: 15 },
   { name: 'Contender G2', cost: 1500, slots: 15 },
-  { name: 'Beretta 92F', cost: 900, slots: 10 },
 ];
 
 /** Rail 3 — the SMGs. */
