@@ -146,15 +146,33 @@ const PRESETS: Record<string, RenderResolution> = {
 /**
  * The display, from the browser.
  *
- * `screen.width`/`screen.height` are the DISPLAY's size in CSS pixels —
- * which is what we want, not the window's, and not the device pixels.
+ * `screen.width`/`screen.height` are the DISPLAY's size in CSS pixels.
+ * The device pixel ratio is reported alongside them, and the render
+ * target is in DEVICE pixels — so the two are multiplied together where
+ * the resolution is resolved (see `resolveRenderResolution`).
  *
- * On a HiDPI display (a Retina MacBook, say) the device has 3024 device
- * pixels across while `screen.width` reports 1512. Rendering at the
- * device resolution would cost FOUR times the fill rate for a game whose
- * art is 320x240, and the browser upscales the canvas anyway. So the
- * device pixel ratio is reported but deliberately not multiplied into the
- * render target.
+ * WHY DEVICE PIXELS, WHEN THE OLD NOTE SAID OTHERWISE
+ * ---------------------------------------------------
+ * The old note said the device pixel ratio was "deliberately not
+ * multiplied into the render target", because "the browser upscales the
+ * canvas anyway". That is not what happens:
+ *
+ *   - The canvas's DRAWING BUFFER is a device-pixel surface. The
+ *     browser maps it onto the canvas's CSS box at the device pixel
+ *     ratio, so a buffer that is not the CSS box times the ratio is
+ *     scaled on EVERY FRAME.
+ *   - And the engine's own resize already lands on the DEVICE pixels
+ *     (measured on Kyle's MacBook: the canvas's backing store went to
+ *     2370x1990 device pixels while the policy was asking for 1728x1117
+ *     CSS pixels). So a policy in CSS pixels fights the engine's own
+ *     resize: the watchdog pulls the engine down, the next resize
+ *     pushes it back up, and every resize costs an extra render-target
+ *     reallocation (and the buy menu re-drawing itself, which is the
+ *     "TSBUY row ..." spam in the console).
+ *
+ * So the policy is in device pixels, and the target agrees with what the
+ * engine's own resize produces. That is the whole lag: no churn, and
+ * nothing for the browser to scale.
  *
  * `screen` can be missing or zero (some privacy modes, some embedded
  * contexts), so the window size and then a sane default are the
@@ -214,23 +232,32 @@ export function resolveRenderResolution(
   const preset = PRESETS[choice];
   if (preset) return clampToEngine(preset);
 
-  const dw = display.width > 0 ? display.width : 1280;
-  const dh = display.height > 0 ? display.height : 720;
+  // DEVICE pixels: the canvas's drawing buffer is a device-pixel
+  // surface, and the engine's own resize lands there. A target in CSS
+  // pixels would be scaled by the browser on every frame, and would
+  // fight the engine's own resize on every resize.
+  const dpr = Math.max(1, display.devicePixelRatio || 1);
+  const dw = Math.round((display.width > 0 ? display.width : 1280) * dpr);
+  const dh = Math.round((display.height > 0 ? display.height : 720) * dpr);
+
+  // The budget is a CSS-pixel budget, so it scales with the display the
+  // same way the resolution does.
+  const budget = AUTO_MAX_PIXELS * dpr * dpr;
 
   if (choice === 'display') {
     return clampToEngine({ width: dw, height: dh });
   }
 
   // 'auto'
-  if (dw * dh <= AUTO_MAX_PIXELS) {
+  if (dw * dh <= budget) {
     // It fits. Render at the display's own size.
     return clampToEngine({ width: dw, height: dh });
   }
 
   // It does not fit. Scale to the budget, keeping the display's aspect.
   const aspect = dw / dh;
-  const width = snap8(Math.sqrt(AUTO_MAX_PIXELS * aspect));
-  const height = snap8(Math.sqrt(AUTO_MAX_PIXELS / aspect));
+  const width = snap8(Math.sqrt(budget * aspect));
+  const height = snap8(Math.sqrt(budget / aspect));
   return clampToEngine({ width, height });
 }
 
