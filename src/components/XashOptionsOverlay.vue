@@ -189,38 +189,32 @@
       <section class="opts__group">
         <h3 class="opts__legend">Session</h3>
         <!--
-          THE WAY IN AND OUT OF FULLSCREEN.
+          THE FULLSCREEN TOGGLE.
 
-          Chromium's keyboard lock claims Escape (see `browser-chords.ts`),
-          so the FIRST tap of Escape releases the mouse and leaves the
-          fullscreen alone - which is what the player wants mid-match.
-          The second tap is taken by the browser as "leave the fullscreen"
-          (it eats that key, so the page never sees it), and this overlay
-          opens over it.
+          The way in and out of the fullscreen, in one control, and it
+          shows the state it would leave you in.
 
-          So the fullscreen is entered and left from here, explicitly.
-          "Enter fullscreen" is there because the second Escape leaves the
-          fullscreen behind - and putting it back automatically was tried
-          and dropped: the browser latches the Escape that left the
-          fullscreen and drops the new one again, which is a flicker, not
-          a fix.
+          Escape is not the way out any more: the browser takes that key
+          for the fullscreen on the browsers that do not implement the
+          Keyboard Lock API, and on Chromium it is the key that lets go
+          of the MOUSE mid-match - which is what a player pressing
+          Escape actually wants. The fullscreen is a deliberate choice
+          from here, or "Quit" (which leaves the match and the fullscreen
+          together).
         -->
-        <button
-          v-if="inFullscreen"
-          class="opts__btn"
-          type="button"
-          @click="leaveFullscreen"
-        >
-          Leave fullscreen
-        </button>
-        <button
-          v-else
-          class="opts__btn"
-          type="button"
-          @click="enterFullscreenMode"
-        >
-          Enter fullscreen
-        </button>
+        <div class="opts__row">
+          <span class="opts__label">Fullscreen</span>
+          <button
+            class="opts__switch-btn"
+            :class="{ 'opts__switch-btn--on': inFullscreen }"
+            type="button"
+            role="switch"
+            :aria-checked="inFullscreen"
+            @click="toggleFullscreen"
+          >
+            {{ inFullscreen ? 'On' : 'Off' }}
+          </button>
+        </div>
         <button class="opts__btn opts__btn--danger" type="button" @click="quitToWebUi">
           Quit
         </button>
@@ -235,6 +229,7 @@ import { storeToRefs } from 'pinia';
 import { useXashStore } from '/@/stores/store.ts';
 import { overlayOpen, closeOverlay } from '/@/services/escape-gate';
 import { isFullscreen, exitFullscreen, enterFullscreen } from '/@/services/fullscreen';
+import { noteFullscreenExitRequested } from '/@/services/escape-gate';
 import { readCvar, writeCvar } from '/@/services/engine-cvars';
 import { logDebug } from '/@/services/debug-log';
 import { setBridgeSuspended } from '/@/services/keyboard-bridge';
@@ -375,19 +370,23 @@ onBeforeUnmount(() => document.removeEventListener('fullscreenchange', onFullscr
  * releases the mouse instead of leaving the fullscreen (which is what
  * the player wants mid-match). This is the way out.
  */
-function leaveFullscreen(): void {
-  exitFullscreen();
-  logDebug('[opts] left fullscreen');
-}
-
 /**
- * Put the page back into fullscreen.
+ * The fullscreen toggle.
  *
  * A click is a user gesture, and `requestFullscreen()` only works from
- * one - so this is the only way back in once the browser has taken the
- * fullscreen away with the second Escape.
+ * one - so this is the only way IN once the browser has taken the
+ * fullscreen away with an Escape.
+ *
+ * Going OUT is told to the escape gate first, so that it does not put
+ * the fullscreen straight back: the player asked for this.
  */
-async function enterFullscreenMode(): Promise<void> {
+async function toggleFullscreen(): Promise<void> {
+  if (inFullscreen.value) {
+    noteFullscreenExitRequested();
+    exitFullscreen();
+    logDebug('[opts] left fullscreen');
+    return;
+  }
   await enterFullscreen();
   inFullscreen.value = isFullscreen();
   logDebug('[opts] entered fullscreen:', inFullscreen.value);
