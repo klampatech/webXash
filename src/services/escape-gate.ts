@@ -35,17 +35,42 @@
 // our handler necessarily runs. Reading the live pointer-lock state would
 // therefore make the first press look like the second.
 //
-// THE BROWSER NO LONGER EATS THE ESCAPE (2026-11-03)
-// --------------------------------------------------
-// In Chromium the keyboard lock now claims Escape (see `browser-chords.ts`),
-// so the keydown reaches the page, the fullscreen is NOT left, and this
-// handler is the only thing that releases the pointer - which makes the
-// sequence exact instead of a race with the browser.
+// ESCAPE #1 IS DETECTED FROM THE POINTER LOCK, NOT FROM THE KEY (2026-11-04)
+// -----------------------------------------------------------------------
+// The keyboard lock claims Escape, so in Chromium the keydown NEVER reaches
+// the page - a locked key is not delivered to the renderer at all. Measured
+// in real Chrome 151 on a virtual display, with real X11 key events:
 //
-// The fallback still matters: without the Keyboard Lock API (Firefox,
-// Safari) or with the lock refused, the browser consumes an Escape that
-// leaves fullscreen, and the `fullscreenchange` handler below stands in
-// for the lost step.
+//   - with the keyboard lock on Escape: the fullscreen SURVIVES the Escape,
+//     the page sees NO keydown, and the browser releases the pointer lock;
+//   - without it: the browser eats the Escape, exits the fullscreen, and
+//     the page still sees no keydown.
+//
+// So in the locked case the ONLY signal that Escape #1 happened is the
+// POINTER LOCK going away - which the browser does on Escape, and which
+// arrives as `pointerlockchange`. That event is now what advances the
+// state machine. Without this, the first press would be lost and the
+// second press would be read as the first.
+//
+// The keydown path stays, and is what the browsers WITHOUT the keyboard
+// lock use (Firefox, Safari, and Chromium when the lock was refused): in
+// those, the page does hear the Escape.
+//
+// The SECOND press is taken by the BROWSER, not by the page: the chord
+// gate hands the keyboard lock back when the pointer is let go (the
+// chords no longer need protecting once the mouse is free), so the
+// second Escape reaches the browser, which takes the fullscreen with it
+// and eats the key. The `fullscreenchange` handler below is that
+// signal.
+//
+// THE FULLSCREEN
+// --------------
+// With the keyboard lock held, an Escape no longer leaves the fullscreen:
+// there is no resize behind it, and so no re-scaling and no lag. The way
+// out of the fullscreen is the options overlay's "Leave fullscreen"
+// button. Without the keyboard lock (Firefox, Safari, a refused lock) the
+// browser still takes the fullscreen, and the `fullscreenchange` handler
+// below stands in for the lost step.
 
 import { ref } from 'vue';
 import { logDebug } from './debug-log';
@@ -67,7 +92,7 @@ function showHint(text: string) {
   hintTimer = setTimeout(() => {
     hint.value = null;
     hintTimer = null;
-  }, 3500);
+  }, 6000);
 }
 
 /** Open the options overlay. */
@@ -88,6 +113,10 @@ export function closeOverlay() {
  */
 export function notePointerLocked() {
   stage.value = 'game';
+  // The mouse is back in the game: the hint has done its job.
+  if (hintTimer) clearTimeout(hintTimer);
+  hintTimer = null;
+  hint.value = null;
 }
 
 /**
@@ -117,6 +146,57 @@ export function handleEscape(): void {
 }
 
 /**
+ * When the pointer lock was released, in page time.
+ *
+ * This tells the two kinds of fullscreen exit apart:
+ *
+ *   - CHROMIUM: ESC #1 releases the POINTER and leaves the fullscreen
+ *     alone; ESC #2 leaves the fullscreen. So a fullscreen exit with
+ *     the pointer already free is ESC #2, and the options overlay opens.
+ *   - FIREFOX / SAFARI: ESC #1 leaves the fullscreen AND releases the
+ *     pointer. Those two events arrive together, so that fullscreen exit
+ *     is NOT ESC #2 - the pointer was let go in the same breath.
+ *
+ * A press and its release are milliseconds apart; two presses are a
+ * human's second apart. So "was the pointer released in this same
+ * moment" is the question, and the answer is a timestamp.
+ */
+let pointerReleasedAt = 0;
+
+/** Two events this close together are one press. */
+const SAME_MOMENT_MS = 120;
+
+/**
+ * The pointer lock went away (or came back).
+ *
+ * THIS IS THE "ESCAPE #1" SIGNAL (2026-11-04). The keyboard lock claims
+ * Escape, so a locked Escape never reaches the page - but the browser
+ * still releases the pointer lock when Escape is pressed, and THAT
+ * arrives here. Measured in real Chrome: with the lock on Escape, the
+ * page saw no keydown at all, and the pointer lock went away.
+ *
+ * So the state machine advances on this event, not on the key. Without
+ * it the first press would be lost and the second would be read as the
+ * first, and the options overlay would never open.
+ *
+ * The pointer lock can also go away for other reasons (the player
+ * pressed Escape in a menu, the browser dropped it). They all mean the
+ * same thing to the player: the mouse is free.
+ */
+function onPointerLockChange(): void {
+  if (document.pointerLockElement) {
+    // The player clicked back into the game.
+    stage.value = 'game';
+    return;
+  }
+  if (stage.value !== 'game') return;
+  stage.value = 'released';
+  pointerReleasedAt = performance.now();
+  showHint('Mouse released — press Esc again for options');
+  logDebug('[escape] pointer lock released');
+}
+
+/**
  * Install the gate. Idempotent.
  *
  * Called at module load from main.ts, so the listener exists before the
@@ -135,16 +215,53 @@ export function installEscapeGate(): () => void {
   // the player as Escape #1 — let go of the mouse — so it is treated as
   // one, from the signal the browser does deliver.
   //
-  // In Chromium this is now a FALLBACK: the keyboard lock claims Escape,
+  // In Chromium this is a FALLBACK: the keyboard lock claims Escape,
   // so a tap no longer leaves the fullscreen at all (see
   // `browser-chords.ts`). It still fires when the player leaves the
   // fullscreen deliberately — the options overlay's "Leave fullscreen".
   const onFullscreenChange = () => {
     if (document.fullscreenElement) return;
-    if (document.pointerLockElement) {
+    const pointerHeld = !!document.pointerLockElement;
+    const sameMoment = performance.now() - pointerReleasedAt < SAME_MOMENT_MS;
+
+    if (pointerHeld) {
+      // The browser is letting go of the pointer as it leaves the
+      // fullscreen: one press, two effects (this is what Firefox and
+      // Safari do on the FIRST Escape).
       document.exitPointerLock?.();
+      if (stage.value === 'game') {
+        stage.value = 'released';
+        showHint('Mouse released — press Esc again for options');
+      }
+      pointerReleasedAt = performance.now();
+      logDebug('[escape] left fullscreen; pointer released');
+      return;
     }
-    stage.value = 'released';
+
+    // The pointer was ALREADY free. In Chromium that is ESC #2: the
+    // browser eats the Escape that leaves the fullscreen, so the keydown
+    // never arrives and this event is the only signal there is.
+    if (stage.value === 'released' && !sameMoment) {
+      logDebug('[escape] left fullscreen after the pointer was let go; options');
+      openOverlay();
+      // The fullscreen is NOT put back here on purpose. The browser
+      // latches "the user pressed Escape to leave the fullscreen", and a
+      // fullscreen entered while that latch is set is dropped again
+      // immediately - measured: the fullscreen came back and left again
+      // in the same tick. That is a flicker, not a fix.
+      //
+      // So the browser's exit stands, the options overlay opens over it,
+      // and the resize behind it is painless: the render resolution is a
+      // pixel budget, so the engine never renders more pixels than the
+      // window can show. The overlay has an "Enter fullscreen" button
+      // for the player who wants it back.
+      return;
+    }
+
+    if (stage.value === 'game') {
+      stage.value = 'released';
+      showHint('Mouse released — press Esc again for options');
+    }
     logDebug('[escape] left fullscreen; pointer released');
   };
 
@@ -157,11 +274,13 @@ export function installEscapeGate(): () => void {
   };
 
   window.addEventListener('keydown', onKeyDown, { capture: true });
+  document.addEventListener('pointerlockchange', onPointerLockChange);
   document.addEventListener('fullscreenchange', onFullscreenChange);
   logDebug('[escape] gate installed');
 
   return () => {
     window.removeEventListener('keydown', onKeyDown, { capture: true });
+    document.removeEventListener('pointerlockchange', onPointerLockChange);
     document.removeEventListener('fullscreenchange', onFullscreenChange);
     (window as unknown as Record<string, unknown>)[key] = false;
   };

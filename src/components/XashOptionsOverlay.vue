@@ -189,13 +189,21 @@
       <section class="opts__group">
         <h3 class="opts__legend">Session</h3>
         <!--
-          THE WAY OUT OF FULLSCREEN.
+          THE WAY IN AND OUT OF FULLSCREEN.
 
           Chromium's keyboard lock claims Escape (see `browser-chords.ts`),
-          so a tap of Escape no longer leaves the fullscreen - it releases
-          the mouse instead, which is what the player wants mid-match.
-          The price is that Escape is no longer the way out of fullscreen,
-          so this button is: Escape, Escape, then "Leave fullscreen".
+          so the FIRST tap of Escape releases the mouse and leaves the
+          fullscreen alone - which is what the player wants mid-match.
+          The second tap is taken by the browser as "leave the fullscreen"
+          (it eats that key, so the page never sees it), and this overlay
+          opens over it.
+
+          So the fullscreen is entered and left from here, explicitly.
+          "Enter fullscreen" is there because the second Escape leaves the
+          fullscreen behind - and putting it back automatically was tried
+          and dropped: the browser latches the Escape that left the
+          fullscreen and drops the new one again, which is a flicker, not
+          a fix.
         -->
         <button
           v-if="inFullscreen"
@@ -204,6 +212,14 @@
           @click="leaveFullscreen"
         >
           Leave fullscreen
+        </button>
+        <button
+          v-else
+          class="opts__btn"
+          type="button"
+          @click="enterFullscreenMode"
+        >
+          Enter fullscreen
         </button>
         <button class="opts__btn opts__btn--danger" type="button" @click="quitToWebUi">
           Quit
@@ -218,7 +234,7 @@ import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import { storeToRefs } from 'pinia';
 import { useXashStore } from '/@/stores/store.ts';
 import { overlayOpen, closeOverlay } from '/@/services/escape-gate';
-import { isFullscreen, exitFullscreen } from '/@/services/fullscreen';
+import { isFullscreen, exitFullscreen, enterFullscreen } from '/@/services/fullscreen';
 import { readCvar, writeCvar } from '/@/services/engine-cvars';
 import { logDebug } from '/@/services/debug-log';
 import { setBridgeSuspended } from '/@/services/keyboard-bridge';
@@ -362,6 +378,19 @@ onBeforeUnmount(() => document.removeEventListener('fullscreenchange', onFullscr
 function leaveFullscreen(): void {
   exitFullscreen();
   logDebug('[opts] left fullscreen');
+}
+
+/**
+ * Put the page back into fullscreen.
+ *
+ * A click is a user gesture, and `requestFullscreen()` only works from
+ * one - so this is the only way back in once the browser has taken the
+ * fullscreen away with the second Escape.
+ */
+async function enterFullscreenMode(): Promise<void> {
+  await enterFullscreen();
+  inFullscreen.value = isFullscreen();
+  logDebug('[opts] entered fullscreen:', inFullscreen.value);
 }
 
 /**

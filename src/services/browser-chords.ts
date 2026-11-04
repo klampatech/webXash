@@ -81,32 +81,33 @@ export const RESERVED_CHORD_CODES: readonly string[] = ['KeyW', 'KeyT', 'KeyN', 
  * to the renderer at all — the lock is the only way to see them, and the
  * DOM gate then cancels them.
  *
- * Escape is in here for a different reason (2026-11-03): the browser
- * consumes an Escape that leaves fullscreen, so the keydown never
- * reaches the page and the game's own Escape flow never runs. Locking
- * it means the key arrives, the fullscreen stays, and the page decides
- * what Escape means. It is NOT a browser CHORD (no modifier), so it is
- * not in `GATE_CHORD_CODES`: the escape gate owns it.
+ * ESCAPE IS IN HERE, AND THE PAGE NEVER SEES IT (2026-11-04)
+ * --------------------------------------------------------
+ * Locking Escape is what keeps the FULLSCREEN alive on the first press.
+ * Measured in real Chrome 151, headful on a virtual display, with real
+ * X11 key events:
  *
- * That fixes the report this came from: "if you then hit ESC to release
- * the pointer while in fullscreen, it dismisses fullscreen and causes a
- * considerable lag while the screen scaling or rendering catches up".
- * Two things were wrong with that:
+ *   - With Escape locked: the browser did NOT leave the fullscreen.
+ *   - Without the lock: the browser ate the Escape and left the
+ *     fullscreen - the first press, not the second.
  *
- *   1. THE DISMISSAL. The browser consumed the Escape, so the game's own
- *      Escape handling (release the pointer, then the options overlay)
- *      never ran. With Escape locked the key arrives, the fullscreen
- *      stays, and the pointer is released by the page — which is what
- *      the player asked for.
+ * And the page NEVER sees the keydown either way: a locked key is not
+ * delivered to the renderer, and an unlocked Escape that leaves the
+ * fullscreen is consumed by the browser before it gets there. So the
+ * lock does not hand the key to the page, and that is fine: the game's
+ * two-step Escape is driven by the SIGNALS, not by the key.
  *
- *   2. THE LAG. Leaving fullscreen resizes the viewport, and the engine
- *      throws away the forced render resolution on every resize, so it
- *      renders at the window's native resolution until the watchdog
- *      re-pins it. Measured: the frame rate halved for that window.
- *      Not leaving fullscreen removes the resize entirely.
+ *   - ESC #1: the browser releases the POINTER LOCK (measured) and, with
+ *     the lock claiming Escape, leaves the fullscreen alone. The page
+ *     sees `pointerlockchange` and shows the hint. No resize, so no
+ *     re-scaling and no lag.
+ *   - ESC #2: the chord gate has handed the keyboard lock back (the
+ *     pointer is free, so the chords no longer need protecting), the
+ *     browser takes the fullscreen, and the page sees
+ *     `fullscreenchange` - which is the signal to open the options.
  *
- * The way out of fullscreen is the options overlay's "Leave fullscreen"
- * button, and the browser's own chrome is always there.
+ * The way out of the fullscreen without pressing Escape twice is the
+ * options overlay's "Leave fullscreen" button.
  */
 export const LOCKED_KEY_CODES: readonly string[] = [...RESERVED_CHORD_CODES, 'Escape'];
 

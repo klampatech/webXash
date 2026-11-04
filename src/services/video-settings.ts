@@ -276,14 +276,43 @@ export function currentRenderResolution(): RenderResolution | null {
   return { width: canvas.width, height: canvas.height };
 }
 
-/** Does the engine's current resolution differ from the target? */
+/**
+ * Does the engine need to be moved to the target?
+ *
+ * THE TARGET IS A PIXEL BUDGET, NOT A FIXED SIZE (2026-11-04)
+ * ------------------------------------------------------------
+ * This used to be "the engine's size is not exactly the target". That
+ * is what made the fullscreen exit lag, and the mechanism was measured:
+ *
+ *   - The engine re-syncs to the VIEWPORT on every resize (SDL resize ->
+ *     `VID_SaveWindowSize` -> `R_SaveVideoMode` rewrites `width`,
+ *     `height`, `vid_width` and `vid_height` from the new window size).
+ *     So leaving the fullscreen puts the engine at the WINDOW's size.
+ *   - The old rule then pushed it back UP to the target - the display's
+ *     size - which means the engine renders more pixels than the window
+ *     can show and the browser downscales every frame. That is the
+ *     "the screen scaling catches up" the player sees, and it does not
+ *     go away: measured on the local rig, the frame rate went 14/s ->
+ *     9/s and STAYED there, with the canvas backing store at 1600x900
+ *     and the window at 1100x700.
+ *
+ * So the rule is now the one the policy already speaks: **'auto' spends
+ * a pixel budget**, and so does every preset. The engine must not
+ * exceed it. A window SMALLER than the budget is already inside it,
+ * so there is nothing to correct - and correcting it is exactly what
+ * caused the rescale, the extra fill rate and the catch-up.
+ *
+ * A preset SMALLER than the window is still enforced (the engine is
+ * shrunk back down to it), because that is the case the player chose
+ * for performance.
+ */
 export function renderResolutionNeedsApplying(
   target: RenderResolution | null,
   current: RenderResolution | null,
 ): boolean {
   if (!target) return false;
   if (!current) return true;
-  return current.width !== target.width || current.height !== target.height;
+  return current.width * current.height > target.width * target.height;
 }
 
 /**
