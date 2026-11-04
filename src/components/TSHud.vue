@@ -149,6 +149,7 @@ import {
   startBuyMenuBridge,
   stopBuyMenuBridge,
 } from '/@/services/buy-menu.ts'
+import { releasePointerForMenu, reclaimPointer } from '/@/services/pointer-ownership.ts'
 import TSBuyMenuPanel from '/@/components/TSBuyMenuPanel.vue'
 
 /**
@@ -282,22 +283,19 @@ const killfeed = ref<KillfeedEntry[]>([
  * So opening the menu must exit the lock, and closing it must
  * re-acquire (which browsers only allow from a user gesture, hence
  * the close is done straight off the B/ESC keypress).
+ *
+ * THE OWNERSHIP LIVES IN `pointer-ownership.ts`, not here, because the
+ * release is not only ours to make: the ENGINE asks the browser for the
+ * pointer lock on its own when the port's buy menu opens (measured), and
+ * that request can land after this watcher has run. So the rule is
+ * standing - "a DOM menu owns the pointer" - and this function is just
+ * the HUD's half of it.
  */
-const hadPointerLock = ref(false)
-
 function syncPointerLock() {
-  const canvas = document.getElementById('canvas') as HTMLCanvasElement | null
-  if (!canvas) return
   if (showBuyPanel.value) {
-    if (document.pointerLockElement === canvas) {
-      hadPointerLock.value = true
-      document.exitPointerLock()
-    }
-  } else if (hadPointerLock.value && document.pointerLockElement !== canvas) {
-    // Best-effort; a rejection here just means the user has to click
-    // the canvas again, which is the normal flow anyway.
-    hadPointerLock.value = false
-    canvas.requestPointerLock?.().catch(() => {})
+    releasePointerForMenu();
+  } else {
+    reclaimPointer();
   }
 }
 

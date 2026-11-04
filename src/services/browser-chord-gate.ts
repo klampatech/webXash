@@ -63,10 +63,12 @@
 //   - No browser UI appears while it is held — checked by screenshotting
 //     the whole X11 root window, not just the viewport, because browser
 //     chrome is not in the viewport.
-//   - Escape must stay OUT of the locked set. Locking Escape changes
-//     what a tap of Escape does (the tap then reaches the page and
-//     fullscreen is not left), and the game's two-step Escape depends on
-//     the browser consuming that tap.
+//   - Escape IS locked (since 2026-11-03). Locking it means a tap of
+//     Escape reaches the page instead of being consumed by the browser
+//     to leave fullscreen, so the game's own Escape flow runs: press
+//     once to release the mouse, press again for the options overlay -
+//     and the fullscreen stays put, so there is no resize and no lag.
+//     The way out is the options overlay's "Leave fullscreen" button.
 //   - The lock can be lost SILENTLY. Opening a second window and coming
 //     back drops it with no event to announce it — not visibilitychange,
 //     not blur, not focus. So the lock is re-asserted rather than being
@@ -80,7 +82,7 @@
 // still catches the rest — the player gets the dialog rather than a
 // silently closed tab, which is the safe failure mode.
 
-import { isBrowserChord, RESERVED_CHORD_CODES } from './browser-chords';
+import { isBrowserChord, LOCKED_KEY_CODES } from './browser-chords';
 import { logDebug } from './debug-log';
 
 /** Is the gate swallowing browser chords right now? */
@@ -118,9 +120,9 @@ async function takeKeyboardLock(): Promise<void> {
   const kb = keyboardApi();
   if (!kb) return;
   try {
-    await kb.lock([...RESERVED_CHORD_CODES]);
+    await kb.lock([...LOCKED_KEY_CODES]);
     lockHeld = true;
-    logDebug(`[chords] keyboard lock held: ${RESERVED_CHORD_CODES.join(', ')}`);
+    logDebug(`[chords] keyboard lock held: ${LOCKED_KEY_CODES.join(', ')}`);
   } catch (e) {
     // A refused lock is not fatal: the DOM gate still covers the chords
     // the browser delivers, and the reserved ones fall back to the

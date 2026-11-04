@@ -162,6 +162,22 @@ export function recoverLostContext(): boolean {
  * measured: the engine went back to 2560x1440 and the frame rate fell
  * from 16.2/s to 0.4/s.
  *
+ * THE DEBOUNCE IS SHORT ON PURPOSE (2026-11-03)
+ * ---------------------------------------------
+ * This used to wait 400 ms before re-pinning the resolution, and that
+ * window is the lag the player sees when the fullscreen ends: for those
+ * 400 ms the engine renders at the window's NATIVE resolution, because
+ * the forced one is gone. Measured on the local rig: the frame rate
+ * halved across exactly that window (12/s -> 6/s), and the canvas
+ * backing store was back to the native size until the watchdog fired.
+ *
+ * The debounce is still needed — a fullscreen transition fires a BURST
+ * of resize events, and a context that is being restored must not be
+ * poked again while it is coming back — so it is short (one frame's
+ * worth of coalescing, 50 ms) instead of long. The re-apply is cheap:
+ * `applyRenderResolution` compares the target with the canvas's current
+ * backing store and does nothing when they already agree.
+ *
  * THIS WATCHDOG IS INSTALLED AT IMPORT TIME, before the Vue app exists,
  * so it hears the resize events that happen while the engine is still
  * booting. It must not send the engine a command then: the engine's
@@ -181,6 +197,9 @@ import {
 } from '/@/services/video-settings.ts';
 import { logDebug } from '/@/services/debug-log.ts';
 
+/** How long to coalesce a burst of resize events before re-pinning. */
+const RESIZE_DEBOUNCE_MS = 50;
+
 export function installFullscreenWatchdog(): () => void {
   if (typeof window === 'undefined') return () => {};
   const key = '__xashFullscreenWatchdogInstalled';
@@ -193,16 +212,16 @@ export function installFullscreenWatchdog(): () => void {
     timer = null;
     recoverLostContext();
     // The render resolution is a consequence of the resize, so it is
-    // repaired here too. The check reads the canvas backing store, so
-    // it costs nothing when the engine has not drifted.
+    // repaired here too. The check reads the canvas backing store, so it
+    // costs nothing when the engine has not drifted.
     applyRenderResolution((cmd) => XashLoader.exec(cmd), logDebug);
   };
   // Debounced: a fullscreen transition fires a burst of resize events,
-  // and a context that is being restored must not be poked again while it
-  // is coming back.
+  // and a context that is being restored must not be poked again while
+  // it is coming back.
   const schedule = () => {
     if (timer) clearTimeout(timer);
-    timer = setTimeout(check, 400);
+    timer = setTimeout(check, RESIZE_DEBOUNCE_MS);
   };
 
   window.addEventListener('resize', schedule);

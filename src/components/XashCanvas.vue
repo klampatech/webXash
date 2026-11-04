@@ -60,7 +60,7 @@
   import TSHud from '/@/components/TSHud.vue';
   import XashOptionsOverlay from '/@/components/XashOptionsOverlay.vue';
   import { notePointerLocked } from '/@/services/escape-gate';
-  import { isDomMenuOnScreen, installCanvasMouseGuard } from '/@/services/pointer-ownership.ts';
+  import { isDomMenuOnScreen, installPointerOwnership } from '/@/services/pointer-ownership.ts';
   import {
     startKeyboardBridge,
     tryAttachMouseBridge,
@@ -336,7 +336,7 @@ const connectingLabel = computed(() => 'Connecting to server');
    */
   let stopKeyboardBridge: (() => void) | null = null;
 
-  /** Uninstalls the canvas mouse guard (see `pointer-ownership.ts`). */
+  /** Uninstalls the pointer-ownership rules (see `pointer-ownership.ts`). */
   let stopCanvasMouseGuard: (() => void) | null = null;
 
   onMounted(() => {
@@ -363,7 +363,7 @@ const connectingLabel = computed(() => 'Connecting to server');
     // not take the mouse, or the menu's buttons go dead under the pointer
     // lock. Installed here, on the component that owns the canvas.
     if (xashCanvasElement.value) {
-      stopCanvasMouseGuard = installCanvasMouseGuard(xashCanvasElement.value);
+      stopCanvasMouseGuard = installPointerOwnership(xashCanvasElement.value);
     }
   });
 

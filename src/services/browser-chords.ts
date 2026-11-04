@@ -63,14 +63,6 @@
  * `navigator.keyboard.lock()` is the only way to get them back — and it
  * only works while the document is in JS-initiated fullscreen.
  *
- * Escape is deliberately NOT here. Locking Escape changes what a tap of
- * Escape does (measured: with Escape locked, a tap arrives at the page
- * and fullscreen is NOT left; without it, a tap is consumed by the
- * browser and leaves fullscreen), and the game's two-step Escape is
- * built on the current behaviour. The escape hatch survives anyway:
- * Chrome drops the lock when fullscreen ends, and a long Escape hold
- * releases it.
- *
  * KeyQ is deliberately NOT here either: Cmd+Q is how a Mac user quits
  * Chrome, and taking that away from them is not worth the accident it
  * would prevent. Q is not bound to anything in the game.
@@ -81,6 +73,42 @@
  * elements), and the engine still receives the Tab keydown.
  */
 export const RESERVED_CHORD_CODES: readonly string[] = ['KeyW', 'KeyT', 'KeyN', 'Tab'];
+
+/**
+ * The keys the KEYBOARD LOCK claims.
+ *
+ * The reserved chords are in here because Chromium never dispatches them
+ * to the renderer at all — the lock is the only way to see them, and the
+ * DOM gate then cancels them.
+ *
+ * Escape is in here for a different reason (2026-11-03): the browser
+ * consumes an Escape that leaves fullscreen, so the keydown never
+ * reaches the page and the game's own Escape flow never runs. Locking
+ * it means the key arrives, the fullscreen stays, and the page decides
+ * what Escape means. It is NOT a browser CHORD (no modifier), so it is
+ * not in `GATE_CHORD_CODES`: the escape gate owns it.
+ *
+ * That fixes the report this came from: "if you then hit ESC to release
+ * the pointer while in fullscreen, it dismisses fullscreen and causes a
+ * considerable lag while the screen scaling or rendering catches up".
+ * Two things were wrong with that:
+ *
+ *   1. THE DISMISSAL. The browser consumed the Escape, so the game's own
+ *      Escape handling (release the pointer, then the options overlay)
+ *      never ran. With Escape locked the key arrives, the fullscreen
+ *      stays, and the pointer is released by the page — which is what
+ *      the player asked for.
+ *
+ *   2. THE LAG. Leaving fullscreen resizes the viewport, and the engine
+ *      throws away the forced render resolution on every resize, so it
+ *      renders at the window's native resolution until the watchdog
+ *      re-pins it. Measured: the frame rate halved for that window.
+ *      Not leaving fullscreen removes the resize entirely.
+ *
+ * The way out of fullscreen is the options overlay's "Leave fullscreen"
+ * button, and the browser's own chrome is always there.
+ */
+export const LOCKED_KEY_CODES: readonly string[] = [...RESERVED_CHORD_CODES, 'Escape'];
 
 /**
  * The chords Chromium delivers to the page, where a `preventDefault()`

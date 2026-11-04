@@ -34,6 +34,18 @@
 // because the browser ALSO exits pointer lock on Escape, on its own, before
 // our handler necessarily runs. Reading the live pointer-lock state would
 // therefore make the first press look like the second.
+//
+// THE BROWSER NO LONGER EATS THE ESCAPE (2026-11-03)
+// --------------------------------------------------
+// In Chromium the keyboard lock now claims Escape (see `browser-chords.ts`),
+// so the keydown reaches the page, the fullscreen is NOT left, and this
+// handler is the only thing that releases the pointer - which makes the
+// sequence exact instead of a race with the browser.
+//
+// The fallback still matters: without the Keyboard Lock API (Firefox,
+// Safari) or with the lock refused, the browser consumes an Escape that
+// leaves fullscreen, and the `fullscreenchange` handler below stands in
+// for the lost step.
 
 import { ref } from 'vue';
 import { logDebug } from './debug-log';
@@ -122,6 +134,11 @@ export function installEscapeGate(): () => void {
   // was released long ago). Leaving fullscreen means the same thing to
   // the player as Escape #1 — let go of the mouse — so it is treated as
   // one, from the signal the browser does deliver.
+  //
+  // In Chromium this is now a FALLBACK: the keyboard lock claims Escape,
+  // so a tap no longer leaves the fullscreen at all (see
+  // `browser-chords.ts`). It still fires when the player leaves the
+  // fullscreen deliberately — the options overlay's "Leave fullscreen".
   const onFullscreenChange = () => {
     if (document.fullscreenElement) return;
     if (document.pointerLockElement) {
