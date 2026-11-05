@@ -50,6 +50,35 @@ export interface WebGLContextOptions {
 }
 
 /**
+ * The engine's own context, once it exists.
+ *
+ * Kept so the render-resolution guard can read the REAL maximum texture
+ * size off it — asking the canvas for a context again would return the
+ * same one, but reading it from the handle we already made is simpler
+ * and cannot create anything.
+ */
+let engineContext: WebGLRenderingContext | WebGL2RenderingContext | null = null;
+
+/**
+ * The engine context's maximum texture size, in device pixels.
+ *
+ * Zero when the context does not exist yet or will not say. A render
+ * mode past this limit cannot be allocated, and the engine's answer to
+ * a failed allocation is a tiny fallback mode and a wedge — measured on
+ * 2026-11-05, when the policy asked for 6912x4468 device pixels and
+ * the limit was 8192.
+ */
+export function engineMaxTextureSize(): number {
+  if (!engineContext) return 0;
+  try {
+    const limit = engineContext.getParameter(engineContext.MAX_TEXTURE_SIZE);
+    return typeof limit === 'number' && limit > 0 ? limit : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+/**
  * Create the WebGL2 context on a canvas, with the attributes we want.
  *
  * Returns the context, or null if the browser would not give us one.
@@ -62,7 +91,7 @@ export function createEngineContext(
 ): WebGLRenderingContext | WebGL2RenderingContext | null {
   if (!canvas || typeof canvas.getContext !== 'function') return null;
   try {
-    return canvas.getContext('webgl2', {
+    const context = canvas.getContext('webgl2', {
       // The engine asks for a WebGL2 context (the launcher passes
       // `-ref webgl2`).
       //
@@ -97,6 +126,8 @@ export function createEngineContext(
       premultipliedAlpha: true,
       desynchronized: opts.desynchronized === true,
     });
+    engineContext = context;
+    return context;
   } catch (e) {
     console.warn('[webgl] could not pre-create the context:', e);
     return null;

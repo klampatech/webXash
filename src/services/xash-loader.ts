@@ -14,12 +14,14 @@ import {
   applyRenderResolution,
   armRenderResolution,
   detectDisplay,
+  devicePixelRatio,
   renderResolutionArgs,
   resolveRenderResolution,
+  setMaxDeviceDimension,
   setRenderResolutionTarget,
   type RenderResolution,
 } from '/@/services/video-settings.ts';
-import { prepareEngineContext } from '/@/services/webgl-context.ts';
+import { engineMaxTextureSize, prepareEngineContext } from '/@/services/webgl-context.ts';
 import {
   applyFrameCap,
   forceFrameCap,
@@ -802,6 +804,17 @@ class XashLoader {
     // context rather than making its own.
     prepareEngineContext(options.canvas);
 
+    // The render-resolution guard needs the engine's real maximum
+    // texture size: a mode past it cannot be allocated, and the
+    // engine's answer to a failed allocation is a tiny fallback mode
+    // and a wedge (measured 2026-11-05 at 6912x4468 device pixels
+    // against a limit of 8192).
+    const maxTextureSize = engineMaxTextureSize();
+    if (maxTextureSize > 0) {
+      setMaxDeviceDimension(maxTextureSize);
+      console.log(`[video] the GL limit is ${maxTextureSize} device pixels`);
+    }
+
     // Install the frame-pacing measuring shim BEFORE the engine's
     // first frame, so it sees every tick from the start. It only
     // measures until `applyFrameCap` decides what to do, and it gates
@@ -1471,13 +1484,23 @@ class XashLoader {
     // first frame is already at the right resolution instead of the
     // viewport's, which on a 1440p display is four times the pixels.
     //
+    // THEY ARE DEVICE PIXELS, while the runtime command
+    // (`vid_setmode`) wants CSS pixels: the launch arguments are LITERAL
+    // dimensions, and the engine multiplies the mode by the device
+    // pixel ratio itself. Measured 2026-11-05, at dpr 2, boot
+    // arguments 1920x1200 produced a 1920x1200 backing store and not
+    // 3840x2400. So the mode is multiplied by the ratio here, and the
+    // result is bounded by the GL limit — a boot argument past the
+    // maximum texture size is the allocation failure that wedged the
+    // engine on 2026-11-05.
+    //
     // It is not the load-bearing half. The engine re-syncs its render
     // resolution to the browser viewport on every resize (SDL's resize
     // event -> VID_SaveWindowSize -> R_SaveVideoMode), so going
     // fullscreen throws this away; onAfterLoad re-applies it, and the
     // resize watchdog re-applies it after that.
     const video = this._resolveRenderResolution();
-    const videoArgs = renderResolutionArgs(video);
+    const videoArgs = renderResolutionArgs(video, devicePixelRatio());
 
     // 2026-10-21: strip -noip / -noip6 whenever the user is asking to
     // connect to a remote server. FWGS net_ws.c:2018 does

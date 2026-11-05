@@ -3,13 +3,58 @@
  * engine launch arguments, and re-applied whenever the engine would
  * otherwise drift back to the viewport's resolution.
  *
- * WHY THIS EXISTS
- * ---------------
- * The engine renders AT the browser viewport's resolution. Always.
+ * THE MEASURED CONTRACT (2026-11-05) — READ THIS FIRST
+ * ====================================================
+ * The engine's `vid_setmode` takes CSS PIXELS and multiplies by the
+ * device pixel ratio ITSELF. Measured, real Chrome 151 headful at
+ * `--force-device-scale-factor=2`, the engine's own cvars and the
+ * canvas's backing store after each command:
  *
- * Measured against production on 2026-10-28 — one Chromium, one client,
- * the engine's own `vid_width`/`vid_height` cvars and the canvas backing
- * store tracked the viewport exactly at every size tried:
+ *     vid_setmode 1280 720   ->  vid_width 2560   buffer 2560x1440
+ *     vid_setmode  640 360   ->  vid_width 1280   buffer 1280x720
+ *     vid_setmode 6912 4468  ->  vid_width 13824  buffer 13824x8936
+ *
+ * Every one exactly twice the number asked for, at dpr 2. At dpr 1 the
+ * engine's own resize lands on the number asked for, unchanged.
+ *
+ * So a policy that multiplies by the device pixel ratio and then hands
+ * the result to the engine asks for dpr SQUARED pixels. On Kyle's
+ * MacBook (dpr 2) that was 3456x2234 asked for and 6912x4468 actually
+ * rendered: 30.9 megapixels, four times the pixels the panel has, and
+ * past the GL maximum texture dimension of 8192. The allocation failed,
+ * the engine fell back to a tiny mode (the resolution looked minuscule)
+ * and wedged (the hang, the looping audio, the dead reconnect).
+ *
+ * THE FOUR NUMBERS, AND WHICH UNIT EACH ONE IS IN
+ * -----------------------------------------------
+ *   MODE        CSS pixels     what `vid_setmode` takes
+ *   BACKING     device pixels  mode * dpr; the canvas's drawing buffer
+ *   BOX         CSS pixels     the canvas's clientWidth/clientHeight
+ *   DEVICE BOX  device pixels  box * dpr; what the browser paints
+ *
+ * The browser scales the BACKING onto the DEVICE BOX on every single
+ * frame, and the two agree — nothing is scaled — exactly when the MODE
+ * is the BOX. That is the whole cap, and it is why the mode's SHAPE
+ * follows the box: the engine's own resize lands on the box's shape
+ * too (SDL resize -> `VID_SaveWindowSize` -> `R_SaveVideoMode`), so
+ * the watchdog and the engine agree and nothing churns.
+ *
+ * AND THE BOOT ARGUMENTS ARE A FIFTH THING
+ * -----------------------------------------
+ * `-width`/`-height` are LITERAL dimensions. Measured, at dpr 2, boot
+ * arguments 1920x1200 produced a 1920x1200 backing store, not
+ * 3840x2400. So the launch arguments want DEVICE pixels and the
+ * runtime command wants CSS pixels. They are not the same number, and
+ * the old code used one function for both — which is why the first
+ * frame was at half the device box.
+ *
+ * WHY THE ENGINE RENDERS AT THE VIEWPORT'S RESOLUTION AT ALL
+ * ----------------------------------------------------------
+ * The engine renders AT the browser viewport's resolution. Always.
+ * Measured against production on 2026-10-28 — one Chromium, one
+ * client, the engine's own `vid_width`/`vid_height` cvars and the
+ * canvas backing store tracked the viewport exactly at every size
+ * tried:
  *
  *     viewport      engine render res   engine frames/s
  *     640x480       640x480             69.5
@@ -17,47 +62,28 @@
  *     1920x1080     1920x1080            8.6
  *     2560x1440     2560x1440            4.5
  *
- * The frame cost is the pixel count — 14.4 ms at 640x480, 222 ms at
- * 2560x1440 — so going fullscreen on a 1440p display is a 4x hit. That
- * is the "some FPS hits when I go full screen" Kyle reported.
+ * The frame cost is the pixel count, so going fullscreen on a 1440p
+ * display is a 4x hit. That is the "some FPS hits when I go full
+ * screen" Kyle reported. And it is what the "150 ms" in the
+ * 2026-10-27 capacity/latency report actually was: the report measured
+ * a 154.5 ms event-loop lag in-game, the browser's
+ * `requestAnimationFrame` rate and the engine's frame rate were
+ * identical at every size, and the page's main thread is blocked for
+ * exactly one frame while the engine draws. It was never server
+ * latency.
  *
- * It is also, in the end, what the "150 ms" in the 2026-10-27
- * capacity/latency report actually was. That report measured a 154.5 ms
- * event-loop lag in-game and could not explain it. It is the engine's own
- * render frame time: the browser's `requestAnimationFrame` rate and the
- * engine's frame rate were identical at every size (69.5/s, 30.2/s,
- * 8.6/s, 4.5/s), so the page's main thread is blocked for exactly one
- * frame while the engine draws. The setTimeout lag is that block, two
- * to four frames deep. It was never server latency — the network path
- * from an idle page is 31.6 ms.
- *
- * THE FIX, AND WHY IT IS NOT JUST "SET IT ONCE"
- * ---------------------------------------------
- * The canvas is `width: 100vw; height: 100vh` (assets/main.css), so the
- * canvas's CSS size is independent of its backing store. Forcing the
- * engine to a smaller mode and letting the browser upscale gives the
- * frames straight back:
- *
- *     viewport 2560x1440, engine mode 1280x720   ->  16.2 frames/s
- *     viewport 2560x1440, engine mode 640x360    ->  36.7 frames/s
- *
- * But the engine RESYNCS to the window on every resize:
+ * AND WHY IT IS NOT JUST "SET IT ONCE"
+ * ------------------------------------
+ * The engine RESYNCS to the window on every resize:
  *
  *     SDL_WINDOWEVENT_RESIZED -> VID_SaveWindowSize -> R_SaveVideoMode
  *
  * and `R_SaveVideoMode` rewrites `width`, `height`, `vid_width` and
- * `vid_height` from the new window size. Measured: a forced 1280x720 did
- * NOT survive the viewport growing to 2560x1440 — the engine went back to
- * 2560x1440 and the frame rate fell to 0.4/s. So the resolution has to
- * be re-applied after every resize, not just once at boot.
- *
- * The engine's command line also accepts `-width`/`-height`
- * (`SetWidthAndHeightFromCommandLine` in the engine's ref_common.c), and
- * those DO set the initial window size — the engine creates its window
- * at that size during renderer init, so the very first frame is already
- * at the right resolution. They are passed too, but they are not the
- * load-bearing half: the launch arguments cannot survive the resize that
- * going fullscreen causes.
+ * `vid_height` from the new window size. Measured: a forced 1280x720
+ * did NOT survive the viewport growing to 2560x1440 — the engine went
+ * back to 2560x1440 and the frame rate fell to 0.4/s. So the
+ * resolution has to be re-applied after every resize, not just once at
+ * boot.
  *
  * THIS MODULE HAS NO IMPORTS, ON PURPOSE
  * --------------------------------------
@@ -67,7 +93,7 @@
  * same constraint browser-chords.ts is written under. Keep it that way.
  */
 
-/** A render resolution, in pixels. */
+/** A render resolution, in CSS pixels. */
 export interface RenderResolution {
   width: number;
   height: number;
@@ -89,7 +115,7 @@ export interface DisplayInfo {
 /**
  * What the player picked in the launch options.
  *
- * 'auto'     — the display's own aspect, capped at the pixel budget.
+ * 'auto'     — the display's own resolution, capped by the pixel budget.
  * 'display'  — the display's own resolution, uncapped.
  * the rest   — fixed presets.
  */
@@ -114,22 +140,31 @@ export const RESOLUTION_CHOICES: ResolutionChoice[] = [
 ];
 
 /**
- * The pixel budget 'auto' spends: 1920x1080 DEVICE pixels.
+ * The pixel budget 'auto' spends: 1920x1080 CSS PIXELS.
  *
  * A GoldSrc-era renderer gains nothing visible above it — the art is
- * 320x240 — while the cost is linear in pixels, so a 1440p display pays
- * 2.3x the fill rate and a 4K display 5x, for detail the source art
- * does not have. The player who wants the pixels can pick 'display'.
+ * 320x240 — while the cost is linear in pixels, so a 1440p display
+ * pays 2.3x the fill rate and a 4K display 5x, for detail the source
+ * art does not have. The player who wants the pixels can pick
+ * 'display'.
  *
- * IT IS IN THE SAME UNITS AS EVERYTHING ELSE HERE: CSS PIXELS, which
- * is what the engine's mode is (see the module header). A budget in
- * device pixels would let a 2x display spend four times the fill rate
- * the budget was written to bound, which is the mistake the device-pixel
- * policy made on 2026-11-04.
+ * IT IS IN CSS PIXELS, AND THAT IS A DELIBERATE CHOICE
+ * -----------------------------------------------------
+ * The budget is the RESOLUTION the engine is asked for, in the units
+ * the engine is told in. On a 1x display that is 1920x1080 device
+ * pixels; on a 2x display the same number is 3840x2160 device pixels
+ * — the panel's own pixels, sharp, which is what the game looked like
+ * before the 2026-11-05 regression.
+ *
+ * The alternative is a DEVICE-pixel budget (1920x1080 device pixels
+ * whatever the ratio), which is 4x cheaper to fill on a Retina panel
+ * and soft: the browser upscales the frame to the panel. It is one
+ * constant away, and it is a product decision, not a bug fix — the
+ * wedge was the emergency and the sharpness is the preference.
  */
 export const AUTO_MAX_PIXELS = 1920 * 1080;
 
-/** The smallest mode this module will ask the engine for. */
+/** The smallest mode the fixed presets ask for. */
 export const MIN_RENDER_WIDTH = 640;
 export const MIN_RENDER_HEIGHT = 360;
 
@@ -140,7 +175,23 @@ export const MIN_RENDER_HEIGHT = 360;
 export const ENGINE_MIN_WIDTH = 320;
 export const ENGINE_MIN_HEIGHT = 200;
 
-/** The fixed presets, by choice id. */
+/**
+ * The largest DEVICE-pixel surface the engine may be asked for.
+ *
+ * The 2026-11-05 regression was an allocation failure: the policy
+ * asked for 6912x4468 device pixels, which is past the GL maximum
+ * texture dimension of 8192, and the engine fell back to a tiny mode
+ * and wedged. So the guard is not optional.
+ *
+ * 8192 is the conservative floor: it is what the software renderer
+ * reports (and the renderer the rig measures with), and every real GPU
+ * reports more — so the guard never costs a real device anything. The
+ * live limit can be handed in with `setMaxDeviceDimension` once the
+ * engine's WebGL context exists.
+ */
+export const MAX_DEVICE_DIMENSION = 8192;
+
+/** The fixed presets, by choice id, in CSS pixels. */
 const PRESETS: Record<string, RenderResolution> = {
   '1920x1080': { width: 1920, height: 1080 },
   '1600x900': { width: 1600, height: 900 },
@@ -150,36 +201,25 @@ const PRESETS: Record<string, RenderResolution> = {
 };
 
 /**
+ * The device pixel ratio, as the browser reports it.
+ *
+ * NOT clamped to a range: the engine multiplies its mode by the REAL
+ * ratio, so a model that disagreed with it would put the boot
+ * arguments and the runtime command in different places. The size
+ * that follows from the ratio is bounded by the GL guard instead.
+ */
+export function devicePixelRatio(): number {
+  if (typeof window === 'undefined') return 1;
+  const raw = window.devicePixelRatio;
+  if (!Number.isFinite(raw) || raw <= 0) return 1;
+  return raw;
+}
+
+/**
  * The display, from the browser.
  *
  * `screen.width`/`screen.height` are the DISPLAY's size in CSS pixels.
  * The device pixel ratio is reported alongside them.
- *
- * EVERYTHING IN THIS MODULE IS IN CSS PIXELS (2026-11-05)
- * -------------------------------------------------------
- * The engine's `vid_setmode` takes CSS pixels and multiplies by the
- * device pixel ratio ITSELF. Measured, real Chrome at
- * `--force-device-scale-factor=2`, the engine's own cvars and the
- * canvas's backing store after each command:
- *
- *     vid_setmode 1280 720   ->  vid_width 2560   buffer 2560x1440
- *     vid_setmode  640 360   ->  vid_width 1280   buffer 1280x720
- *     vid_setmode 6912 4468  ->  vid_width 13824  buffer 13824x8936
- *
- * Every one exactly twice the number asked for, at dpr 2. At dpr 1 the
- * engine's own resize lands on the number asked for, unchanged.
- *
- * So a policy that multiplies by the device pixel ratio and then hands
- * the result to the engine asks for dpr SQUARED pixels. On Kyle's
- * MacBook (dpr 2) that was 3456x2234 asked for and 6912x4468 actually
- * rendered: 30.9 megapixels, four times the pixels the panel has, and
- * past what the engine could allocate. The result was the regression of
- * 2026-11-05 — the resolution collapsed to a tiny mode, and leaving the
- * fullscreen wedged the engine (a red RECONNECT modal, looping audio,
- * and a reconnect that did nothing).
- *
- * So: the policy, the cap, the comparison and the command are all in CSS
- * pixels. The engine does the device-pixel arithmetic.
  *
  * `screen` can be missing or zero (some privacy modes, some embedded
  * contexts), so the window size and then a sane default are the
@@ -192,8 +232,7 @@ export function detectDisplay(): DisplayInfo {
   const scr = window.screen;
   const width = scr?.width || window.innerWidth || 1280;
   const height = scr?.height || window.innerHeight || 720;
-  const devicePixelRatio = window.devicePixelRatio || 1;
-  return { width, height, devicePixelRatio };
+  return { width, height, devicePixelRatio: devicePixelRatio() };
 }
 
 /**
@@ -217,7 +256,7 @@ function clampToEngine(res: RenderResolution): RenderResolution {
 }
 
 /**
- * The render resolution for a choice, on a given display.
+ * The render resolution for a choice, on a given display, in CSS pixels.
  *
  * PURE — it takes the display as an argument rather than reading it, so
  * the parent's unit suite can exercise the policy for displays nobody
@@ -231,6 +270,11 @@ function clampToEngine(res: RenderResolution): RenderResolution {
  *   - a display that does not fit is scaled to the budget with its
  *     aspect preserved. 2560x1440 becomes 1920x1080; 3840x2160 becomes
  *     1920x1080; a 3440x1440 ultrawide becomes 2224x928.
+ *
+ * This is the POLICY's target, in the units the engine is told in. It
+ * is not necessarily what the engine ends up rendering: the canvas's
+ * box is the cap (`effectiveRenderResolution`), and the shape follows
+ * the box, not the policy.
  */
 export function resolveRenderResolution(
   choice: ResolutionChoice,
@@ -239,22 +283,6 @@ export function resolveRenderResolution(
   const preset = PRESETS[choice];
   if (preset) return clampToEngine(preset);
 
-  // CSS PIXELS - the engine multiplies by the device pixel ratio itself.
-  //
-  // MEASURED (2026-11-05, real Chrome at --force-device-scale-factor=2):
-  // `vid_setmode 1280 720` gave the engine `vid_width` 2560 and a
-  // 2560x1440 backing store; `vid_setmode 640 360` gave 1280x720; and
-  // `vid_setmode 6912 4468` gave 13824x8936. Every one exactly twice
-  // the number asked for, at dpr 2. At dpr 1 the engine's resize lands
-  // on the number asked for, unchanged.
-  //
-  // So the engine's mode is in CSS pixels and the canvas's backing store
-  // is mode * dpr. A policy that multiplies by dpr and then hands the
-  // result to the engine asks for dpr SQUARED pixels: on a Retina
-  // display that is 13824x8936, which is PAST the GL limit of 8192, so
-  // the engine cannot allocate it - it falls back to a tiny mode (the
-  // resolution looks minuscule) and wedges (the hang, the looping audio,
-  // the reconnect that does nothing).
   const dw = display.width > 0 ? display.width : 1280;
   const dh = display.height > 0 ? display.height : 720;
 
@@ -282,9 +310,30 @@ export function resolveRenderResolution(
  * (`SetWidthAndHeightFromCommandLine`). They set the engine's `width`
  * and `height` cvars during renderer init, and the engine creates its
  * window at that size — so the first frame is already right.
+ *
+ * THEY ARE DEVICE PIXELS (measured 2026-11-05)
+ * --------------------------------------------
+ * The launch arguments are LITERAL dimensions. At dpr 2, boot
+ * arguments 1920x1200 produced a 1920x1200 backing store — not
+ * 3840x2400. The runtime command (`vid_setmode`) wants CSS pixels.
+ * They are not the same number, and using one function for both is
+ * what put the first frame at half the device box.
+ *
+ * So the mode is multiplied by the device pixel ratio here, and the
+ * result is bounded by the GL limit — a boot argument past the
+ * maximum texture size is the allocation failure that wedged the
+ * engine on 2026-11-05.
  */
-export function renderResolutionArgs(res: RenderResolution): string[] {
-  return ['-width', String(res.width), '-height', String(res.height)];
+export function renderResolutionArgs(
+  res: RenderResolution,
+  dpr: number = devicePixelRatio(),
+): string[] {
+  const ratio = dpr > 0 ? dpr : 1;
+  const device = clampDeviceSize({
+    width: Math.round(res.width * ratio),
+    height: Math.round(res.height * ratio),
+  });
+  return ['-width', String(device.width), '-height', String(device.height)];
 }
 
 /**
@@ -294,6 +343,9 @@ export function renderResolutionArgs(res: RenderResolution): string[] {
  * engine's vid_common.c). It goes through `R_ChangeDisplaySettings`,
  * which is the same path a window resize takes — so it is the one call
  * that makes the engine's window AND its cvars agree on the size.
+ *
+ * The mode is in CSS pixels: the engine multiplies by the device pixel
+ * ratio itself.
  */
 export function renderResolutionCommand(res: RenderResolution): string {
   return `vid_setmode ${res.width} ${res.height}`;
@@ -330,26 +382,14 @@ export function currentRenderResolution(): RenderResolution | null {
 }
 
 /**
- * The device pixel ratio, clamped.
- *
- * The engine scales its mode by this, so a ratio outside the range the
- * GPU can back is a trap: the allocation fails and the engine falls back
- * to a tiny mode.
- */
-export function devicePixelRatio(): number {
-  if (typeof window === 'undefined') return 1;
-  return Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-}
-
-/**
  * The canvas's CSS box — the size the browser has to put on the screen.
  *
  * The canvas's DRAWING BUFFER (`canvas.width` x `canvas.height`) is
  * scaled onto this box on every single frame, and the scaling is the
  * browser's compositor work. The engine's buffer is its mode times the
  * device pixel ratio, and the box is this many CSS pixels, so the two
- * agree - and the browser scales nothing - exactly when the MODE is this
- * many CSS pixels.
+ * agree — and the browser scales nothing — exactly when the MODE is
+ * this many CSS pixels.
  *
  * So this is the cap, in the same units as the mode: never ask the
  * engine for more CSS pixels than the canvas is showing, or the browser
@@ -372,28 +412,46 @@ export function displayedRenderResolution(): RenderResolution | null {
 }
 
 /**
- * Fit a target inside a cap, keeping the target's aspect.
+ * Fit a target inside a cap: the CAP's SHAPE, the TARGET's AREA.
  *
  * The cap is what the screen can actually show. Rendering more pixels
  * than that is pure waste: the browser scales the extra away on every
  * frame, and the scaling is not free.
+ *
+ * WHY THE SHAPE COMES FROM THE CAP AND NOT THE TARGET
+ * ---------------------------------------------------
+ * The target is the DISPLAY's resolution; the cap is the canvas's box,
+ * and a window is not the display. Keeping the target's aspect meant
+ * the mode could exceed the box on ONE axis (a 2560x1440 target inside
+ * a 1728x1117 box is 2224x928 after an area fit — no, worse: the
+ * browser then downscales that axis every frame, which is the lag).
+ *
+ * The box's shape is also where the engine's OWN resize lands (SDL
+ * resize -> `VID_SaveWindowSize` -> `R_SaveVideoMode`), so a mode with
+ * the box's shape is a mode the engine agrees with: the watchdog and
+ * the engine stop fighting, and the browser scales nothing.
  */
 export function fitRenderResolution(
   target: RenderResolution,
   cap: RenderResolution,
 ): RenderResolution {
-  if (target.width * target.height <= cap.width * cap.height) return target;
-  const scale = Math.sqrt(
-    (cap.width * cap.height) / (target.width * target.height),
-  );
+  const capArea = cap.width * cap.height;
+  if (capArea <= 0) return target;
+  const targetArea = target.width * target.height;
+  const area = Math.min(capArea, targetArea);
+  const scale = Math.sqrt(area / capArea);
+  // FLOORED, not rounded: rounding both axes up can put the area a
+  // fraction over the budget, and a budget that is a budget. Flooring
+  // keeps the result inside `area` by construction (floor <= value), and
+  // when the whole box fits (scale 1) it is the box exactly.
   return {
-    width: Math.max(2, Math.round(target.width * scale)),
-    height: Math.max(2, Math.round(target.height * scale)),
+    width: Math.max(2, Math.floor(cap.width * scale)),
+    height: Math.max(2, Math.floor(cap.height * scale)),
   };
 }
 
 /**
- * The resolution the engine should ACTUALLY render at.
+ * The resolution the engine should ACTUALLY render at, in CSS pixels.
  *
  * The policy's target is a budget (the display's size, capped). But the
  * browser can only show what the canvas's box holds, and it scales the
@@ -411,47 +469,40 @@ export function fitRenderResolution(
  * So: never render more pixels than the screen shows. The fullscreen
  * then renders at the display's resolution (sharp), and the windowed
  * game renders at the window's resolution (no scaling, no lag).
+ *
+ * And the result is bounded by the GL limit, because a mode past it is
+ * an allocation failure, not a slow frame.
  */
 export function effectiveRenderResolution(
   policyTarget: RenderResolution | null,
   displayed: RenderResolution | null,
+  dpr: number = devicePixelRatio(),
 ): RenderResolution | null {
   if (!policyTarget) return null;
-  if (!displayed) return policyTarget;
-  return fitRenderResolution(policyTarget, displayed);
+  const base = displayed
+    ? fitRenderResolution(policyTarget, displayed)
+    : policyTarget;
+  return clampToGlLimit(base, dpr);
 }
 
 /**
  * Does the engine need to be moved to the target?
  *
- * THE TARGET IS CAPPED BY WHAT THE SCREEN SHOWS (2026-11-04)
- * -----------------------------------------------------------
  * The target the caller passes in is already the EFFECTIVE one: the
  * policy's resolution, capped by the canvas's displayed size (see
  * `effectiveRenderResolution`). With that cap in place the engine's size
  * and the target are simply two numbers that either agree or they do
  * not.
  *
- * Why the cap is the whole fix, measured (real Chrome headful, the local
- * rig):
- *
- *   - The engine re-syncs to the VIEWPORT on every resize (SDL resize ->
- *     `VID_SaveWindowSize` -> `R_SaveVideoMode` rewrites `width`,
- *     `height`, `vid_width` and `vid_height` from the new window size).
- *   - The policy's target is the DISPLAY's size. A window is smaller
- *     than the display, so the engine was rendering more pixels than the
- *     window could show, and the browser was scaling the whole frame down
- *     on EVERY FRAME: the canvas backing store at 1600x1000 against a
- *     canvas showing 1050x837 - a 1.82x downscale, at 12 frames/s.
- *   - Leaving the fullscreen makes the window smaller still, so the
- *     scaling gets worse. That is the "screen resize lag" Kyle
- *     described on 2026-11-04, and going back into the fullscreen is
- *     seamless because the ratio returns to 1.
- *
- * So the engine renders at what is DISPLAYED (times the device pixel
- * ratio, which is what the screen has), never more. The fullscreen is
- * sharp - it shows the whole display, so the whole display's pixels - and
- * the windowed game has nothing to scale.
+ * WHY THE COMPARISON HAS A TOLERANCE
+ * ----------------------------------
+ * The engine TRUNCATES: `cssWidth * dpiScale | 0`. So the mode read
+ * back from the backing store can be a fraction under the mode that was
+ * asked for, and a strict `!==` compares forever — the watchdog
+ * re-issues the command on every resize event and the engine
+ * reallocates its render target every time. A pixel of slack is
+ * invisible (the browser scales 3454x2234 onto 3456x2234) and stops
+ * the churn.
  */
 export function renderResolutionNeedsApplying(
   target: RenderResolution | null,
@@ -459,7 +510,77 @@ export function renderResolutionNeedsApplying(
 ): boolean {
   if (!target) return false;
   if (!current) return true;
-  return current.width !== target.width || current.height !== target.height;
+  return (
+    Math.abs(current.width - target.width) > 1 ||
+    Math.abs(current.height - target.height) > 1
+  );
+}
+
+/**
+ * The GL limit the guard uses, in device pixels.
+ *
+ * The live limit can be handed in once the engine's WebGL context
+ * exists (`setMaxDeviceDimension`); until then the conservative
+ * measured floor stands.
+ */
+let maxDeviceDimension = MAX_DEVICE_DIMENSION;
+
+/**
+ * Hand the guard the engine's real maximum texture size.
+ *
+ * The engine's context reports `MAX_TEXTURE_SIZE`, and a mode past it
+ * cannot be allocated — which is the failure that wedged the engine on
+ * 2026-11-05. The value is ignored when it is not a usable limit.
+ */
+export function setMaxDeviceDimension(limit: number): void {
+  if (!Number.isFinite(limit) || limit < 2048) return;
+  maxDeviceDimension = Math.floor(limit);
+}
+
+/** The GL limit the guard is using, in device pixels. */
+export function getMaxDeviceDimension(): number {
+  return maxDeviceDimension;
+}
+
+/** Clamp a DEVICE-pixel size to the GL limit, uniformly. */
+function clampDeviceSize(size: RenderResolution): RenderResolution {
+  const limit = maxDeviceDimension;
+  const longest = Math.max(size.width, size.height);
+  if (longest <= limit) return size;
+  const scale = limit / longest;
+  return {
+    width: Math.max(1, Math.floor(size.width * scale)),
+    height: Math.max(1, Math.floor(size.height * scale)),
+  };
+}
+
+/**
+ * Clamp a CSS-pixel mode so the engine's device-pixel surface fits the
+ * GL limit.
+ *
+ * The engine's surface is the mode times the device pixel ratio, and
+ * that is the number that has to fit.
+ */
+export function clampToGlLimit(
+  res: RenderResolution,
+  dpr: number = devicePixelRatio(),
+): RenderResolution {
+  const ratio = dpr > 0 ? dpr : 1;
+  const device = clampDeviceSize({
+    width: Math.round(res.width * ratio),
+    height: Math.round(res.height * ratio),
+  });
+  const maxCss = Math.floor(maxDeviceDimension / ratio);
+  return {
+    width: Math.max(
+      Math.min(ENGINE_MIN_WIDTH, maxCss),
+      Math.round(device.width / ratio),
+    ),
+    height: Math.max(
+      Math.min(ENGINE_MIN_HEIGHT, maxCss),
+      Math.round(device.height / ratio),
+    ),
+  };
 }
 
 /**
@@ -556,9 +677,11 @@ export function applyRenderResolution(
   // The EFFECTIVE target: the policy's resolution, capped by what the
   // canvas actually shows. Rendering more than the screen shows is
   // waste, and the browser's per-frame scaling of the extra is the lag.
+  const dpr = devicePixelRatio();
   const effective = effectiveRenderResolution(
     target,
     displayedRenderResolution(),
+    dpr,
   );
   if (!effective) return false;
 
@@ -575,8 +698,12 @@ export function applyRenderResolution(
     return false;
   }
 
+  const device = `${Math.round(effective.width * dpr)}x${Math.round(
+    effective.height * dpr,
+  )}`;
   log?.(
-    `[video] render resolution -> ${effective.width}x${effective.height}` +
+    `[video] render resolution -> ${effective.width}x${effective.height} CSS` +
+      ` (${device} device)` +
       (current ? ` (was ${current.width}x${current.height})` : ''),
   );
   return true;
