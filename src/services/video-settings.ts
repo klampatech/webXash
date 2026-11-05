@@ -161,6 +161,12 @@ export const RESOLUTION_CHOICES: ResolutionChoice[] = [
  * and soft: the browser upscales the frame to the panel. It is one
  * constant away, and it is a product decision, not a bug fix — the
  * wedge was the emergency and the sharpness is the preference.
+ *
+ * AND THE CHEAPER ONE BUYS NOTHING: the measured research
+ * (`references/engine-render-performance.md`) has the engine holding 60
+ * FPS at 4K on INTEGRATED graphics, and dropping the render resolution
+ * to 640x360 changing NOTHING. So the device-pixel budget would cost
+ * sharpness for zero frames.
  */
 export const AUTO_MAX_PIXELS = 1920 * 1080;
 
