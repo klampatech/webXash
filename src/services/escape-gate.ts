@@ -78,6 +78,7 @@ import { enterFullscreen } from './fullscreen';
 import { isKeyboardLockHeld } from './browser-chord-gate';
 import { exitFullscreen } from './fullscreen';
 import { logBrowserCapabilities } from './browser-capabilities';
+import { isDomMenuOnScreen } from './pointer-ownership';
 
 /** Is the options overlay open? */
 export const overlayOpen = ref(false);
@@ -142,7 +143,11 @@ export function handleEscape(): void {
     if (document.pointerLockElement) {
       document.exitPointerLock?.();
     }
-    showHint('Mouse released — press Esc again for options');
+    // Same rule as the pointer-lock signal: the Escape sequence's hint
+    // belongs to the GAME, not to a menu that has the mouse.
+    if (!isDomMenuOnScreen()) {
+      showHint('Mouse released — press Esc again for options');
+    }
     logDebug('[escape] pointer lock released');
     return;
   }
@@ -247,14 +252,30 @@ function restoreFullscreen(): void {
  */
 function onPointerLockChange(): void {
   if (document.pointerLockElement) {
-    // The player clicked back into the game.
+    // The player clicked back into the game — or the engine's own menu
+    // took the pointer back.
+    //
+    // The hint has to GO with it: it is about the Escape sequence ("the
+    // mouse is free, press Esc again for options"), and while it is up
+    // next to the engine's own "PRESS ESC TO RELEASE POINTER" it reads
+    // as a contradiction. Kyle reported exactly that: the engine's modal
+    // and our message on screen at the same time.
     stage.value = 'game';
+    if (hintTimer) clearTimeout(hintTimer);
+    hintTimer = null;
+    hint.value = null;
     return;
   }
   if (stage.value !== 'game') return;
   stage.value = 'released';
   pointerReleasedAt = performance.now();
-  showHint('Mouse released — press Esc again for options');
+  // Only tell the player about the Escape sequence when the GAME lost the
+  // pointer. When a DOM MENU took it, the mouse being free is the menu's
+  // doing and the panel says so itself — the hint would be wrong there
+  // ("press Esc again for options" while the player is in a menu).
+  if (!isDomMenuOnScreen()) {
+    showHint('Mouse released — press Esc again for options');
+  }
   logDebug('[escape] pointer lock released');
 }
 
@@ -333,8 +354,21 @@ export function installEscapeGate(): () => void {
       document.exitPointerLock?.();
     }
     if (stage.value === 'game') {
+      // ESC #1: the mouse is free and the player is told what to do next.
       stage.value = 'released';
       showHint('Mouse released — press Esc again for options');
+    } else if (stage.value === 'released') {
+      // ESC #2 in a browser that CANCELS the fullscreen exit — Vivaldi,
+      // measured on Kyle's MacBook: the browser tries to leave the
+      // fullscreen, the page asks for it back, and the fullscreen stays.
+      //
+      // So the press that would have been "ESC #2" (the options) has to
+      // be recognised HERE, or it does nothing visible at all and the
+      // player has to press Escape a third time to get the options.
+      // Opening the overlay over the fullscreen is what ESC #2 means
+      // everywhere else.
+      logDebug('[escape] the fullscreen exit was cancelled; opening the options');
+      openOverlay();
     }
     pointerReleasedAt = performance.now();
     logDebug('[escape] left fullscreen; pointer released; asking for it back');
