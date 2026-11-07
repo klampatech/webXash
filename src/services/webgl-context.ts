@@ -135,6 +135,35 @@ export function createEngineContext(
 }
 
 /**
+ * The GPU the engine's context is running on, as the browser names it.
+ *
+ * `WEBGL_debug_renderer_info` is the only way to tell hardware from a
+ * software rasteriser from inside a page, and the difference is
+ * enormous: the project's own perf README records a whole round of
+ * performance work built on SwiftShader measurements before anyone
+ * checked this string.
+ *
+ * Empty when the context does not exist yet, or when the browser does
+ * not expose the extension.
+ */
+export function engineRendererInfo(): {
+  name: string;
+  vendor: string;
+} {
+  if (!engineContext) return { name: '', vendor: '' };
+  try {
+    const ext = engineContext.getExtension('WEBGL_debug_renderer_info');
+    if (!ext) return { name: '', vendor: '' };
+    return {
+      name: String(engineContext.getParameter(ext.UNMASKED_RENDERER_WEBGL) || ''),
+      vendor: String(engineContext.getParameter(ext.UNMASKED_VENDOR_WEBGL) || ''),
+    };
+  } catch (e) {
+    return { name: '', vendor: '' };
+  }
+}
+
+/**
  * Is the low-latency presentation path wanted?
  *
  * Off unless it is asked for. The switch is a URL parameter, so it

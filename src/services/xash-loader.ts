@@ -22,6 +22,7 @@ import {
   type RenderResolution,
 } from '/@/services/video-settings.ts';
 import { engineMaxTextureSize, prepareEngineContext } from '/@/services/webgl-context.ts';
+import { ensurePanelRateMeasured } from '/@/services/perf-collect.ts';
 import {
   applyFrameCap,
   forceFrameCap,
@@ -826,6 +827,20 @@ class XashLoader {
     // is still ON -- the cap exists because the uncapped engine
     // arrives unevenly on a fast display.
     if (!wantsNoFrameCap()) {
+      // THE DISPLAY'S REFRESH RATE, BEFORE THE ENGINE EXISTS.
+      //
+      // The pacer cannot measure the display's rate once the engine is
+      // running: its own tick carries the engine's work, so a slow
+      // engine makes the reading LOW — and the pacer would then cap
+      // against a rate the display does not have. So the number has to
+      // be taken while the page is idle, and this is the last moment
+      // that is true.
+      //
+      // It is free when the landing page already measured it (which it
+      // does, in `main.ts`), and it costs one short sampling window
+      // when the player clicked PLAY faster than that.
+      await ensurePanelRateMeasured();
+
       installFramePacingShim();
     }
 
