@@ -57,6 +57,20 @@ installFullscreenWatchdog();
 import { claimDocumentTitle } from './services/brand';
 claimDocumentTitle();
 
+// THE DISPLAY'S REFRESH RATE, MEASURED WHILE THE PAGE IS IDLE.
+//
+// The frame pacer needs the display's real rate, and it cannot measure
+// it once the engine is running: the pacer's own tick carries the
+// engine's work, so a slow engine makes the measurement read LOW (see
+// `measureIdleDisplayHz` in services/frame-pacing-apply.ts).
+//
+// The landing page is the one moment the page is guaranteed to be
+// idle, so this is where the measurement belongs. It is not awaited:
+// the landing page must paint immediately, and the loader asks for the
+// number again before the engine boots if it is not ready yet.
+import { ensurePanelRateMeasured } from './services/perf-collect';
+void ensurePanelRateMeasured();
+
 const app = createApp(App);
 const pinia = createPinia();
 

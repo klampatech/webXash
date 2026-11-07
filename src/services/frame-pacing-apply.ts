@@ -113,8 +113,24 @@ import {
 export interface PacingState {
   /** The cap in force, in frames per second. 0 = no cap. */
   capFps: number;
-  /** The measured refresh rate the browser is delivering. */
+  /**
+   * The measured refresh rate the browser is delivering RIGHT NOW.
+   *
+   * This is the rate the GAME is achieving, which is NOT the same
+   * thing as the display's rate when the engine cannot keep up: the
+   * browser then misses vsyncs and this drops. It is the honest
+   * answer to "how many frames a second is the game drawing", and the
+   * readout shows it beside `panelHz`.
+   */
   displayHz: number;
+  /**
+   * The DISPLAY's refresh rate, measured while the page was idle.
+   *
+   * This is the one the cap decision uses. It is measured separately
+   * because the live rate above is contaminated by the engine's own
+   * work — see the note on `measureIdleDisplayHz`.
+   */
+  panelHz: number;
   /** The engine's measured per-frame cost, in milliseconds. */
   engineWorkMs: number;
   /** The frame rate the engine can sustain. */
@@ -137,6 +153,16 @@ export interface PacingState {
    * than described.
    */
   lateTicks: number;
+  /**
+   * How many display ticks the measurement window saw.
+   *
+   * `lateTicks` on its own is a count with nothing to be a fraction
+   * OF, so a window that saw 10 ticks and a window that saw 1000
+   * would report the same number for the same problem. This is the
+   * denominator, and it is what makes "8% of frames arrived late" a
+   * statement about the client rather than about the window length.
+   */
+  measuredTicks: number;
   /** Why. */
   reason: string;
 }
@@ -150,9 +176,11 @@ export interface PacingState {
 interface PacingCore {
   capFps: number;
   displayHz: number;
+  panelHz: number;
   engineWorkMs: number;
   sustainableFps: number;
   lateTicks: number;
+  measuredTicks: number;
   reason: string;
 }
 
@@ -160,9 +188,11 @@ interface PacingCore {
 let core: PacingCore = {
   capFps: 0,
   displayHz: 0,
+  panelHz: 0,
   engineWorkMs: 0,
   sustainableFps: 0,
   lateTicks: 0,
+  measuredTicks: 0,
   reason: 'not measured yet',
 };
 
@@ -207,6 +237,149 @@ const nativeCancel =
   typeof window !== 'undefined' && window.cancelAnimationFrame
     ? window.cancelAnimationFrame.bind(window)
     : null;
+
+/**
+ * The browser's REAL refresh rate, measured while the page was idle.
+ *
+ * WHY THIS EXISTS — THE MEASUREMENT WAS WRONG
+ * -------------------------------------------
+ * The pacer read the display's refresh rate from the intervals between
+ * the SHIM'S OWN TICKS. The shim's tick is the browser's rAF callback,
+ * and that callback runs the ENGINE's frame. So the interval between
+ * two ticks is:
+ *
+ *     the display's frame period  +  the engine's work
+ *
+ * When the engine keeps up, the second term is small and the number
+ * is right. When the engine OVERRUNS the frame period, the browser
+ * misses a vsync and the tick stretches to two display periods — and
+ * the pacer reads that stretched interval as "the display is half as
+ * fast as it is".
+ *
+ * MEASURED (2026-11-07, Kyle's MacBook Pro, M3 Pro, Liquid Retina XDR
+ * 120 Hz panel):
+ *
+ *     the panel's own rate (CoreGraphics):   120.0 Hz
+ *     a bare rAF loop, no game:              120.5 Hz
+ *     the pacer's reading, with the game:     60.1 Hz
+ *
+ * So the pacer believed the display was a 60 Hz panel when it was a
+ * 120 Hz one — and it believed that BECAUSE the engine could not keep
+ * up, which is the exact condition the pacer exists to handle.
+ *
+ * WHY THAT BREAKS THE CAP
+ * -----------------------
+ * The cap's whole job is to hold the engine to a DIVISOR of the
+ * display's period, so the frames it does draw land evenly. With the
+ * display rate wrong, the divisor is wrong, and the pacer can decide
+ * NOT TO CAP AT ALL on a fast display — which is the one case where
+ * capping matters. Checked against the real policy:
+ *
+ *     true display   engine cost   measured as   the decision
+ *     144 Hz         8.0 ms        72 Hz         "not capping"  ← WRONG
+ *     144 Hz         7.0 ms        72 Hz         "not capping"  ← WRONG
+ *     240 Hz         5.0 ms        120 Hz        "not capping"  ← WRONG
+ *
+ * With the TRUE display rate the same three cases cap to 72, 72 and
+ * 120 fps respectively — each a divisor of the panel, each evenly
+ * spaced.
+ *
+ * THE FIX
+ * -------
+ * Measure the display's rate while the page is IDLE, and use THAT for
+ * the cap decision. The live tick rate stays in the state, because it
+ * is still the honest answer to "how many frames is the game actually
+ * delivering" — the two numbers mean different things and the readout
+ * shows both.
+ *
+ * The measurement uses the rAF TIMESTAMP rather than `performance.now()`:
+ * the timestamp is the time the browser scheduled the frame, so it is
+ * the display's clock and not ours.
+ */
+let idleDisplayHz = 0;
+
+/**
+ * Measure the browser's refresh rate, while the page is idle.
+ *
+ * MUST be called while the engine is NOT running its frame loop. With
+ * the engine running, the intervals are stretched by the engine's own
+ * work and the number is wrong — that is the whole point of this
+ * function.
+ *
+ * The sample window is short by design: it is called on the landing
+ * page, and it must not hold the boot up.
+ */
+export async function measureIdleDisplayHz(observeMs = 700): Promise<number> {
+  // ONE MEASUREMENT AT A TIME.
+  //
+  // The landing page starts a measurement at startup and the loader
+  // asks for one before the engine boots. A player who clicks PLAY
+  // quickly would otherwise have two samplers running at once, each
+  // with its own rAF chain, and the second one's samples would land
+  // in the first one's window.
+  if (idleMeasureInFlight) return idleMeasureInFlight;
+  idleMeasureInFlight = measureIdleDisplayHzOnce(observeMs);
+  try {
+    return await idleMeasureInFlight;
+  } finally {
+    idleMeasureInFlight = null;
+  }
+}
+
+/** The in-flight measurement, so two callers share one sampler. */
+let idleMeasureInFlight: Promise<number> | null = null;
+
+/** The measurement itself. */
+async function measureIdleDisplayHzOnce(observeMs: number): Promise<number> {
+  if (typeof window === 'undefined') return 0;
+  const raf = window.requestAnimationFrame;
+  if (!raf) return 0;
+
+  const stamps: number[] = [];
+  await new Promise<void>((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    const tick = (t: number) => {
+      stamps.push(t);
+      if (stamps.length >= 40) {
+        finish();
+        return;
+      }
+      raf(tick);
+    };
+    raf(tick);
+    // The safety net: a backgrounded tab gets no rAF at all, and this
+    // must never hang the boot on it.
+    setTimeout(finish, observeMs + 150);
+  });
+
+  if (stamps.length < 10) return 0;
+  const gaps: number[] = [];
+  for (let i = 1; i < stamps.length; i++) gaps.push(stamps[i] - stamps[i - 1]);
+  gaps.sort((a, b) => a - b);
+  const median = gaps[Math.floor(gaps.length / 2)];
+  if (!isFinite(median) || median <= 0) return 0;
+
+  const hz = 1000 / median;
+  // Only trust a reading that is plausibly a display rate. A window
+  // that was throttled to 1 Hz (a backgrounded tab) would otherwise
+  // be recorded as the display's rate, and that is a worse lie than
+  // no number at all.
+  if (hz < 20 || hz > 500) return 0;
+
+  idleDisplayHz = hz;
+  return hz;
+}
+
+/** The idle-measured refresh rate, in Hz. 0 = not measured. */
+export function getIdleDisplayHz(): number {
+  return idleDisplayHz;
+}
+
 
 /** Is the shim installed? */
 let shimInstalled = false;
@@ -556,9 +729,11 @@ export async function applyFrameCap(
     core = {
       capFps: 0,
       displayHz: 0,
+      panelHz: idleDisplayHz,
       engineWorkMs: 0,
       sustainableFps: 0,
       lateTicks: 0,
+      measuredTicks: 0,
       reason: 'the frame cap is switched OFF for this session (?nocap=1)',
     };
     return getPacingState();
@@ -589,8 +764,10 @@ export async function applyFrameCap(
     core = {
       ...core,
       displayHz,
+      panelHz: Math.max(displayHz, idleDisplayHz),
       engineWorkMs,
       lateTicks,
+      measuredTicks: intervals.length,
       reason:
         `the measurement window was empty ` +
         `(${intervals.length} ticks, ${stats.size} callbacks seen) -- ` +
@@ -617,7 +794,16 @@ export async function applyFrameCap(
     engineCallback = bestCb;
   }
 
-  const need = opts.force || shouldCap(displayHz, sustainable);
+  // THE DISPLAY'S RATE, NOT THE RATE THE GAME IS ACHIEVING.
+  //
+  // The live tick rate is the display's period PLUS the engine's
+  // work, so when the engine overruns the frame period the browser
+  // misses vsyncs and the live rate reads LOW. The idle measurement
+  // is the display's real rate. The cap has to be a divisor of THAT,
+  // or the frames it lets through do not land on the display's grid.
+  const panelHz = Math.max(displayHz, idleDisplayHz);
+
+  const need = opts.force || shouldCap(panelHz, sustainable);
   if (!need) {
     // THE GATE COMES OFF HERE. `everyNth` IS the gate, so setting it
     // to 1 is what stops the engine being offered every second
@@ -628,30 +814,37 @@ export async function applyFrameCap(
     core = {
       capFps: 0,
       displayHz,
+      panelHz,
       engineWorkMs,
       sustainableFps: sustainable,
       lateTicks,
+      measuredTicks: intervals.length,
       reason:
         `the engine sustains ${sustainable.toFixed(0)} fps against a ` +
-        `${displayHz.toFixed(0)} Hz display; not capping`,
+        `${panelHz.toFixed(0)} Hz display; not capping` +
+        (panelHz > displayHz + 1
+          ? ` (the game is delivering ${displayHz.toFixed(0)} fps)`
+          : ''),
     };
     return getPacingState();
   }
 
-  const cap: FrameCap = chooseFrameCap(displayHz, sustainable);
+  const cap: FrameCap = chooseFrameCap(panelHz, sustainable);
   // `everyNth` may be given directly, to measure a specific cap.
   everyNth = Math.max(
     1,
-    opts.everyNth ?? Math.round(displayHz / Math.max(1, cap.fps)),
+    opts.everyNth ?? Math.round(panelHz / Math.max(1, cap.fps)),
   );
-  const effective = displayHz / everyNth;
+  const effective = panelHz / everyNth;
 
   core = {
     capFps: effective,
     displayHz,
+    panelHz,
     engineWorkMs,
     sustainableFps: sustainable,
     lateTicks,
+    measuredTicks: intervals.length,
     reason:
       `${cap.reason}; the engine runs 1 frame in ${everyNth} ` +
       `(effective ${effective.toFixed(1)} fps, budget ` +
