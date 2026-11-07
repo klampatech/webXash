@@ -115,7 +115,20 @@ const REPLACEMENT = `var _emscripten_glGetError = () => {
 };`;
 
 /**
- * Drop Vite's dependency-optimisation cache.
+ * Vite's dependency-optimisation cache.
+ *
+ * Overridable so the unit suite can exercise the cache handling
+ * without touching the real node_modules — the same convention
+ * XASH_GLUE_PATH uses for the glue.
+ */
+const VITE_CACHE = path.resolve(
+  process.env.XASH_VITE_CACHE ||
+    path.join(__dirname, '..', 'node_modules', '.vite')
+);
+
+/**
+ * Drop Vite's dependency-optimisation cache — but ONLY when it is
+ * actually stale.
  *
  * WHY THIS MATTERS MORE THAN IT LOOKS
  * -----------------------------------
@@ -128,11 +141,43 @@ const REPLACEMENT = `var _emscripten_glGetError = () => {
  * success, and does nothing. Measured 2026-11-07: the first build
  * after patching shipped the UNPATCHED glue, because the cache in
  * `node_modules/.vite/deps/` was three weeks old.
+ *
+ * WHY IT IS NOT DROPPED EVERY TIME
+ * --------------------------------
+ * This runs from `postinstall`, so an unconditional drop means EVERY
+ * install makes the next dev server re-bundle the 3.9 MB engine glue
+ * from scratch — for nothing, once the cache is already patched. The
+ * cache that needs dropping is the one built from the UNPATCHED glue,
+ * and that can be recognised: the minifier strips the marker comment,
+ * but the `gldebug=1` escape hatch survives it — which is exactly
+ * what the build gate looks for.
+ *
+ * `force` is for the case where the glue was just CHANGED: then the
+ * cache is stale by definition, whatever it contains.
  */
-function clearViteDepCache() {
-  const cache = path.join(__dirname, '..', 'node_modules', '.vite');
-  if (!fs.existsSync(cache)) return false;
-  fs.rmSync(cache, { recursive: true, force: true });
+function clearViteDepCache({ force = false } = {}) {
+  const deps = path.join(VITE_CACHE, 'deps');
+  if (!fs.existsSync(deps)) return false;
+
+  if (!force) {
+    let files = [];
+    try {
+      files = fs.readdirSync(deps).filter((f) => f.endsWith('.js'));
+    } catch (e) {
+      files = [];
+    }
+    for (const f of files) {
+      try {
+        if (fs.readFileSync(path.join(deps, f), 'utf8').includes('gldebug=1')) {
+          return false; // already patched — the cache is fine, keep it
+        }
+      } catch (e) {
+        /* unreadable counts as stale */
+      }
+    }
+  }
+
+  fs.rmSync(VITE_CACHE, { recursive: true, force: true });
   return true;
 }
 
@@ -194,7 +239,7 @@ function main() {
     fail('the ?gldebug=1 escape hatch is missing; refusing to claim success.');
   }
 
-  const cleared = clearViteDepCache();
+  const cleared = clearViteDepCache({ force: true });
   console.log(
     `[patch-xash-gl-geterror] patched ${path.relative(process.cwd(), TARGET)} — ` +
       'the engine\'s per-frame glGetError GPU round-trip now happens at most ' +
