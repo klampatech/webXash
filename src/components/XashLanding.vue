@@ -154,6 +154,14 @@
         >
           <TSFaq />
         </section>
+
+        <section
+          v-show="activeTab === 'performance'"
+          role="tabpanel"
+          class="ts-landing__section"
+        >
+          <TSPerformance />
+        </section>
       </div>
 
       <footer class="ts-landing__foot">
@@ -199,6 +207,7 @@ import {
 import TSServerList from '/@/components/TSServerList.vue';
 import TSFaq from '/@/components/TSFaq.vue';
 import TSLeaderboard from '/@/components/TSLeaderboard.vue';
+import TSPerformance from '/@/components/TSPerformance.vue';
 import PlayerIdentityModal from '/@/components/PlayerIdentityModal.vue';
 import { enterFullscreen } from '/@/services/fullscreen.ts';
 import {
@@ -210,6 +219,10 @@ const tabs = [
   { id: 'servers', label: 'Servers' },
   { id: 'leaderboard', label: 'Leaderboard' },
   { id: 'faq', label: 'FAQ' },
+  // The client readout. It is a tab rather than a line under the play
+  // button because most players will never need it, and the ones who
+  // do are looking for exactly this.
+  { id: 'performance', label: 'Your client' },
 ] as const;
 
 const activeTab = ref<(typeof tabs)[number]['id']>('servers');

@@ -6,10 +6,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc -b && vite build && node scripts/check-xash-wasm.cjs",
+    "build": "vue-tsc -b && vite build && node scripts/check-xash-wasm.cjs && node scripts/check-xash-glue.cjs",
     "preview": "vite preview",
     "deploy": "bun run build && touch 'dist/.nojekyll' && gh-pages -d dist",
-    "postinstall": "node scripts/patch-xash-exports.cjs && node scripts/patch-xash-memory.cjs"
+    "postinstall": "node scripts/patch-xash-exports.cjs && node scripts/patch-xash-memory.cjs && node scripts/patch-xash-gl-geterror.cjs"
   },
   "dependencies": {
     "idb-keyval": "6.2.2",
