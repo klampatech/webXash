@@ -34,214 +34,316 @@
       </header>
 
       <!--
-        THE FOCUS FIX (the bug: "typing in the input is not captured by
-        the input").
+        THE TABS.
 
-        Measured against production on 2026-10-27: the DOM input was
-        fine, and typing into it worked — but only AFTER a click. Open
-        the overlay and type without clicking, and every keystroke went
-        to <body> instead: the input never had focus, so the text went
-        nowhere and the ENGINE ate the keys as game commands (a name
-        containing "w" would walk the player forward).
+        Kyle asked for the readout to have its own tab: "We can have
+        'Settings' and 'Your Client'". Two tabs, and that is all.
 
-        So the input is focused when the overlay opens, and the engine's
-        view of the keyboard is suspended while it is open. The second
-        half matters as much as the first: the engine's key listeners
-        are on `window` (measured with CDP's DOMDebugger.getEventListeners
-        — the engine registers keydown/keyup/keypress there), so a
-        focused input does NOT stop the game from receiving the keys.
-        `setBridgeSuspended` already exists for exactly this.
+        WHY THE STRIP IS OUTSIDE THE SCROLL AREA. The strip is not in
+        the scrolling body — it is fixed under the header, always
+        visible. That is the whole point: the readout is long, and when
+        it was the last group of the one long panel it pushed the Quit
+        button — the one control a player reaches for when they want to
+        LEAVE a match — down the scroll and out of sight.
+
+        With the tabs the Quit button stays in the Session group of the
+        Settings tab, the readout lives in the Your Client tab, and the
+        way back to the way out is one click away whatever the readout
+        says. The Settings tab is also SHORTER than it has been since
+        the readout was added, so the Quit button is more reachable than
+        it was, not less.
+
+        IT IS A REAL TABLIST. `role="tablist"` on the strip,
+        `role="tab"` + `aria-selected` + `aria-controls` on the buttons,
+        `role="tabpanel"` + `aria-labelledby` on the panels, and a
+        ROVING TABINDEX — the selected tab is the only one in the tab
+        order — so the arrow keys can move between the tabs without
+        walking the whole modal. Home and End jump to the ends, and the
+        selection follows the focus.
+
+        The ids are stable on purpose: the parent's test suite anchors
+        on them.
       -->
-      <section class="opts__group">
-        <h3 class="opts__legend">Identity</h3>
-        <label class="opts__row">
-          <span class="opts__label">Name</span>
-          <input
-            ref="nameInput"
-            v-model="name"
-            class="opts__input"
-            type="text"
-            maxlength="24"
-            spellcheck="false"
-            autocomplete="off"
-            @keyup.enter="applyName"
-          />
-        </label>
-        <button class="opts__btn" type="button" :disabled="!name.trim()" @click="applyName">
-          Set name
+      <div
+        class="opts__tabs"
+        role="tablist"
+        aria-label="Options sections"
+        @keydown="onTabKeydown"
+      >
+        <button
+          id="opts-tab-settings"
+          ref="settingsTabBtn"
+          class="opts__tab"
+          :class="{ 'opts__tab--on': activeTab === 'settings' }"
+          type="button"
+          role="tab"
+          :aria-selected="activeTab === 'settings'"
+          aria-controls="opts-panel-settings"
+          :tabindex="activeTab === 'settings' ? 0 : -1"
+          @click="selectTab('settings')"
+        >
+          Settings
         </button>
-
-        <!--
-          The character picker. TS's own options menu has one (the
-          screenshot Kyle sent), and the models are the server's
-          `mp_teammodels` list — see player-identity.ts for how the
-          server treats a chosen model.
-        -->
-        <div class="opts__row opts__row--models">
-          <span class="opts__label">Character</span>
-          <div class="opts__models" role="group" aria-label="Character model">
-            <button
-              v-for="m in models"
-              :key="m"
-              class="opts__model"
-              type="button"
-              :class="{ 'opts__model--on': model === m }"
-              :aria-pressed="model === m"
-              @click="chooseModel(m)"
-            >
-              <!--
-                The picture is the GAME'S OWN PORTRAIT: the .bmp that
-                ships beside the model, with its flat backdrop made
-                transparent so the character sits on the panel.
-
-                It was a 3D render once. The renderer applied each
-                bone's bind-pose world matrix to vertices that already
-                carried their bind position, so the position was added
-                twice: one gordon vertex moved 67.7 units on a 22-unit
-                character, and the heads floated with the hands detached
-                from the arms. The portrait is correct and it is free.
-              -->
-              <img
-                class="opts__model-img"
-                :src="`/models/${m}.png`"
-                :alt="`${m} character preview`"
-                width="72"
-                height="72"
-                loading="lazy"
-              />
-              <span class="opts__model-name">{{ m }}</span>
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <section class="opts__group">
-        <h3 class="opts__legend">Controls</h3>
-        <label class="opts__row">
-          <span class="opts__label">Sensitivity</span>
-          <input
-            v-model.number="sensitivity"
-            class="opts__input opts__input--num"
-            type="number"
-            min="0.1"
-            max="20"
-            step="0.1"
-          />
-        </label>
-        <label class="opts__row">
-          <span class="opts__label">Field of view</span>
-          <input
-            v-model.number="fov"
-            class="opts__input opts__input--num"
-            type="number"
-            min="30"
-            max="160"
-            step="1"
-          />
-        </label>
-        <label class="opts__row">
-          <span class="opts__label">Volume</span>
-          <input
-            v-model.number="volume"
-            class="opts__input opts__input--num"
-            type="number"
-            min="0"
-            max="1"
-            step="0.05"
-          />
-        </label>
-        <button class="opts__btn opts__btn--primary" type="button" @click="applySettings">Apply</button>
-      </section>
+        <button
+          id="opts-tab-client"
+          ref="clientTabBtn"
+          class="opts__tab"
+          :class="{ 'opts__tab--on': activeTab === 'client' }"
+          type="button"
+          role="tab"
+          :aria-selected="activeTab === 'client'"
+          aria-controls="opts-panel-client"
+          :tabindex="activeTab === 'client' ? 0 : -1"
+          @click="selectTab('client')"
+        >
+          Your Client
+        </button>
+      </div>
 
       <!--
-        THE BUY MENU.
+        THE BODY IS THE ONLY PART THAT SCROLLS.
 
-        Two menus, one set of loadouts. 'Classic' is the game's own
-        canvas menu, drawn by the client library. 'Modern' is the DOM
-        panel: it reads the game's own prices, budget and slot count
-        from the port and sends the game's own key presses, so a
-        purchase behaves exactly as it does in the classic menu.
-
-        The saved loadouts are the game's (`tsbuylist.tsa`), so
-        switching never forks what the player has bought.
+        The head and the strip stay where they are, so the Quit button
+        is never below the fold and the tab strip is never below the
+        fold either.
       -->
-      <section class="opts__group">
-        <h3 class="opts__legend">Buy menu</h3>
-        <div class="opts__row">
-          <span class="opts__label">Buy menu</span>
-          <div class="opts__switch" role="radiogroup" aria-label="Buy menu style">
-            <button
-              v-for="mode in buyMenuModes"
-              :key="mode"
-              class="opts__switch-btn"
-              :class="{ 'opts__switch-btn--on': buyMenu === mode }"
-              type="button"
-              role="radio"
-              :aria-checked="buyMenu === mode"
-              @click="setBuyMenu(mode)"
-            >
-              {{ mode === 'classic' ? 'Classic' : 'Modern' }}
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <section class="opts__group">
-        <h3 class="opts__legend">Session</h3>
+      <div class="opts__body">
         <!--
-          THE FULLSCREEN TOGGLE.
-
-          The way in and out of the fullscreen, in one control, and it
-          shows the state it would leave you in.
-
-          Escape is not the way out any more: the browser takes that key
-          for the fullscreen on the browsers that do not implement the
-          Keyboard Lock API, and on Chromium it is the key that lets go
-          of the MOUSE mid-match - which is what a player pressing
-          Escape actually wants. The fullscreen is a deliberate choice
-          from here, or "Quit" (which leaves the match and the fullscreen
-          together).
+          THE SETTINGS TAB: everything the player can change, and the
+          one control that ends the match.
         -->
-        <div class="opts__row">
-          <span class="opts__label">Fullscreen</span>
-          <button
-            class="opts__switch-btn"
-            :class="{ 'opts__switch-btn--on': inFullscreen }"
-            type="button"
-            role="switch"
-            :aria-checked="inFullscreen"
-            @click="toggleFullscreen"
-          >
-            {{ inFullscreen ? 'On' : 'Off' }}
+        <section
+          id="opts-panel-settings"
+          ref="settingsPanel"
+          class="opts__panel-content"
+          role="tabpanel"
+          aria-labelledby="opts-tab-settings"
+          tabindex="-1"
+          v-show="activeTab === 'settings'"
+        >
+        <!--
+          THE FOCUS FIX (the bug: "typing in the input is not captured by
+          the input").
+
+          Measured against production on 2026-10-27: the DOM input was
+          fine, and typing into it worked — but only AFTER a click. Open
+          the overlay and type without clicking, and every keystroke went
+          to <body> instead: the input never had focus, so the text went
+          nowhere and the ENGINE ate the keys as game commands (a name
+          containing "w" would walk the player forward).
+
+          So the input is focused when the overlay opens, and the engine's
+          view of the keyboard is suspended while it is open. The second
+          half matters as much as the first: the engine's key listeners
+          are on `window` (measured with CDP's DOMDebugger.getEventListeners
+          — the engine registers keydown/keyup/keypress there), so a
+          focused input does NOT stop the game from receiving the keys.
+          `setBridgeSuspended` already exists for exactly this.
+        -->
+        <section class="opts__group">
+          <h3 class="opts__legend">Identity</h3>
+          <label class="opts__row">
+            <span class="opts__label">Name</span>
+            <input
+              ref="nameInput"
+              v-model="name"
+              class="opts__input"
+              type="text"
+              maxlength="24"
+              spellcheck="false"
+              autocomplete="off"
+              @keyup.enter="applyName"
+            />
+          </label>
+          <button class="opts__btn" type="button" :disabled="!name.trim()" @click="applyName">
+            Set name
           </button>
-        </div>
-        <button class="opts__btn opts__btn--danger" type="button" @click="quitToWebUi">
-          Quit
-        </button>
-      </section>
 
-      <!--
-        THE READOUT, IN THE ONE PLACE THE PLAYER CAN REACH WHILE THE
-        GAME IS RUNNING.
+          <!--
+            The character picker. TS's own options menu has one (the
+            screenshot Kyle sent), and the models are the server's
+            `mp_teammodels` list — see player-identity.ts for how the
+            server treats a chosen model.
+          -->
+          <div class="opts__row opts__row--models">
+            <span class="opts__label">Character</span>
+            <div class="opts__models" role="group" aria-label="Character model">
+              <button
+                v-for="m in models"
+                :key="m"
+                class="opts__model"
+                type="button"
+                :class="{ 'opts__model--on': model === m }"
+                :aria-pressed="model === m"
+                @click="chooseModel(m)"
+              >
+                <!--
+                  The picture is the GAME'S OWN PORTRAIT: the .bmp that
+                  ships beside the model, with its flat backdrop made
+                  transparent so the character sits on the panel.
 
-        The landing page carries the same panel, as a tab. But the
-        landing page is DESTROYED when the engine boots
-        (`showXashSettingUI` goes false and never comes back), so the
-        frame cost, the budget and the delivered frame rate were only
-        ever measurable and never visible — the one number a player
-        cannot get is the one that explains why the game feels slow.
+                  It was a 3D render once. The renderer applied each
+                  bone's bind-pose world matrix to vertices that already
+                  carried their bind position, so the position was added
+                  twice: one gordon vertex moved 67.7 units on a 22-unit
+                  character, and the heads floated with the hands detached
+                  from the arms. The portrait is correct and it is free.
+                -->
+                <img
+                  class="opts__model-img"
+                  :src="`/models/${m}.png`"
+                  :alt="`${m} character preview`"
+                  width="72"
+                  height="72"
+                  loading="lazy"
+                />
+                <span class="opts__model-name">{{ m }}</span>
+              </button>
+            </div>
+          </div>
+        </section>
 
-        Here the game IS running, so the numbers are the live ones: the
-        pacer's state and the engine's own frame cost.
+        <section class="opts__group">
+          <h3 class="opts__legend">Controls</h3>
+          <label class="opts__row">
+            <span class="opts__label">Sensitivity</span>
+            <input
+              v-model.number="sensitivity"
+              class="opts__input opts__input--num"
+              type="number"
+              min="0.1"
+              max="20"
+              step="0.1"
+            />
+          </label>
+          <label class="opts__row">
+            <span class="opts__label">Field of view</span>
+            <input
+              v-model.number="fov"
+              class="opts__input opts__input--num"
+              type="number"
+              min="30"
+              max="160"
+              step="1"
+            />
+          </label>
+          <label class="opts__row">
+            <span class="opts__label">Volume</span>
+            <input
+              v-model.number="volume"
+              class="opts__input opts__input--num"
+              type="number"
+              min="0"
+              max="1"
+              step="0.05"
+            />
+          </label>
+          <button class="opts__btn opts__btn--primary" type="button" @click="applySettings">Apply</button>
+        </section>
 
-        IT IS LAST ON PURPOSE. The panel scrolls, but the QUIT button
-        lives above it, and a readout that pushes the way out of a match
-        below the fold is a readout that has cost the player something.
-      -->
-      <section class="opts__group">
-        <h3 class="opts__legend">Your client</h3>
-        <TSPerformance embed />
-      </section>
+        <!--
+          THE BUY MENU.
+
+          Two menus, one set of loadouts. 'Classic' is the game's own
+          canvas menu, drawn by the client library. 'Modern' is the DOM
+          panel: it reads the game's own prices, budget and slot count
+          from the port and sends the game's own key presses, so a
+          purchase behaves exactly as it does in the classic menu.
+
+          The saved loadouts are the game's (`tsbuylist.tsa`), so
+          switching never forks what the player has bought.
+        -->
+        <section class="opts__group">
+          <h3 class="opts__legend">Buy menu</h3>
+          <div class="opts__row">
+            <span class="opts__label">Buy menu</span>
+            <div class="opts__switch" role="radiogroup" aria-label="Buy menu style">
+              <button
+                v-for="mode in buyMenuModes"
+                :key="mode"
+                class="opts__switch-btn"
+                :class="{ 'opts__switch-btn--on': buyMenu === mode }"
+                type="button"
+                role="radio"
+                :aria-checked="buyMenu === mode"
+                @click="setBuyMenu(mode)"
+              >
+                {{ mode === 'classic' ? 'Classic' : 'Modern' }}
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section class="opts__group">
+          <h3 class="opts__legend">Session</h3>
+          <!--
+            THE FULLSCREEN TOGGLE.
+
+            The way in and out of the fullscreen, in one control, and it
+            shows the state it would leave you in.
+
+            Escape is not the way out any more: the browser takes that key
+            for the fullscreen on the browsers that do not implement the
+            Keyboard Lock API, and on Chromium it is the key that lets go
+            of the MOUSE mid-match - which is what a player pressing
+            Escape actually wants. The fullscreen is a deliberate choice
+            from here, or "Quit" (which leaves the match and the fullscreen
+            together).
+          -->
+          <div class="opts__row">
+            <span class="opts__label">Fullscreen</span>
+            <button
+              class="opts__switch-btn"
+              :class="{ 'opts__switch-btn--on': inFullscreen }"
+              type="button"
+              role="switch"
+              :aria-checked="inFullscreen"
+              @click="toggleFullscreen"
+            >
+              {{ inFullscreen ? 'On' : 'Off' }}
+            </button>
+          </div>
+          <button class="opts__btn opts__btn--danger" type="button" @click="quitToWebUi">
+            Quit
+          </button>
+        </section>
+        </section>
+
+        <!--
+          THE READOUT, ON ITS OWN TAB.
+
+          The landing page carries the same panel, as a tab. But the
+          landing page is DESTROYED when the engine boots
+          (`showXashSettingUI` goes false and never comes back), so the
+          frame cost, the budget and the delivered frame rate were only
+          ever measurable and never visible — the one number a player
+          cannot get is the one that explains why the game feels slow.
+
+          Here the game IS running, so the numbers are the live ones: the
+          pacer's state and the engine's own frame cost.
+
+          IT IS A TAB, NOT A GROUP, BECAUSE OF THE QUIT BUTTON. A readout
+          that pushes the way out of a match below the fold is a readout
+          that has cost the player something. Here the readout cannot
+          push anything: it is in its own panel, the Quit button is in
+          the Settings panel, and the strip that switches between them
+          never scrolls away.
+
+          The tab's label is the heading — the overlay's own legend for
+          the readout is gone, because the strip says it already.
+        -->
+        <section
+          id="opts-panel-client"
+          ref="clientPanel"
+          class="opts__panel-content"
+          role="tabpanel"
+          aria-labelledby="opts-tab-client"
+          tabindex="-1"
+          v-show="activeTab === 'client'"
+        >
+          <TSPerformance embed />
+        </section>
+      </div>
     </div>
   </div>
 </template>
@@ -277,6 +379,94 @@ const volume = ref<number | null>(null);
 
 const models = TS_MODELS;
 const nameInput = ref<HTMLInputElement | null>(null);
+
+/**
+ * THE TABS.
+ *
+ * Two of them: the settings, and the readout. The readout has its own
+ * tab because it is the one LONG thing in this modal, and when it was
+ * the last group of the one long panel it pushed the Quit button — the
+ * one control a player reaches for when they want to leave a match —
+ * down the scroll and out of sight.
+ *
+ * With the tabs, the Quit button is in the Session group of the
+ * Settings tab, the readout is in the Your Client tab, and the strip
+ * that switches between them sits OUTSIDE the scroll area, so the way
+ * out is always one click away.
+ */
+type OptsTab = 'settings' | 'client';
+
+/** The tabs, in the order the arrow keys walk them. */
+const TAB_ORDER: OptsTab[] = ['settings', 'client'];
+
+/** Which tab is showing. The overlay always OPENS on the settings. */
+const activeTab = ref<OptsTab>('settings');
+
+// The tab buttons and the panels, so the focus can be moved between
+// them. The roving tabindex lives on the buttons; the panels carry
+// `tabindex="-1"` so they can be focused programmatically.
+const settingsTabBtn = ref<HTMLButtonElement | null>(null);
+const clientTabBtn = ref<HTMLButtonElement | null>(null);
+const settingsPanel = ref<HTMLElement | null>(null);
+const clientPanel = ref<HTMLElement | null>(null);
+
+function tabButton(tab: OptsTab): HTMLButtonElement | null {
+  return tab === 'settings' ? settingsTabBtn.value : clientTabBtn.value;
+}
+
+function tabPanel(tab: OptsTab): HTMLElement | null {
+  return tab === 'settings' ? settingsPanel.value : clientPanel.value;
+}
+
+/**
+ * Switch tabs.
+ *
+ * The focus moves to the panel that was chosen, so a keyboard or a
+ * screen-reader user lands in the thing they just picked instead of
+ * being left at the top of the modal.
+ *
+ * The arrow keys are the exception: they keep the focus ON the strip
+ * (the selection follows the focus there), so a player can keep
+ * arrowing between the tabs instead of having to come back to the
+ * strip for every switch.
+ */
+function selectTab(tab: OptsTab, focus: 'panel' | 'tab' = 'panel'): void {
+  activeTab.value = tab;
+  void nextTick(() => {
+    if (focus === 'panel') {
+      tabPanel(tab)?.focus();
+    } else {
+      tabButton(tab)?.focus();
+    }
+  });
+}
+
+/**
+ * THE TAB STRIP'S KEYS.
+ *
+ * A tablist is not a row of buttons. ArrowLeft and ArrowRight move
+ * between the tabs, Home and End jump to the ends, and the selection
+ * follows the focus — which is what the roving tabindex is for: only
+ * the selected tab is in the tab order, so Tab does not walk the strip
+ * twice.
+ */
+function onTabKeydown(e: KeyboardEvent): void {
+  const current = TAB_ORDER.indexOf(activeTab.value);
+  let next = current;
+  if (e.key === 'ArrowLeft') {
+    next = (current - 1 + TAB_ORDER.length) % TAB_ORDER.length;
+  } else if (e.key === 'ArrowRight') {
+    next = (current + 1) % TAB_ORDER.length;
+  } else if (e.key === 'Home') {
+    next = 0;
+  } else if (e.key === 'End') {
+    next = TAB_ORDER.length - 1;
+  } else {
+    return;
+  }
+  e.preventDefault();
+  selectTab(TAB_ORDER[next], 'tab');
+}
 
 // The buy menu's style. It lives in the store (and is persisted), but
 // it is NOT a cvar: it is the port's `ts_buy_mode` command, a client
@@ -344,6 +534,15 @@ watch(open, async (isOpen) => {
   // are on `window`, so a focused DOM input does NOT stop the engine
   // from receiving the keys.
   setBridgeSuspended(true);
+  // THE OVERLAY ALWAYS OPENS ON THE SETTINGS.
+  //
+  // The name input lives in the Settings panel, and `focus()` on a
+  // HIDDEN input fails SILENTLY — so if the overlay opened on the
+  // readout tab, the name field would never take the focus, every
+  // keystroke would go to <body>, and the engine would eat them as
+  // game commands. That is the same class of bug the focus fix above
+  // was about, so the tab is reset before the field is focused.
+  activeTab.value = 'settings';
   void refresh();
   await nextTick();
   nameInput.value?.focus();
@@ -490,9 +689,10 @@ function quitToWebUi() {
   z-index: 2000;
 
   &__panel {
+    display: flex;
+    flex-direction: column;
     width: min(28rem, 92vw);
     max-height: 88vh;
-    overflow-y: auto;
     padding: 1.1rem 1.2rem 1.3rem;
     background: var(--opts-ground);
     border: 1px solid var(--opts-edge);
@@ -503,12 +703,18 @@ function quitToWebUi() {
        button or a tab, 6 for a key. */
     border-radius: 14px;
     box-shadow: 0 1.5rem 3rem rgba(0, 0, 0, 0.6);
+    /* The PANEL does not scroll — the BODY does. The head and the tab
+       strip stay where they are, so the strip (and with it the way back
+       to the Settings tab) is never scrolled away. */
+    overflow: hidden;
   }
 
   &__head {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    /* The head never shrinks: the body is the part that scrolls. */
+    flex: none;
     margin-bottom: 0.9rem;
   }
 
@@ -598,6 +804,86 @@ function quitToWebUi() {
   &__group {
     padding: 0.7rem 0 0.5rem;
     border-top: 1px solid var(--opts-divider);
+  }
+
+  /* THE TAB STRIP.
+
+     It sits between the head and the body, outside the scroll area, so
+     it is always visible: the player can always get back to the
+     Settings — and to the Quit button — in one click, whatever the
+     readout says. */
+  &__tabs {
+    display: flex;
+    gap: 0.35rem;
+    /* The strip never shrinks either — it is the way back to the
+       Settings tab, and it has to be on screen at all times. */
+    flex: none;
+    margin-bottom: 0.85rem;
+    padding-bottom: 0.65rem;
+    border-bottom: 1px solid var(--opts-divider);
+  }
+
+  /* A tab. The same shape as the character picker and the Classic /
+     Modern switch, with the chosen one lit. */
+  &__tab {
+    flex: 1 1 0;
+    padding: 0.34rem 0.6rem;
+    background: var(--opts-surface);
+    border: 1px solid var(--opts-edge);
+    border-radius: 8px;
+    color: var(--opts-ink-muted);
+    font-family: var(--ts-font-mono);
+    font-size: 0.8rem;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+
+    &:hover {
+      border-color: var(--opts-amber);
+      color: var(--opts-ink);
+    }
+
+    &:focus-visible {
+      outline: none;
+      border-color: var(--opts-amber);
+      box-shadow: 0 0 0 1px var(--opts-amber);
+    }
+
+    /* The chosen tab is the amber plate, with the ground colour as its
+       label — the same idiom as `opts__switch-btn--on`. */
+    &--on {
+      background: var(--opts-amber);
+      border-color: var(--opts-amber);
+      color: var(--opts-ground);
+    }
+  }
+
+  /* THE SCROLLING BODY.
+
+     The only part of the modal that scrolls. */
+  &__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  /* A tab panel. */
+  &__panel-content {
+    padding-top: 0.7rem;
+
+    /* The first group of a panel does not need its own rule: the tab
+       strip's hairline already separates the strip from the body. */
+    > .opts__group:first-child {
+      padding-top: 0;
+      border-top: none;
+    }
+
+    /* The panel is focused programmatically when a tab is chosen, so
+       it needs a focus shape of its own — the browser's default blue
+       ring does not belong in this palette. */
+    &:focus-visible {
+      outline: none;
+      box-shadow: inset 0 0 0 1px rgba(233, 187, 95, 0.45);
+    }
   }
 
   &__legend {

@@ -1,6 +1,6 @@
 <template>
   <section class="ts-perf">
-    <h2 v-if="!embed" class="ts-stamp ts-perf__head">Your client</h2>
+    <h2 v-if="!embed" class="ts-stamp ts-perf__head">Your Client</h2>
 
     <!--
       THE READOUT IS A STATUS, NOT A DOCUMENT.
