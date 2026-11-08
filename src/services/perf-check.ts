@@ -235,6 +235,26 @@ export function frameBudgetMs(displayHz: number): number {
   return 1000 / displayHz;
 }
 
+/**
+ * THE RENDER SIZE, IN A FORM A HUMAN CAN READ.
+ *
+ * A 300×150 canvas is 0.045 megapixels, and one decimal place rounds
+ * that to "0.0" — a number that reads like "nothing is being drawn".
+ * Under a megapixel, two decimals; over it, one is enough; and a canvas
+ * too small for megapixels to say anything useful is counted in pixels.
+ */
+export function formatMegapixels(pixels: number): string {
+  if (!isFinite(pixels) || pixels <= 0) return '0 pixels';
+  const mp = pixels / 1e6;
+  if (mp >= 1) return `${mp.toFixed(1)} megapixels`;
+  // THREE decimals below a tenth of a megapixel, because two is not
+  // enough: 300×150 is 0.045 MP, and `toFixed(2)` calls that "0.04" —
+  // a number that is not the number.
+  if (mp >= 0.1) return `${mp.toFixed(2)} megapixels`;
+  if (mp >= 0.01) return `${mp.toFixed(3)} megapixels`;
+  return `${Math.round(pixels)} pixels`;
+}
+
 /** The checklist for the browser, filtered to what the facts make relevant. */
 function buildChecklist(facts: PerfFacts, browser: PerfBrowser): PerfChecklistItem[] {
   const items: PerfChecklistItem[] = [];
@@ -370,8 +390,10 @@ export function buildPerfReport(facts: PerfFacts): PerfReport {
     findings.push({
       id: 'refresh-unknown',
       severity: 'info',
-      title: 'Your refresh rate has not been measured yet',
-      detail: 'The game measures it as soon as it is running in a map.',
+      title: 'The game has not run yet, so its frame rate is not known',
+      detail:
+        "The display's rate is measured, and it is above. What is not known yet is what " +
+        'the GAME can actually draw — that is measured as soon as it is running in a map.',
     });
   } else if (refreshRateLooksThrottled(facts)) {
     findings.push({
@@ -477,11 +499,20 @@ export function buildPerfReport(facts: PerfFacts): PerfReport {
   }
 
   // --- the render size ---------------------------------------------------
-  if (backingPixels > 0) {
+  //
+  // ONLY WHEN THE GAME IS RUNNING.
+  //
+  // On the landing page the canvas is a 300×150 placeholder: there is no
+  // game, and no render size, and reporting it as "the game is drawing
+  // 0.0 megapixels" is both wrong and alarming. The engine's frame cost
+  // is the signal that the game is running — it only exists once the
+  // engine has measured a frame.
+  const inGame = facts.engineWorkMs > 0;
+  if (inGame && backingPixels > 0) {
     findings.push({
       id: 'render-size',
       severity: 'info',
-      title: `The game is drawing ${(backingPixels / 1e6).toFixed(1)} megapixels`,
+      title: `The game is drawing ${formatMegapixels(backingPixels)}`,
       detail:
         `${facts.backingWidth}×${facts.backingHeight} device pixels` +
         (facts.dpr > 1 ? ` (a ${facts.dpr}× display)` : '') +

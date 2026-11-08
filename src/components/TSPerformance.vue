@@ -1,6 +1,6 @@
 <template>
   <section class="ts-perf">
-    <h2 class="ts-stamp ts-perf__head">Your client</h2>
+    <h2 v-if="!embed" class="ts-stamp ts-perf__head">Your client</h2>
 
     <!--
       THE READOUT IS A STATUS, NOT A DOCUMENT.
@@ -101,7 +101,17 @@ import {
   clientReport,
   ensurePanelRateMeasured,
 } from '/@/services/perf-collect.ts';
+import { formatMegapixels } from '/@/services/perf-check.ts';
 import type { PerfReport } from '/@/services/perf-check.ts';
+
+/**
+ * EMBEDDED, OR A TAB ON THE LANDING PAGE.
+ *
+ * The landing page carries this panel as a tab, and the in-game options
+ * overlay carries it as a group. In the overlay the heading belongs to
+ * the overlay's own legend, so `embed` drops it.
+ */
+withDefaults(defineProps<{ embed?: boolean }>(), { embed: false });
 
 const report = ref<PerfReport>(clientReport());
 const measuring = ref(false);
@@ -141,14 +151,19 @@ const numberRows = computed(() => {
       label: 'Frame cost',
       value:
         n.budgetMs > 0
-          ? `${n.engineWorkMs.toFixed(2)} ms of a ${n.budgetMs.toFixed(2)} ms budget`
+          ? `${n.engineWorkMs.toFixed(2)} ms against the ${n.budgetMs.toFixed(2)} ms budget`
           : `${n.engineWorkMs.toFixed(2)} ms`,
     });
   }
-  if (n.backingPixels > 0) {
+  // ONLY WHEN THE GAME IS RUNNING.
+  //
+  // Before the engine boots, the canvas is a 300×150 placeholder — it
+  // is not the game's render size, and printing it as "0.0 megapixels"
+  // reads like the game is drawing nothing.
+  if (n.engineWorkMs > 0 && n.backingPixels > 0) {
     rows.push({
       label: 'Render size',
-      value: `${(n.backingPixels / 1e6).toFixed(1)} megapixels`,
+      value: formatMegapixels(n.backingPixels),
     });
   }
   const renderer = report.value.findings.find((f) => f.id === 'renderer-ok' || f.id === 'software-renderer');

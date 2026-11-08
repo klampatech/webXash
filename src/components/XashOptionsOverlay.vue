@@ -219,6 +219,29 @@
           Quit
         </button>
       </section>
+
+      <!--
+        THE READOUT, IN THE ONE PLACE THE PLAYER CAN REACH WHILE THE
+        GAME IS RUNNING.
+
+        The landing page carries the same panel, as a tab. But the
+        landing page is DESTROYED when the engine boots
+        (`showXashSettingUI` goes false and never comes back), so the
+        frame cost, the budget and the delivered frame rate were only
+        ever measurable and never visible — the one number a player
+        cannot get is the one that explains why the game feels slow.
+
+        Here the game IS running, so the numbers are the live ones: the
+        pacer's state and the engine's own frame cost.
+
+        IT IS LAST ON PURPOSE. The panel scrolls, but the QUIT button
+        lives above it, and a readout that pushes the way out of a match
+        below the fold is a readout that has cost the player something.
+      -->
+      <section class="opts__group">
+        <h3 class="opts__legend">Your client</h3>
+        <TSPerformance embed />
+      </section>
     </div>
   </div>
 </template>
@@ -233,6 +256,7 @@ import { noteFullscreenExitRequested } from '/@/services/escape-gate';
 import { readCvar, writeCvar } from '/@/services/engine-cvars';
 import { logDebug } from '/@/services/debug-log';
 import { setBridgeSuspended } from '/@/services/keyboard-bridge';
+import TSPerformance from '/@/components/TSPerformance.vue';
 import { applyBuyMenuMode, type BuyMenuMode } from '/@/services/buy-menu';
 import {
   TS_MODELS,
