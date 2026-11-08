@@ -121,13 +121,13 @@
           one control that ends the match.
         -->
         <section
+          v-show="activeTab === 'settings'"
           id="opts-panel-settings"
           ref="settingsPanel"
           class="opts__panel-content"
           role="tabpanel"
           aria-labelledby="opts-tab-settings"
           tabindex="-1"
-          v-show="activeTab === 'settings'"
         >
         <!--
           THE FOCUS FIX (the bug: "typing in the input is not captured by
@@ -341,13 +341,13 @@
           the readout is gone, because the strip says it already.
         -->
         <section
+          v-show="activeTab === 'client'"
           id="opts-panel-client"
           ref="clientPanel"
           class="opts__panel-content"
           role="tabpanel"
           aria-labelledby="opts-tab-client"
           tabindex="-1"
-          v-show="activeTab === 'client'"
         >
           <TSPerformance context="game" />
         </section>

@@ -335,9 +335,13 @@ export function formatMegapixels(pixels: number): string {
  *
  * "your last game, 12 minutes ago" is a claim the player can check
  * against their own memory. "your last game" is not.
+ *
+ * AND A MEASUREMENT WITH NO TIMESTAMP HAS NO AGE. Saying "moments
+ * ago" about a number whose age is unknown is a recency claim the
+ * readout cannot back, so it says so instead.
  */
 export function describeSessionAge(measuredAt: number, now: number): string {
-  if (!isFinite(measuredAt) || measuredAt <= 0) return 'moments ago';
+  if (!isFinite(measuredAt) || measuredAt <= 0) return 'at an unknown time';
   const seconds = Math.max(0, Math.round((now - measuredAt) / 1000));
   if (seconds < 60) return 'moments ago';
   const minutes = Math.round(seconds / 60);
@@ -546,7 +550,10 @@ export function buildPerfReport(facts: PerfFacts, now = Date.now()): PerfReport 
     findings.push({
       id: 'software-renderer',
       severity: 'bad',
-      title: 'Your browser is drawing this game in software',
+      // A PROPERTY, NOT AN ACTIVITY. The game is not running when the
+      // facts come from the last match, so "is drawing" describes
+      // something that is not happening.
+      title: 'Your browser draws this game in software',
       detail:
         `The renderer reports "${facts.renderer}". That means the CPU is doing the drawing ` +
         `instead of the graphics chip, and it is the single biggest thing you can change.`,
@@ -561,7 +568,19 @@ export function buildPerfReport(facts: PerfFacts, now = Date.now()): PerfReport 
   }
 
   // --- the refresh rate --------------------------------------------------
-  if (facts.displayHz <= 0) {
+  //
+  // A RESTORED REPORT NEVER SAYS THE GAME HAS NOT RUN.
+  //
+  // The game DID run — these are its numbers. But its DELIVERED rate
+  // can still be unmeasured, because the pacer only trusts its own
+  // display figure after ten intervals: a short match leaves
+  // `displayHz` at 0 while the engine's frame cost is already known.
+  // That is a half-measured snapshot, and it is a real one, so the
+  // report has to cope with it honestly: the game ran, the rate is not
+  // known, and the provenance finding says where the numbers came from.
+  // Saying "the game has not run yet" next to "the game was drawing
+  // 7.7 megapixels" is three contradictory claims on one screen.
+  if (facts.displayHz <= 0 && !fromSession) {
     findings.push({
       id: 'refresh-unknown',
       severity: 'info',
@@ -574,7 +593,14 @@ export function buildPerfReport(facts: PerfFacts, now = Date.now()): PerfReport 
     findings.push({
       id: 'refresh-throttled',
       severity: 'warn',
-      title: `Your browser is only offering ${rate.toFixed(0)} refreshes a second`,
+      // THE TITLE IS TENSED TOO, NOT ONLY THE DETAIL. On the first
+      // render of the landing readout the report is built before the
+      // idle measurement resolves, so the browser's rate can be the
+      // session's — and then a present-tense title asserts a live
+      // reading that is really the last match's.
+      title: browserNow
+        ? `Your browser is only offering ${rate.toFixed(0)} refreshes a second`
+        : `Your browser was only offering ${rate.toFixed(0)} refreshes a second`,
       detail:
         (fromSession
           ? `The game could sustain ${facts.sustainableFps.toFixed(0)} fps`
@@ -590,13 +616,17 @@ export function buildPerfReport(facts: PerfFacts, now = Date.now()): PerfReport 
     findings.push({
       id: 'refresh-ok',
       severity: 'ok',
-      title: `Your browser is delivering ${rate.toFixed(0)} refreshes a second`,
+      title: browserNow
+        ? `Your browser is delivering ${rate.toFixed(0)} refreshes a second`
+        : `Your browser was delivering ${rate.toFixed(0)} refreshes a second`,
       detail:
         facts.sustainableFps > 0
           ? fromSession
             ? `The game could sustain ${facts.sustainableFps.toFixed(0)} fps, so it had room to spare.`
             : `The game can sustain ${facts.sustainableFps.toFixed(0)} fps, so it has room to spare.`
-          : 'The game has room to spare.',
+          : fromSession
+            ? 'The game ran, but how fast it was drawing was not measured.'
+            : 'The game has room to spare.',
     });
   }
 

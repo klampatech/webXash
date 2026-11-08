@@ -64,7 +64,7 @@ function probeRenderer(): { name: string; vendor: string } {
     const lose = gl.getExtension('WEBGL_lose_context');
     if (lose) lose.loseContext();
     return { name, vendor };
-  } catch (e) {
+  } catch {
     return { name: '', vendor: '' };
   }
 }
@@ -136,6 +136,12 @@ const SESSION_KEY = 'xash.perf.session.v1';
  *
  * A snapshot that never measured a frame is worthless, so it is
  * rejected here rather than restored as a set of zeroes.
+ *
+ * AND A SNAPSHOT WITH NO TIMESTAMP IS REJECTED TOO. The age of the
+ * numbers is part of what the readout claims about them — "your last
+ * game, 12 minutes ago" — and a snapshot whose age is unknown cannot
+ * say it. The writer always stamps it, so this only ever bites a
+ * corrupted entry, and a corrupted entry is not worth restoring.
  */
 export function readPerfSession(): PerfSessionSnapshot | null {
   if (typeof sessionStorage === 'undefined') return null;
@@ -145,6 +151,7 @@ export function readPerfSession(): PerfSessionSnapshot | null {
     const parsed = JSON.parse(raw) as Partial<PerfSessionSnapshot> | null;
     if (!parsed || typeof parsed !== 'object') return null;
     if (!(Number(parsed.engineWorkMs) > 0)) return null;
+    if (!(Number(parsed.measuredAt) > 0)) return null;
     const num = (v: unknown): number => (typeof v === 'number' && isFinite(v) ? v : 0);
     return {
       displayHz: num(parsed.displayHz),
@@ -160,7 +167,7 @@ export function readPerfSession(): PerfSessionSnapshot | null {
       renderer: typeof parsed.renderer === 'string' ? parsed.renderer : '',
       measuredAt: num(parsed.measuredAt),
     };
-  } catch (e) {
+  } catch {
     return null;
   }
 }
@@ -168,7 +175,8 @@ export function readPerfSession(): PerfSessionSnapshot | null {
 /**
  * KEEP THE LAST MATCH.
  *
- * GUARDED ON `engineWorkMs > 0`, AND THIS IS THE WHOLE POINT.
+ * GUARDED ON A MEASURED FRAME **AND** A MEASURED RATE, AND THIS IS
+ * THE WHOLE POINT.
  *
  * Without the guard the LANDING page writes its own empty facts on the
  * way out and destroys the very session it is supposed to show: it has
@@ -184,6 +192,20 @@ export function savePerfSession(): boolean {
   const facts = collectLivePerfFacts();
   // THE GUARD. No engine, no snapshot.
   if (!(facts.engineWorkMs > 0)) return false;
+  // AND NO DELIVERED RATE, NO SNAPSHOT EITHER.
+  //
+  // The pacer only trusts its own display figure after ten intervals,
+  // so a short match can leave `displayHz` at 0 while the engine's
+  // frame cost is already known — a HALF-MEASURED match. Persisting
+  // that verbatim would restore a session whose game rate is unknown,
+  // and the readout would have to explain the hole. The rate is the
+  // number the player actually came for, so a match that did not
+  // produce one is not worth keeping.
+  //
+  // `sustainableFps` is deliberately NOT required: it is derived from
+  // `engineWorkMs` (which is already required), and `displayHz > 0`
+  // is the property that actually says "the pacer measured a window".
+  if (!(facts.displayHz > 0)) return false;
   const snapshot: PerfSessionSnapshot = {
     displayHz: facts.displayHz,
     panelHz: facts.panelHz,
@@ -201,7 +223,7 @@ export function savePerfSession(): boolean {
   try {
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(snapshot));
     return true;
-  } catch (e) {
+  } catch {
     return false;
   }
 }

@@ -16,6 +16,17 @@
       {{ report.summary }}
     </p>
 
+    <!--
+      WHERE THE NUMBERS BELOW CAME FROM, SAID WHERE THEY ARE READ.
+
+      The provenance finding at the foot of the list says it too, but
+      the numbers are ABOVE that list: they are the first thing the
+      player reads, so they are labelled first.
+    -->
+    <p v-if="sourceLabel" class="ts-perf__source">
+      {{ sourceLabel }}
+    </p>
+
     <!-- The measured numbers, so the prose above is checkable. -->
     <dl class="ts-perf__numbers">
       <div v-for="row in numberRows" :key="row.label" class="ts-perf__number">
@@ -102,7 +113,7 @@ import {
   ensurePanelRateMeasured,
   liveReport,
 } from '/@/services/perf-collect.ts';
-import { formatMegapixels } from '/@/services/perf-check.ts';
+import { describeSessionAge, formatMegapixels } from '/@/services/perf-check.ts';
 import type { PerfReport } from '/@/services/perf-check.ts';
 
 /**
@@ -158,6 +169,21 @@ const note = computed(() =>
 );
 
 /**
+ * THE PROVENANCE, ABOVE THE NUMBERS.
+ *
+ * "the game is drawing 60 fps" is a lie when the game is not running,
+ * so the headline number is in the past tense when the numbers are the
+ * last match's — and the block of numbers is labelled with where they
+ * came from and how old they are, so the label is where the numbers
+ * are read and not only at the foot of the panel.
+ */
+const sourceLabel = computed(() => {
+  if (report.value.source !== 'last-session') return '';
+  const age = describeSessionAge(report.value.measuredAt, Date.now());
+  return `Last game — ${age}`;
+});
+
+/**
  * The measured numbers, as rows.
  *
  * The panel rate and the delivered rate are BOTH shown, because they
@@ -170,11 +196,12 @@ const numberRows = computed(() => {
   const rows: { label: string; value: string }[] = [];
 
   if (n.panelHz > 0) {
+    const was = report.value.source === 'last-session';
     rows.push({
       label: 'Display',
       value:
         n.displayHz > 0 && n.displayHz < n.panelHz * 0.9
-          ? `${n.panelHz.toFixed(0)} Hz — the game is drawing ${n.displayHz.toFixed(0)} fps`
+          ? `${n.panelHz.toFixed(0)} Hz — the game ${was ? 'was' : 'is'} drawing ${n.displayHz.toFixed(0)} fps`
           : `${n.panelHz.toFixed(0)} Hz`,
     });
   }
@@ -262,6 +289,20 @@ onMounted(async () => {
     &.is-info {
       color: var(--ts-ink-muted);
     }
+  }
+
+  /*
+    The stamp on the numbers: where they came from, and how old they
+    are. Quiet, and in the panel's own label idiom — the same shape as
+    the fixes heading above it, in the muted ink instead of the lime.
+  */
+  &__source {
+    margin: 0 0 0.5rem;
+    font-family: var(--ts-font-display);
+    font-size: 0.78rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ts-ink-muted);
   }
 
   /* The numbers first, so the prose under them is checkable. */
