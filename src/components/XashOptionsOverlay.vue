@@ -30,75 +30,83 @@
           <span class="opts__brand-mark" aria-hidden="true" />
           <h2 class="opts__title">Options</h2>
         </div>
+
+        <!--
+          THE TABS.
+
+          Kyle asked for the readout to have its own tab: "We can have
+          'Settings' and 'Your Client'". Two tabs, and that is all.
+
+          WHY THE STRIP IS OUTSIDE THE SCROLL AREA. The strip is not in
+          the scrolling body — it is fixed in the header, always
+          visible. That is the whole point: the readout is long, and
+          when it was the last group of the one long panel it pushed the
+          Quit button — the one control a player reaches for when they
+          want to LEAVE a match — down the scroll and out of sight.
+
+          With the tabs the Quit button stays in the Session group of
+          the Settings tab, the readout lives in the Your Client tab,
+          and the way back to the way out is one click away whatever
+          the readout says.
+
+          WHY IT SHARES THE HEADER ROW. It used to be a row of its own
+          under the header, and that row was the reason the Quit button
+          ended up LOWER than it had been before the tabs: the strip
+          cost the panel about fifty pixels of height, and the panel is
+          centred, so half of that came straight off the top of the
+          Quit button. Sharing the row costs ZERO extra height — the
+          strip takes the space between the brand mark and the close
+          button, which was empty anyway.
+
+          IT IS A REAL TABLIST. `role="tablist"` on the strip,
+          `role="tab"` + `aria-selected` + `aria-controls` on the buttons,
+          `role="tabpanel"` + `aria-labelledby` on the panels, and a
+          ROVING TABINDEX — the selected tab is the only one in the tab
+          order — so the arrow keys can move between the tabs without
+          walking the whole modal. Home and End jump to the ends, and the
+          selection follows the focus.
+
+          The ids are stable on purpose: the parent's test suite anchors
+          on them.
+        -->
+        <div
+          class="opts__tabs"
+          role="tablist"
+          aria-label="Options sections"
+          @keydown="onTabKeydown"
+        >
+          <button
+            id="opts-tab-settings"
+            ref="settingsTabBtn"
+            class="opts__tab"
+            :class="{ 'opts__tab--on': activeTab === 'settings' }"
+            type="button"
+            role="tab"
+            :aria-selected="activeTab === 'settings'"
+            aria-controls="opts-panel-settings"
+            :tabindex="activeTab === 'settings' ? 0 : -1"
+            @click="selectTab('settings')"
+          >
+            Settings
+          </button>
+          <button
+            id="opts-tab-client"
+            ref="clientTabBtn"
+            class="opts__tab"
+            :class="{ 'opts__tab--on': activeTab === 'client' }"
+            type="button"
+            role="tab"
+            :aria-selected="activeTab === 'client'"
+            aria-controls="opts-panel-client"
+            :tabindex="activeTab === 'client' ? 0 : -1"
+            @click="selectTab('client')"
+          >
+            Your Client
+          </button>
+        </div>
+
         <button class="opts__close" type="button" aria-label="Close" @click="closeOverlay">✕</button>
       </header>
-
-      <!--
-        THE TABS.
-
-        Kyle asked for the readout to have its own tab: "We can have
-        'Settings' and 'Your Client'". Two tabs, and that is all.
-
-        WHY THE STRIP IS OUTSIDE THE SCROLL AREA. The strip is not in
-        the scrolling body — it is fixed under the header, always
-        visible. That is the whole point: the readout is long, and when
-        it was the last group of the one long panel it pushed the Quit
-        button — the one control a player reaches for when they want to
-        LEAVE a match — down the scroll and out of sight.
-
-        With the tabs the Quit button stays in the Session group of the
-        Settings tab, the readout lives in the Your Client tab, and the
-        way back to the way out is one click away whatever the readout
-        says. The Settings tab is also SHORTER than it has been since
-        the readout was added, so the Quit button is more reachable than
-        it was, not less.
-
-        IT IS A REAL TABLIST. `role="tablist"` on the strip,
-        `role="tab"` + `aria-selected` + `aria-controls` on the buttons,
-        `role="tabpanel"` + `aria-labelledby` on the panels, and a
-        ROVING TABINDEX — the selected tab is the only one in the tab
-        order — so the arrow keys can move between the tabs without
-        walking the whole modal. Home and End jump to the ends, and the
-        selection follows the focus.
-
-        The ids are stable on purpose: the parent's test suite anchors
-        on them.
-      -->
-      <div
-        class="opts__tabs"
-        role="tablist"
-        aria-label="Options sections"
-        @keydown="onTabKeydown"
-      >
-        <button
-          id="opts-tab-settings"
-          ref="settingsTabBtn"
-          class="opts__tab"
-          :class="{ 'opts__tab--on': activeTab === 'settings' }"
-          type="button"
-          role="tab"
-          :aria-selected="activeTab === 'settings'"
-          aria-controls="opts-panel-settings"
-          :tabindex="activeTab === 'settings' ? 0 : -1"
-          @click="selectTab('settings')"
-        >
-          Settings
-        </button>
-        <button
-          id="opts-tab-client"
-          ref="clientTabBtn"
-          class="opts__tab"
-          :class="{ 'opts__tab--on': activeTab === 'client' }"
-          type="button"
-          role="tab"
-          :aria-selected="activeTab === 'client'"
-          aria-controls="opts-panel-client"
-          :tabindex="activeTab === 'client' ? 0 : -1"
-          @click="selectTab('client')"
-        >
-          Your Client
-        </button>
-      </div>
 
       <!--
         THE BODY IS THE ONLY PART THAT SCROLLS.
@@ -341,7 +349,7 @@
           tabindex="-1"
           v-show="activeTab === 'client'"
         >
-          <TSPerformance embed />
+          <TSPerformance context="game" />
         </section>
       </div>
     </div>
@@ -360,6 +368,7 @@ import { logDebug } from '/@/services/debug-log';
 import { setBridgeSuspended } from '/@/services/keyboard-bridge';
 import TSPerformance from '/@/components/TSPerformance.vue';
 import { applyBuyMenuMode, type BuyMenuMode } from '/@/services/buy-menu';
+import { installPerfSessionWriter, savePerfSession } from '/@/services/perf-collect.ts';
 import {
   TS_MODELS,
   applyModel,
@@ -587,6 +596,28 @@ onMounted(() => document.addEventListener('fullscreenchange', onFullscreenChange
 onBeforeUnmount(() => document.removeEventListener('fullscreenchange', onFullscreenChange));
 
 /**
+ * KEEP THE SESSION WHEN THE PAGE GOES AWAY.
+ *
+ * Quitting to the web UI is a full page load, and everything the
+ * readout knows lives in module state that dies with the page — so the
+ * last match's numbers are written to `sessionStorage` on the way out
+ * and restored on the landing page.
+ *
+ * The write is guarded on a MEASURED FRAME, so the landing page's own
+ * `pagehide` cannot erase the session it is about to show.
+ */
+let removeSessionWriter: (() => void) | null = null;
+
+onMounted(() => {
+  removeSessionWriter = installPerfSessionWriter();
+});
+
+onBeforeUnmount(() => {
+  removeSessionWriter?.();
+  removeSessionWriter = null;
+});
+
+/**
  * Leave the fullscreen.
  *
  * The keyboard lock claims Escape in Chromium, so a tap of Escape
@@ -633,6 +664,14 @@ function quitToWebUi() {
     document.exitFullscreen?.().catch(() => {});
   }
   closeOverlay();
+  // KEEP THE LAST MATCH FIRST.
+  //
+  // The next line is a full page load: every module-level fact the
+  // readout knows dies with this document. The session snapshot is
+  // what carries them to the landing page, so it is written BEFORE the
+  // navigation — and the write is guarded on a measured frame, so it
+  // only happens when there is a game to remember.
+  savePerfSession();
   window.location.href = '/';
 }
 </script>
@@ -678,8 +717,23 @@ function quitToWebUi() {
   position: absolute;
   inset: 0;
   display: flex;
-  align-items: center;
+  /*
+   * THE PANEL'S TOP EDGE IS ANCHORED, NOT CENTRED.
+   *
+   * The modal used to be one long panel — long enough to hit its
+   * 88vh cap — and centred, so its top edge sat a fixed 4vh from the
+   * top of the screen (6vh of panel, less the panel's own padding and
+   * border). Centring a CONTENT-SIZED panel puts the top edge wherever
+   * the content happens to end: switch from the Settings tab to the
+   * readout and the whole modal jumped down half the height it lost.
+   *
+   * Anchoring the top puts it back where it was, and it costs the
+   * panel nothing: the body scrolls, the head does not move, and the
+   * Quit button stays exactly where it was.
+   */
+  align-items: flex-start;
   justify-content: center;
+  padding-top: 4vh;
   background: rgba(19, 17, 13, 0.92);
   /* Above the HUD (1000) and the buy panel (1001): the overlay is a
      MODAL, and the panel can be open when the player reaches for the
@@ -712,16 +766,20 @@ function quitToWebUi() {
   &__head {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 0.5rem;
     /* The head never shrinks: the body is the part that scrolls. */
     flex: none;
-    margin-bottom: 0.9rem;
+    /* The strip shares this row, so this gap is the whole separation
+       between the header and the body. */
+    margin-bottom: 0.55rem;
   }
 
   &__brand {
     display: inline-flex;
     align-items: center;
-    gap: 0.55rem;
+    gap: 0.5rem;
+    /* The brand keeps its size: the strip takes what is left over. */
+    flex: none;
   }
 
   /* The BB mark, masked so it takes the accent colour. */
@@ -740,6 +798,7 @@ function quitToWebUi() {
     font-size: 1.1rem;
     letter-spacing: 0.08em;
     color: var(--opts-amber);
+    white-space: nowrap;
   }
 
   /* The close button.
@@ -808,26 +867,33 @@ function quitToWebUi() {
 
   /* THE TAB STRIP.
 
-     It sits between the head and the body, outside the scroll area, so
-     it is always visible: the player can always get back to the
-     Settings — and to the Quit button — in one click, whatever the
-     readout says. */
+     It sits in the HEAD ROW, outside the scroll area, so it is always
+     visible: the player can always get back to the Settings — and to
+     the Quit button — in one click, whatever the readout says.
+
+     It used to be a row of its own under the head, and that row was
+     the reason the Quit button ended up LOWER than it had been before
+     the tabs: the strip cost the panel about fifty pixels of height,
+     and the panel is centred, so half of that came straight off the
+     top of the Quit button. Sharing the row costs ZERO extra height —
+     the strip takes the space between the brand mark and the close
+     button, which was empty anyway. */
   &__tabs {
     display: flex;
-    gap: 0.35rem;
-    /* The strip never shrinks either — it is the way back to the
-       Settings tab, and it has to be on screen at all times. */
-    flex: none;
-    margin-bottom: 0.85rem;
-    padding-bottom: 0.65rem;
-    border-bottom: 1px solid var(--opts-divider);
+    gap: 0.3rem;
+    /* The strip takes the space between the brand and the close
+       button, and it never shrinks out of the row: it is the way back
+       to the Settings tab, and it has to be on screen at all times. */
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   /* A tab. The same shape as the character picker and the Classic /
      Modern switch, with the chosen one lit. */
   &__tab {
-    flex: 1 1 0;
-    padding: 0.34rem 0.6rem;
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0.26rem 0.5rem;
     background: var(--opts-surface);
     border: 1px solid var(--opts-edge);
     border-radius: 8px;
@@ -835,6 +901,9 @@ function quitToWebUi() {
     font-family: var(--ts-font-mono);
     font-size: 0.8rem;
     letter-spacing: 0.06em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     cursor: pointer;
 
     &:hover {
@@ -859,11 +928,14 @@ function quitToWebUi() {
 
   /* THE SCROLLING BODY.
 
-     The only part of the modal that scrolls. */
+     The only part of the modal that scrolls. The hairline that used to
+     be under the tab strip lives here now: it is the separation
+     between the fixed head and the scrolling body. */
   &__body {
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
+    border-top: 1px solid var(--opts-divider);
   }
 
   /* A tab panel. */

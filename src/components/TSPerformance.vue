@@ -1,6 +1,6 @@
 <template>
   <section class="ts-perf">
-    <h2 v-if="!embed" class="ts-stamp ts-perf__head">Your Client</h2>
+    <h2 v-if="context !== 'game'" class="ts-stamp ts-perf__head">Your Client</h2>
 
     <!--
       THE READOUT IS A STATUS, NOT A DOCUMENT.
@@ -62,7 +62,7 @@
         {{ measuring ? 'Measuring…' : 'Measure again' }}
       </button>
       <span class="ts-perf__note">
-        The numbers above are measured on this machine, in this browser.
+        {{ note }}
       </span>
     </div>
   </section>
@@ -100,20 +100,38 @@ import { computed, onMounted, ref } from 'vue';
 import {
   clientReport,
   ensurePanelRateMeasured,
+  liveReport,
 } from '/@/services/perf-collect.ts';
 import { formatMegapixels } from '/@/services/perf-check.ts';
 import type { PerfReport } from '/@/services/perf-check.ts';
 
 /**
- * EMBEDDED, OR A TAB ON THE LANDING PAGE.
+ * WHERE THIS COPY IS, AND WHAT IT IS ALLOWED TO SAY.
  *
  * The landing page carries this panel as a tab, and the in-game options
- * overlay carries it as a group. In the overlay the heading belongs to
- * the overlay's own legend, so `embed` drops it.
+ * overlay carries it as a tab of its own. In the overlay the heading
+ * belongs to the overlay's own tab strip, so `game` drops it.
+ *
+ * AND THE DATA SOURCE FOLLOWS THE PROP, NOT THE OTHER WAY ROUND. The
+ * in-game copy reads the LIVE game — the player is looking at the game
+ * right now, and a stale number would be a lie. The landing copy
+ * restores the last match's numbers from the session, because the
+ * landing page cannot measure a game that is not running.
+ *
+ * The old `embed` flag decided the HEADING from the presentation and
+ * left the data source to be inferred. One prop, two meanings that
+ * always coincide, and the source is explicit.
  */
-withDefaults(defineProps<{ embed?: boolean }>(), { embed: false });
+const props = withDefaults(defineProps<{ context?: 'landing' | 'game' }>(), {
+  context: 'landing',
+});
 
-const report = ref<PerfReport>(clientReport());
+/** The report for this copy. */
+function readReport(): PerfReport {
+  return props.context === 'game' ? liveReport() : clientReport();
+}
+
+const report = ref<PerfReport>(readReport());
 const measuring = ref(false);
 
 /** The tone of the summary line. */
@@ -124,6 +142,20 @@ const summaryTone = computed(() => {
   if (s.includes('not been measured')) return 'info';
   return 'ok';
 });
+
+/**
+ * THE FOOT NOTE, WHICH HAS TO BE TRUE.
+ *
+ * On the landing page the numbers may be the last match's, restored
+ * from the session — and then "measured on this machine, in this
+ * browser" is not the whole truth. The provenance finding in the list
+ * above says where they came from; this says what they are about.
+ */
+const note = computed(() =>
+  report.value.source === 'last-session'
+    ? 'These numbers are from your last game, on this machine, in this browser.'
+    : 'The numbers above are measured on this machine, in this browser.'
+);
 
 /**
  * The measured numbers, as rows.
@@ -177,13 +209,18 @@ const numberRows = computed(() => {
  * Measure again.
  *
  * The panel rate is re-measured (the page is idle when this panel is
- * open, so the measurement is clean), and the pacing state is re-read.
+ * open, so the measurement is clean), and the report is re-read.
+ *
+ * WHAT THIS DOES NOT DO: it cannot re-measure the ENGINE's frame cost.
+ * That number only exists while the game is running, so the only thing
+ * that refreshes it is playing another match — which is what the
+ * provenance finding says when the numbers came from the last game.
  */
 async function remeasure() {
   measuring.value = true;
   try {
     await ensurePanelRateMeasured();
-    report.value = clientReport();
+    report.value = readReport();
   } finally {
     measuring.value = false;
   }
@@ -194,7 +231,7 @@ onMounted(async () => {
   // this panel is idle — so this is the one moment the measurement is
   // guaranteed clean.
   await ensurePanelRateMeasured();
-  report.value = clientReport();
+  report.value = readReport();
 });
 </script>
 

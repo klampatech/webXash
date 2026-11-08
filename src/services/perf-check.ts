@@ -96,6 +96,67 @@ export interface PerfFacts {
   backingWidth: number;
   /** The canvas's drawing buffer height, in device pixels. */
   backingHeight: number;
+  /**
+   * TRUE when these facts came from the LAST MATCH rather than from a
+   * live measurement on this page.
+   *
+   * The game is not running when this is true, so every claim the
+   * report makes about the game has to be in the past tense — and the
+   * report says where the numbers came from and how old they are.
+   */
+  fromLastSession?: boolean;
+  /**
+   * When the facts were measured, in epoch milliseconds.
+   *
+   * 0 when there is no stamp: the live facts are "right now", and
+   * saying so is better than pretending they have a timestamp.
+   */
+  measuredAt?: number;
+  /**
+   * TRUE when the DISPLAY's rate came from the last match rather than
+   * from a live idle measurement.
+   *
+   * The browser's refresh rate is the one number the landing page can
+   * measure for itself, so it is usually live — and then the claim
+   * about it is in the present tense. Only when there is no live
+   * measurement does it come from the session.
+   */
+  panelHzFromSession?: boolean;
+}
+
+/**
+ * THE LAST MATCH, KEPT ACROSS THE PAGE LOAD.
+ *
+ * Quitting to the web UI is a full page load, and everything the
+ * readout knows lives in module state that dies with the page. This is
+ * the snapshot that survives the hop — `sessionStorage`, so it belongs
+ * to THIS TAB and dies with it.
+ */
+export interface PerfSessionSnapshot {
+  /** The rate the GAME was delivering. */
+  displayHz: number;
+  /** The rate the BROWSER was delivering. */
+  panelHz: number;
+  /** The engine's per-frame cost, in milliseconds. */
+  engineWorkMs: number;
+  /** The frame rate the engine could sustain. */
+  sustainableFps: number;
+  /** The cap that was in force. */
+  capFps: number;
+  /** How many display ticks passed per engine frame. */
+  everyNth: number;
+  /** How many display ticks arrived late. */
+  lateTicks: number;
+  /** How many display ticks the measurement window saw. */
+  measuredTicks: number;
+  /** The game's real render width, in device pixels. */
+  backingWidth: number;
+  /** The game's real render height, in device pixels. */
+  backingHeight: number;
+  /** The GPU the client was running on. */
+  renderer: string;
+  /** When it was measured, in epoch milliseconds. */
+  measuredAt: number;
 }
 
 /** How bad a finding is. */
@@ -130,6 +191,20 @@ export interface PerfChecklistItem {
 export interface PerfReport {
   /** The browser family, detected from the user agent. */
   browser: PerfBrowser;
+  /**
+   * WHERE THE NUMBERS CAME FROM.
+   *
+   * `live` means they were measured on this page, right now.
+   * `last-session` means they were measured during the last match in
+   * this tab and restored from the session — the game is NOT running,
+   * and every claim about it is in the past tense.
+   */
+  source: 'live' | 'last-session';
+  /**
+   * When the numbers were measured, in epoch milliseconds. 0 when they
+   * are live: "right now" has no timestamp worth printing.
+   */
+  measuredAt: number;
   /** The findings, most serious first. */
   findings: PerfFinding[];
   /** The checklist — only the items that apply to these facts. */
@@ -255,6 +330,84 @@ export function formatMegapixels(pixels: number): string {
   return `${Math.round(pixels)} pixels`;
 }
 
+/**
+ * HOW OLD A MEASUREMENT IS, IN WORDS.
+ *
+ * "your last game, 12 minutes ago" is a claim the player can check
+ * against their own memory. "your last game" is not.
+ */
+export function describeSessionAge(measuredAt: number, now: number): string {
+  if (!isFinite(measuredAt) || measuredAt <= 0) return 'moments ago';
+  const seconds = Math.max(0, Math.round((now - measuredAt) / 1000));
+  if (seconds < 60) return 'moments ago';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} ${days === 1 ? 'day' : 'days'} ago`;
+}
+
+/**
+ * THE MERGE: LIVE WINS, THE SESSION FILLS THE GAPS.
+ *
+ * The rule is one sentence long: *live wins for anything live can
+ * measure; the session fills the gaps the live page cannot.*
+ *
+ *   - the game is running (`engineWorkMs > 0`), so the live facts are
+ *     the real ones and the session is ignored — the in-game readout
+ *     must never show a stale number;
+ *   - the game is NOT running, so the live page can measure the
+ *     browser's rate and the GPU but NOT the engine's frame cost, the
+ *     rate the game was delivering or its render size — those come
+ *     from the session.
+ *
+ * THE TRAP THIS FUNCTION EXISTS TO AVOID: the landing page's canvas is
+ * a 300×150 PLACEHOLDER. The live `backingWidth`/`backingHeight` are
+ * that placeholder, and the session's are the game's real render size.
+ * The session's win, always — otherwise the readout would report the
+ * game's render size as 0.045 megapixels.
+ */
+export function resolvePerfFacts(
+  live: PerfFacts,
+  session: PerfSessionSnapshot | null | undefined
+): PerfFacts {
+  // No session: nothing to restore.
+  if (!session) return live;
+  // The game is running: the live facts ARE the facts.
+  if (live.engineWorkMs > 0) return live;
+  // A session that never measured a frame is worthless — restoring it
+  // would restore zeroes.
+  if (!(session.engineWorkMs > 0)) return live;
+
+  const panelHzIsLive = live.panelHz > 0;
+  return {
+    ...live,
+    // THE GAME'S NUMBERS: the session's, because the live page cannot
+    // measure a game that is not running.
+    displayHz: session.displayHz,
+    engineWorkMs: session.engineWorkMs,
+    sustainableFps: session.sustainableFps,
+    capFps: session.capFps,
+    everyNth: session.everyNth,
+    lateTicks: session.lateTicks,
+    measuredTicks: session.measuredTicks,
+    backingWidth: session.backingWidth,
+    backingHeight: session.backingHeight,
+    // THE DISPLAY'S RATE: the live one, because the budget question is
+    // "can this machine hit the display's budget", and the engine's
+    // frame cost does not change with the display rate.
+    panelHz: panelHzIsLive ? live.panelHz : session.panelHz,
+    panelHzFromSession: !panelHzIsLive,
+    // THE GPU: the live probe, because it reports the same GPU off a
+    // throwaway canvas — and the session's, if the probe failed.
+    renderer: live.renderer || session.renderer,
+    // AND WHERE THEY CAME FROM.
+    fromLastSession: true,
+    measuredAt: session.measuredAt,
+  };
+}
+
 /** The checklist for the browser, filtered to what the facts make relevant. */
 function buildChecklist(facts: PerfFacts, browser: PerfBrowser): PerfChecklistItem[] {
   const items: PerfChecklistItem[] = [];
@@ -351,10 +504,28 @@ function buildChecklist(facts: PerfFacts, browser: PerfBrowser): PerfChecklistIt
  * The findings are ordered most serious first, and the checklist only
  * carries the items the facts make relevant — a readout that shows
  * every warning every time is a readout nobody reads.
+ *
+ * THE PAST TENSE IS NOT A STYLE CHOICE
+ * ------------------------------------
+ * When the facts came from the last match, the game is NOT running, and
+ * "the game is drawing 60 fps" is a lie: it is not drawing anything.
+ * So every claim about the game moves to the past tense, and a
+ * provenance finding names the source and the age. A readout that
+ * shows last-match numbers as if they were measured now is exactly the
+ * failure mode this whole feature was built to avoid.
+ *
+ * `now` is injected so the age in the provenance finding can be
+ * tested. It is the only clock this function reads.
  */
-export function buildPerfReport(facts: PerfFacts): PerfReport {
+export function buildPerfReport(facts: PerfFacts, now = Date.now()): PerfReport {
   const browser = detectBrowser(facts.userAgent);
   const findings: PerfFinding[] = [];
+
+  // THE GAME IS NOT RUNNING (the facts are from the last match).
+  const fromSession = facts.fromLastSession === true;
+
+  // THE BROWSER'S OWN RATE: live unless the session had to supply it.
+  const browserNow = !fromSession || !facts.panelHzFromSession;
 
   // The budget is against the BROWSER's rate, not the rate the game
   // is achieving: the engine has to fit inside the display's frame
@@ -367,6 +538,10 @@ export function buildPerfReport(facts: PerfFacts): PerfReport {
     budgetMs > 0 && facts.engineWorkMs > 0 ? (facts.engineWorkMs / budgetMs) * 100 : 0;
 
   // --- the renderer ------------------------------------------------------
+  //
+  // The renderer is a property of the BROWSER, not of the game, and it
+  // is probed live: the same machine, the same driver, the same GPU. So
+  // it stays in the present tense even when the game is not running.
   if (isSoftwareRenderer(facts.renderer)) {
     findings.push({
       id: 'software-renderer',
@@ -401,8 +576,13 @@ export function buildPerfReport(facts: PerfFacts): PerfReport {
       severity: 'warn',
       title: `Your browser is only offering ${rate.toFixed(0)} refreshes a second`,
       detail:
-        `The game can sustain ${facts.sustainableFps.toFixed(0)} fps, but the browser is only ` +
-        `handing it ${rate.toFixed(0)} frames a second. No modern display runs at that rate, ` +
+        (fromSession
+          ? `The game could sustain ${facts.sustainableFps.toFixed(0)} fps`
+          : `The game can sustain ${facts.sustainableFps.toFixed(0)} fps`) +
+        (browserNow
+          ? `, but the browser is only handing it ${rate.toFixed(0)} frames a second.`
+          : `, but the browser was only handing it ${rate.toFixed(0)} frames a second.`) +
+        ` No modern display runs at that rate, ` +
         `so something in the browser is powering it down — on a laptop, that is almost always ` +
         `Energy Saver or Low Power Mode.`,
     });
@@ -413,7 +593,9 @@ export function buildPerfReport(facts: PerfFacts): PerfReport {
       title: `Your browser is delivering ${rate.toFixed(0)} refreshes a second`,
       detail:
         facts.sustainableFps > 0
-          ? `The game can sustain ${facts.sustainableFps.toFixed(0)} fps, so it has room to spare.`
+          ? fromSession
+            ? `The game could sustain ${facts.sustainableFps.toFixed(0)} fps, so it had room to spare.`
+            : `The game can sustain ${facts.sustainableFps.toFixed(0)} fps, so it has room to spare.`
           : 'The game has room to spare.',
     });
   }
@@ -427,26 +609,44 @@ export function buildPerfReport(facts: PerfFacts): PerfReport {
         severity: capped ? 'info' : 'warn',
         title:
           budgetUsedPct > 100
-            ? `A frame takes longer than your display's frame period`
-            : `The game uses ${budgetUsedPct.toFixed(0)}% of your frame budget`,
+            ? fromSession
+              ? `A frame took longer than your display's frame period`
+              : `A frame takes longer than your display's frame period`
+            : fromSession
+              ? `The game used ${budgetUsedPct.toFixed(0)}% of your frame budget`
+              : `The game uses ${budgetUsedPct.toFixed(0)}% of your frame budget`,
         detail:
-          `A frame takes ${facts.engineWorkMs.toFixed(2)} ms and your display gives you ` +
-          `${budgetMs.toFixed(2)} ms.` +
+          (fromSession
+            ? `A frame took ${facts.engineWorkMs.toFixed(2)} ms and your display gave you ` +
+              `${budgetMs.toFixed(2)} ms.`
+            : `A frame takes ${facts.engineWorkMs.toFixed(2)} ms and your display gives you ` +
+              `${budgetMs.toFixed(2)} ms.`) +
           (capped
-            ? ` It cannot finish in time, so the game is capped to ` +
-              `${facts.capFps.toFixed(0)} fps — a lower frame rate that arrives evenly beats a ` +
-              `higher one that judders.`
-            : ` That is not enough headroom for a frame that runs long, and the frames that do ` +
-              `run long arrive unevenly.`),
+            ? fromSession
+              ? ` It could not finish in time, so the game was capped to ` +
+                `${facts.capFps.toFixed(0)} fps — a lower frame rate that arrived evenly beats a ` +
+                `higher one that judders.`
+              : ` It cannot finish in time, so the game is capped to ` +
+                `${facts.capFps.toFixed(0)} fps — a lower frame rate that arrives evenly beats a ` +
+                `higher one that judders.`
+            : fromSession
+              ? ` That was not enough headroom for a frame that ran long, and the frames that ` +
+                `did run long arrived unevenly.`
+              : ` That is not enough headroom for a frame that runs long, and the frames that do ` +
+                `run long arrive unevenly.`),
       });
     } else {
       findings.push({
         id: 'budget-ok',
         severity: 'ok',
-        title: `The game uses ${budgetUsedPct.toFixed(0)}% of your frame budget`,
-        detail:
-          `A frame takes ${facts.engineWorkMs.toFixed(2)} ms and your display gives you ` +
-          `${budgetMs.toFixed(2)} ms. That is comfortable.`,
+        title: fromSession
+          ? `The game used ${budgetUsedPct.toFixed(0)}% of your frame budget`
+          : `The game uses ${budgetUsedPct.toFixed(0)}% of your frame budget`,
+        detail: fromSession
+          ? `A frame took ${facts.engineWorkMs.toFixed(2)} ms and your display gave you ` +
+            `${budgetMs.toFixed(2)} ms. That was comfortable.`
+          : `A frame takes ${facts.engineWorkMs.toFixed(2)} ms and your display gives you ` +
+            `${budgetMs.toFixed(2)} ms. That is comfortable.`,
       });
     }
   }
@@ -456,18 +656,27 @@ export function buildPerfReport(facts: PerfFacts): PerfReport {
     findings.push({
       id: 'capped',
       severity: 'info',
-      title: `The game is capped to ${facts.capFps.toFixed(0)} fps`,
-      detail:
-        `Your display runs at ${facts.displayHz.toFixed(0)} Hz, and the game cannot finish a ` +
-        `frame inside that. It is drawing one frame in ${facts.everyNth} so that the frames it ` +
-        `does draw land evenly — a lower frame rate that feels smooth beats a higher one that judders.`,
+      title: fromSession
+        ? `The game was capped to ${facts.capFps.toFixed(0)} fps`
+        : `The game is capped to ${facts.capFps.toFixed(0)} fps`,
+      detail: fromSession
+        ? `Your display ran at ${facts.displayHz.toFixed(0)} Hz, and the game could not finish a ` +
+          `frame inside that. It was drawing one frame in ${facts.everyNth} so that the frames it ` +
+          `did draw landed evenly — a lower frame rate that felt smooth beats a higher one that judders.`
+        : `Your display runs at ${facts.displayHz.toFixed(0)} Hz, and the game cannot finish a ` +
+          `frame inside that. It is drawing one frame in ${facts.everyNth} so that the frames it ` +
+          `does draw land evenly — a lower frame rate that feels smooth beats a higher one that judders.`,
     });
   } else if (facts.capFps > 0 && facts.everyNth === 1) {
     findings.push({
       id: 'uncapped',
       severity: 'ok',
-      title: `The game is running at your display's full rate (${facts.capFps.toFixed(0)} fps)`,
-      detail: 'No cap is needed — the game keeps up with your display.',
+      title: fromSession
+        ? `The game was running at your display's full rate (${facts.capFps.toFixed(0)} fps)`
+        : `The game is running at your display's full rate (${facts.capFps.toFixed(0)} fps)`,
+      detail: fromSession
+        ? 'No cap was needed — the game kept up with your display.'
+        : 'No cap is needed — the game keeps up with your display.',
     });
   }
 
@@ -476,10 +685,14 @@ export function buildPerfReport(facts: PerfFacts): PerfReport {
     findings.push({
       id: 'delivering',
       severity: 'info',
-      title: `The game is drawing ${facts.displayHz.toFixed(0)} fps on a ${rate.toFixed(0)} Hz display`,
-      detail:
-        "That is the engine's own limit, not the display's — the game is asking for " +
-        'more frames than it can finish.',
+      title: fromSession
+        ? `The game was drawing ${facts.displayHz.toFixed(0)} fps on a ${rate.toFixed(0)} Hz display`
+        : `The game is drawing ${facts.displayHz.toFixed(0)} fps on a ${rate.toFixed(0)} Hz display`,
+      detail: fromSession
+        ? "That was the engine's own limit, not the display's — the game was asking for " +
+          'more frames than it could finish.'
+        : "That is the engine's own limit, not the display's — the game is asking for " +
+          'more frames than it can finish.',
     });
   }
 
@@ -491,9 +704,11 @@ export function buildPerfReport(facts: PerfFacts): PerfReport {
         id: 'late-frames',
         severity: 'warn',
         title: `${pct.toFixed(0)}% of frames arrived late`,
-        detail:
-          'Late frames are the judder: the game is missing the display\'s deadline and the ' +
-          'browser is catching up. The cap above exists to prevent this.',
+        detail: fromSession
+          ? 'Late frames were the judder: the game was missing the display\'s deadline and the ' +
+            'browser was catching up. The cap above existed to prevent this.'
+          : 'Late frames are the judder: the game is missing the display\'s deadline and the ' +
+            'browser is catching up. The cap above exists to prevent this.',
       });
     }
   }
@@ -512,11 +727,29 @@ export function buildPerfReport(facts: PerfFacts): PerfReport {
     findings.push({
       id: 'render-size',
       severity: 'info',
-      title: `The game is drawing ${formatMegapixels(backingPixels)}`,
+      title: fromSession
+        ? `The game was drawing ${formatMegapixels(backingPixels)}`
+        : `The game is drawing ${formatMegapixels(backingPixels)}`,
       detail:
         `${facts.backingWidth}×${facts.backingHeight} device pixels` +
         (facts.dpr > 1 ? ` (a ${facts.dpr}× display)` : '') +
         '. Lowering the render resolution in the options makes the game lighter on the GPU.',
+    });
+  }
+
+  // --- WHERE THE NUMBERS CAME FROM ---------------------------------------
+  //
+  // The provenance is not optional polish, it is the feature. A player
+  // who quits back to the web UI must be able to tell that the numbers
+  // on screen are the last match's and not a live reading.
+  if (fromSession) {
+    findings.push({
+      id: 'last-session',
+      severity: 'info',
+      title: `These numbers are from your last game, ${describeSessionAge(facts.measuredAt ?? 0, now)}`,
+      detail:
+        'The game is not running now, so these are the numbers it measured then, on this ' +
+        'machine, in this browser. Play again and they are measured afresh.',
     });
   }
 
@@ -533,15 +766,25 @@ export function buildPerfReport(facts: PerfFacts): PerfReport {
   const hasWarn = findings.some((f) => f.severity === 'warn');
   const measured = rate > 0 || facts.engineWorkMs > 0;
   const summary = hasBad
-    ? 'Your browser is not set up for this game yet.'
+    ? fromSession
+      ? 'Your browser was not set up for this game. The fixes are below.'
+      : 'Your browser is not set up for this game yet.'
     : hasWarn
-      ? 'Your browser is holding the game back. The fixes are below.'
+      ? fromSession
+        ? 'Your browser was holding the game back in your last game. The fixes are below.'
+        : 'Your browser is holding the game back. The fixes are below.'
       : measured
-        ? 'Your browser is set up properly. Nothing to do.'
-        : 'Your client has not been measured yet.';
+        ? fromSession
+          ? 'Your client was set up properly in your last game. Nothing to do.'
+          : 'Your browser is set up properly. Nothing to do.'
+        : fromSession
+          ? 'Your last game has not been measured yet.'
+          : 'Your client has not been measured yet.';
 
   return {
     browser,
+    source: fromSession ? 'last-session' : 'live',
+    measuredAt: facts.measuredAt ?? 0,
     findings,
     checklist: buildChecklist(facts, browser),
     summary,

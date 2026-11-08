@@ -160,7 +160,7 @@
           role="tabpanel"
           class="ts-landing__section"
         >
-          <TSPerformance />
+          <TSPerformance context="landing" />
         </section>
       </div>
 
