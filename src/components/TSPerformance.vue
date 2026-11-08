@@ -149,7 +149,16 @@ const measuring = ref(false);
 const summaryTone = computed(() => {
   const s = report.value.summary;
   if (s.includes('not set up')) return 'bad';
+  // THE SUMMARY NAMES THE BOTTLENECK.
+  //
+  // "Your browser is holding the game back" was the old wording, and
+  // it was wrong often enough to cost a player an hour of settings
+  // fiddling. The summary now says which of the two it is — the
+  // browser offering too few refreshes, or the game not keeping up —
+  // and both of those are a warning.
   if (s.includes('holding the game back')) return 'warn';
+  if (s.includes('only offering')) return 'warn';
+  if (s.includes('could not keep up')) return 'warn';
   if (s.includes('not been measured')) return 'info';
   return 'ok';
 });
@@ -197,11 +206,18 @@ const numberRows = computed(() => {
 
   if (n.panelHz > 0) {
     const was = report.value.source === 'last-session';
+    // THE GAME'S OWN FRAME RATE.
+    //
+    // The browser's tick rate is not the game's frame rate: with the
+    // cap in force the browser keeps ticking at the panel's rate while
+    // the engine draws every Nth tick. The number that answers "how
+    // many frames is the game drawing" is the engine's own.
+    const gameFps = n.engineFps > 0 ? n.engineFps : n.displayHz;
     rows.push({
       label: 'Display',
       value:
-        n.displayHz > 0 && n.displayHz < n.panelHz * 0.9
-          ? `${n.panelHz.toFixed(0)} Hz — the game ${was ? 'was' : 'is'} drawing ${n.displayHz.toFixed(0)} fps`
+        gameFps > 0 && gameFps < n.panelHz * 0.9
+          ? `${n.panelHz.toFixed(0)} Hz — the game ${was ? 'was' : 'is'} drawing ${gameFps.toFixed(0)} fps`
           : `${n.panelHz.toFixed(0)} Hz`,
     });
   }

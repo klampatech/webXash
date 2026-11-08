@@ -87,9 +87,18 @@ function canvasBacking(): { width: number; height: number } {
 /**
  * The facts, gathered.
  *
- * The pacer's `displayHz` is what the GAME is delivering; `panelHz` is
- * what the DISPLAY can do. They are different numbers whenever the
- * engine cannot keep up, and the report needs both.
+ * THREE RATES, THREE DIFFERENT THINGS.
+ *
+ *   `engineFps`  how many frames the GAME is drawing, counted from
+ *                the engine's own frame starts;
+ *   `browserHz`  how many refreshes the BROWSER is offering;
+ *   `panelHz`    what the DISPLAY can do, measured while the page
+ *                was idle.
+ *
+ * They are different numbers whenever the engine cannot keep up, or
+ * whenever the cap is in force (the browser keeps ticking at the
+ * panel's rate while the engine draws every Nth tick), and the
+ * report needs all of them.
  */
 export function collectLivePerfFacts(): PerfFacts {
   const pacing = getPacingState();
@@ -99,21 +108,32 @@ export function collectLivePerfFacts(): PerfFacts {
 
   // The idle measurement is the panel's rate. If it was never taken
   // (the player clicked PLAY before the landing page had a chance to
-  // measure), fall back to the live rate, which is the right answer
-  // whenever the engine keeps up.
-  const panelHz = Math.max(pacing.panelHz || 0, pacing.displayHz || 0, getIdleDisplayHz());
+  // measure), fall back to the browser's live tick rate, which is the
+  // right answer whenever the engine keeps up.
+  const panelHz = Math.max(pacing.panelHz || 0, pacing.browserHz || 0, getIdleDisplayHz());
+  const engineFps = pacing.engineFps || 0;
 
   return {
     renderer: renderer.name,
     userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
-    displayHz: pacing.displayHz || 0,
+    // The GAME's rate is the engine's own frame rate. It used to be
+    // the browser's tick rate, which meant two different things
+    // depending on whether the cap was engaged.
+    displayHz: engineFps,
+    engineFps,
+    browserHz: pacing.browserHz || 0,
     panelHz,
     engineWorkMs: pacing.engineWorkMs || 0,
     sustainableFps: pacing.sustainableFps || 0,
     capFps: pacing.capFps || 0,
     everyNth: pacing.everyNth || 1,
-    lateTicks: pacing.lateTicks || 0,
-    measuredTicks: pacing.measuredTicks || 0,
+    lateFrames: pacing.lateFrames || 0,
+    measuredFrames: pacing.measuredFrames || 0,
+    // WHEN the engine's cost was measured, and whether that reading
+    // was past the engine's warm-up. The readout says both.
+    costMeasuredAt: pacing.measuredAt || 0,
+    costSettled: pacing.settled === true,
+    gameStartAt: pacing.gameStartAt || 0,
     dpr,
     backingWidth: backing.width,
     backingHeight: backing.height,
@@ -155,17 +175,22 @@ export function readPerfSession(): PerfSessionSnapshot | null {
     const num = (v: unknown): number => (typeof v === 'number' && isFinite(v) ? v : 0);
     return {
       displayHz: num(parsed.displayHz),
+      engineFps: num(parsed.engineFps),
+      browserHz: num(parsed.browserHz),
       panelHz: num(parsed.panelHz),
       engineWorkMs: num(parsed.engineWorkMs),
       sustainableFps: num(parsed.sustainableFps),
       capFps: num(parsed.capFps),
       everyNth: num(parsed.everyNth) || 1,
-      lateTicks: num(parsed.lateTicks),
-      measuredTicks: num(parsed.measuredTicks),
+      lateFrames: num(parsed.lateFrames),
+      measuredFrames: num(parsed.measuredFrames),
       backingWidth: num(parsed.backingWidth),
       backingHeight: num(parsed.backingHeight),
       renderer: typeof parsed.renderer === 'string' ? parsed.renderer : '',
       measuredAt: num(parsed.measuredAt),
+      costMeasuredAt: num(parsed.costMeasuredAt),
+      costSettled: parsed.costSettled === true,
+      gameStartAt: num(parsed.gameStartAt),
     };
   } catch {
     return null;
@@ -194,13 +219,13 @@ export function savePerfSession(): boolean {
   if (!(facts.engineWorkMs > 0)) return false;
   // AND NO DELIVERED RATE, NO SNAPSHOT EITHER.
   //
-  // The pacer only trusts its own display figure after ten intervals,
-  // so a short match can leave `displayHz` at 0 while the engine's
-  // frame cost is already known — a HALF-MEASURED match. Persisting
-  // that verbatim would restore a session whose game rate is unknown,
-  // and the readout would have to explain the hole. The rate is the
-  // number the player actually came for, so a match that did not
-  // produce one is not worth keeping.
+  // The pacer only trusts its own game rate after a window with
+  // enough samples in it, so a short match can leave `displayHz` at 0
+  // while the engine's frame cost is already known — a HALF-MEASURED
+  // match. Persisting that verbatim would restore a session whose
+  // game rate is unknown, and the readout would have to explain the
+  // hole. The rate is the number the player actually came for, so a
+  // match that did not produce one is not worth keeping.
   //
   // `sustainableFps` is deliberately NOT required: it is derived from
   // `engineWorkMs` (which is already required), and `displayHz > 0`
@@ -208,17 +233,27 @@ export function savePerfSession(): boolean {
   if (!(facts.displayHz > 0)) return false;
   const snapshot: PerfSessionSnapshot = {
     displayHz: facts.displayHz,
+    engineFps: facts.engineFps,
+    browserHz: facts.browserHz,
     panelHz: facts.panelHz,
     engineWorkMs: facts.engineWorkMs,
     sustainableFps: facts.sustainableFps,
     capFps: facts.capFps,
     everyNth: facts.everyNth,
-    lateTicks: facts.lateTicks,
-    measuredTicks: facts.measuredTicks,
+    lateFrames: facts.lateFrames,
+    measuredFrames: facts.measuredFrames,
     backingWidth: facts.backingWidth,
     backingHeight: facts.backingHeight,
     renderer: facts.renderer,
+    // WHEN THE GAME ENDED. The provenance — "your last game, 12
+    // minutes ago" — is measured from here, and it is NOT the same
+    // thing as when the pacer took its reading.
     measuredAt: Date.now(),
+    // WHEN THE PACER'S READING WAS TAKEN, and whether it was past
+    // the engine's warm-up.
+    costMeasuredAt: facts.costMeasuredAt ?? 0,
+    costSettled: facts.costSettled === true,
+    gameStartAt: facts.gameStartAt ?? 0,
   };
   try {
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(snapshot));
