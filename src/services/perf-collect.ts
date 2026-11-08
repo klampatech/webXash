@@ -27,9 +27,11 @@ import { getPacingState, getIdleDisplayHz, measureIdleDisplayHz } from './frame-
 import { engineRendererInfo } from './webgl-context.ts';
 import {
   buildPerfReport,
+  resolvePerfFacts,
   type PerfBrowser,
   type PerfFacts,
   type PerfReport,
+  type PerfSessionSnapshot,
 } from './perf-check.ts';
 
 /**
@@ -62,7 +64,7 @@ function probeRenderer(): { name: string; vendor: string } {
     const lose = gl.getExtension('WEBGL_lose_context');
     if (lose) lose.loseContext();
     return { name, vendor };
-  } catch (e) {
+  } catch {
     return { name: '', vendor: '' };
   }
 }
@@ -89,7 +91,7 @@ function canvasBacking(): { width: number; height: number } {
  * what the DISPLAY can do. They are different numbers whenever the
  * engine cannot keep up, and the report needs both.
  */
-export function collectPerfFacts(): PerfFacts {
+export function collectLivePerfFacts(): PerfFacts {
   const pacing = getPacingState();
   const renderer = clientRenderer();
   const backing = canvasBacking();
@@ -118,9 +120,162 @@ export function collectPerfFacts(): PerfFacts {
   };
 }
 
-/** The report, for the player. */
+/**
+ * THE SESSION KEY.
+ *
+ * `sessionStorage`, not `localStorage`: the same tab survives the hop
+ * back to the landing page and dies with the tab. A measurement from
+ * another day, on possibly-changed hardware, is a different claim — and
+ * the request is specifically "played a game and quit back to the web
+ * ui", which is the same tab.
+ */
+const SESSION_KEY = 'xash.perf.session.v1';
+
+/**
+ * THE LAST MATCH, IF THIS TAB HAS ONE.
+ *
+ * A snapshot that never measured a frame is worthless, so it is
+ * rejected here rather than restored as a set of zeroes.
+ *
+ * AND A SNAPSHOT WITH NO TIMESTAMP IS REJECTED TOO. The age of the
+ * numbers is part of what the readout claims about them — "your last
+ * game, 12 minutes ago" — and a snapshot whose age is unknown cannot
+ * say it. The writer always stamps it, so this only ever bites a
+ * corrupted entry, and a corrupted entry is not worth restoring.
+ */
+export function readPerfSession(): PerfSessionSnapshot | null {
+  if (typeof sessionStorage === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PerfSessionSnapshot> | null;
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (!(Number(parsed.engineWorkMs) > 0)) return null;
+    if (!(Number(parsed.measuredAt) > 0)) return null;
+    const num = (v: unknown): number => (typeof v === 'number' && isFinite(v) ? v : 0);
+    return {
+      displayHz: num(parsed.displayHz),
+      panelHz: num(parsed.panelHz),
+      engineWorkMs: num(parsed.engineWorkMs),
+      sustainableFps: num(parsed.sustainableFps),
+      capFps: num(parsed.capFps),
+      everyNth: num(parsed.everyNth) || 1,
+      lateTicks: num(parsed.lateTicks),
+      measuredTicks: num(parsed.measuredTicks),
+      backingWidth: num(parsed.backingWidth),
+      backingHeight: num(parsed.backingHeight),
+      renderer: typeof parsed.renderer === 'string' ? parsed.renderer : '',
+      measuredAt: num(parsed.measuredAt),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * KEEP THE LAST MATCH.
+ *
+ * GUARDED ON A MEASURED FRAME **AND** A MEASURED RATE, AND THIS IS
+ * THE WHOLE POINT.
+ *
+ * Without the guard the LANDING page writes its own empty facts on the
+ * way out and destroys the very session it is supposed to show: it has
+ * no engine, so its frame cost is 0, and the snapshot it would write
+ * would be a session of zeroes. The landing canvas is a 300×150
+ * placeholder too, so it would also overwrite the game's real render
+ * size. This is the single easiest way to get this whole thing wrong,
+ * so the guard is here, in one place, on every write.
+ *
+ * Returns true when a snapshot was written.
+ */
+export function savePerfSession(): boolean {
+  const facts = collectLivePerfFacts();
+  // THE GUARD. No engine, no snapshot.
+  if (!(facts.engineWorkMs > 0)) return false;
+  // AND NO DELIVERED RATE, NO SNAPSHOT EITHER.
+  //
+  // The pacer only trusts its own display figure after ten intervals,
+  // so a short match can leave `displayHz` at 0 while the engine's
+  // frame cost is already known — a HALF-MEASURED match. Persisting
+  // that verbatim would restore a session whose game rate is unknown,
+  // and the readout would have to explain the hole. The rate is the
+  // number the player actually came for, so a match that did not
+  // produce one is not worth keeping.
+  //
+  // `sustainableFps` is deliberately NOT required: it is derived from
+  // `engineWorkMs` (which is already required), and `displayHz > 0`
+  // is the property that actually says "the pacer measured a window".
+  if (!(facts.displayHz > 0)) return false;
+  const snapshot: PerfSessionSnapshot = {
+    displayHz: facts.displayHz,
+    panelHz: facts.panelHz,
+    engineWorkMs: facts.engineWorkMs,
+    sustainableFps: facts.sustainableFps,
+    capFps: facts.capFps,
+    everyNth: facts.everyNth,
+    lateTicks: facts.lateTicks,
+    measuredTicks: facts.measuredTicks,
+    backingWidth: facts.backingWidth,
+    backingHeight: facts.backingHeight,
+    renderer: facts.renderer,
+    measuredAt: Date.now(),
+  };
+  try {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(snapshot));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * KEEP THE SESSION WHENEVER THE PAGE GOES AWAY.
+ *
+ * `pagehide` and not `beforeunload`: the loader already owns a
+ * `beforeunload` (the reload confirmation), and `pagehide` is the hook
+ * that fires when the page is really going away — including the full
+ * load back to the landing page.
+ *
+ * The write is guarded on a measured frame, so the landing page's own
+ * `pagehide` cannot erase the session it is about to show.
+ *
+ * Returns the remover.
+ */
+export function installPerfSessionWriter(): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const onPageHide = () => {
+    savePerfSession();
+  };
+  window.addEventListener('pagehide', onPageHide);
+  return () => window.removeEventListener('pagehide', onPageHide);
+}
+
+/**
+ * THE FACTS, WITH THE SESSION RESTORED.
+ *
+ * The live page measures the browser's rate and the GPU; the session
+ * supplies the game's own numbers when the game is not running. The
+ * merge itself is the pure policy in `perf-check.ts` — this is only the
+ * browser-touching half.
+ */
+export function collectPerfFacts(): PerfFacts {
+  return resolvePerfFacts(collectLivePerfFacts(), readPerfSession());
+}
+
+/** The report, for the player. The landing page's copy. */
 export function clientReport(): PerfReport {
   return buildPerfReport(collectPerfFacts());
+}
+
+/**
+ * The report for the IN-GAME copy.
+ *
+ * The game is running, so the live facts are the facts: the session
+ * must never put a stale number in front of a player who is looking
+ * at the game RIGHT NOW.
+ */
+export function liveReport(): PerfReport {
+  return buildPerfReport(collectLivePerfFacts());
 }
 
 /**

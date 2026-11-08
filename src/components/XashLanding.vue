@@ -160,7 +160,7 @@
           role="tabpanel"
           class="ts-landing__section"
         >
-          <TSPerformance />
+          <TSPerformance context="landing" />
         </section>
       </div>
 
@@ -222,7 +222,7 @@ const tabs = [
   // The client readout. It is a tab rather than a line under the play
   // button because most players will never need it, and the ones who
   // do are looking for exactly this.
-  { id: 'performance', label: 'Your client' },
+  { id: 'performance', label: 'Your Client' },
 ] as const;
 
 const activeTab = ref<(typeof tabs)[number]['id']>('servers');

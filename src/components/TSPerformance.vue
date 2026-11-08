@@ -1,6 +1,6 @@
 <template>
   <section class="ts-perf">
-    <h2 v-if="!embed" class="ts-stamp ts-perf__head">Your client</h2>
+    <h2 v-if="context !== 'game'" class="ts-stamp ts-perf__head">Your Client</h2>
 
     <!--
       THE READOUT IS A STATUS, NOT A DOCUMENT.
@@ -14,6 +14,17 @@
 
     <p class="ts-perf__summary" :class="`is-${summaryTone}`">
       {{ report.summary }}
+    </p>
+
+    <!--
+      WHERE THE NUMBERS BELOW CAME FROM, SAID WHERE THEY ARE READ.
+
+      The provenance finding at the foot of the list says it too, but
+      the numbers are ABOVE that list: they are the first thing the
+      player reads, so they are labelled first.
+    -->
+    <p v-if="sourceLabel" class="ts-perf__source">
+      {{ sourceLabel }}
     </p>
 
     <!-- The measured numbers, so the prose above is checkable. -->
@@ -62,7 +73,7 @@
         {{ measuring ? 'Measuring…' : 'Measure again' }}
       </button>
       <span class="ts-perf__note">
-        The numbers above are measured on this machine, in this browser.
+        {{ note }}
       </span>
     </div>
   </section>
@@ -100,20 +111,38 @@ import { computed, onMounted, ref } from 'vue';
 import {
   clientReport,
   ensurePanelRateMeasured,
+  liveReport,
 } from '/@/services/perf-collect.ts';
-import { formatMegapixels } from '/@/services/perf-check.ts';
+import { describeSessionAge, formatMegapixels } from '/@/services/perf-check.ts';
 import type { PerfReport } from '/@/services/perf-check.ts';
 
 /**
- * EMBEDDED, OR A TAB ON THE LANDING PAGE.
+ * WHERE THIS COPY IS, AND WHAT IT IS ALLOWED TO SAY.
  *
  * The landing page carries this panel as a tab, and the in-game options
- * overlay carries it as a group. In the overlay the heading belongs to
- * the overlay's own legend, so `embed` drops it.
+ * overlay carries it as a tab of its own. In the overlay the heading
+ * belongs to the overlay's own tab strip, so `game` drops it.
+ *
+ * AND THE DATA SOURCE FOLLOWS THE PROP, NOT THE OTHER WAY ROUND. The
+ * in-game copy reads the LIVE game — the player is looking at the game
+ * right now, and a stale number would be a lie. The landing copy
+ * restores the last match's numbers from the session, because the
+ * landing page cannot measure a game that is not running.
+ *
+ * The old `embed` flag decided the HEADING from the presentation and
+ * left the data source to be inferred. One prop, two meanings that
+ * always coincide, and the source is explicit.
  */
-withDefaults(defineProps<{ embed?: boolean }>(), { embed: false });
+const props = withDefaults(defineProps<{ context?: 'landing' | 'game' }>(), {
+  context: 'landing',
+});
 
-const report = ref<PerfReport>(clientReport());
+/** The report for this copy. */
+function readReport(): PerfReport {
+  return props.context === 'game' ? liveReport() : clientReport();
+}
+
+const report = ref<PerfReport>(readReport());
 const measuring = ref(false);
 
 /** The tone of the summary line. */
@@ -123,6 +152,35 @@ const summaryTone = computed(() => {
   if (s.includes('holding the game back')) return 'warn';
   if (s.includes('not been measured')) return 'info';
   return 'ok';
+});
+
+/**
+ * THE FOOT NOTE, WHICH HAS TO BE TRUE.
+ *
+ * On the landing page the numbers may be the last match's, restored
+ * from the session — and then "measured on this machine, in this
+ * browser" is not the whole truth. The provenance finding in the list
+ * above says where they came from; this says what they are about.
+ */
+const note = computed(() =>
+  report.value.source === 'last-session'
+    ? 'These numbers are from your last game, on this machine, in this browser.'
+    : 'The numbers above are measured on this machine, in this browser.'
+);
+
+/**
+ * THE PROVENANCE, ABOVE THE NUMBERS.
+ *
+ * "the game is drawing 60 fps" is a lie when the game is not running,
+ * so the headline number is in the past tense when the numbers are the
+ * last match's — and the block of numbers is labelled with where they
+ * came from and how old they are, so the label is where the numbers
+ * are read and not only at the foot of the panel.
+ */
+const sourceLabel = computed(() => {
+  if (report.value.source !== 'last-session') return '';
+  const age = describeSessionAge(report.value.measuredAt, Date.now());
+  return `Last game — ${age}`;
 });
 
 /**
@@ -138,11 +196,12 @@ const numberRows = computed(() => {
   const rows: { label: string; value: string }[] = [];
 
   if (n.panelHz > 0) {
+    const was = report.value.source === 'last-session';
     rows.push({
       label: 'Display',
       value:
         n.displayHz > 0 && n.displayHz < n.panelHz * 0.9
-          ? `${n.panelHz.toFixed(0)} Hz — the game is drawing ${n.displayHz.toFixed(0)} fps`
+          ? `${n.panelHz.toFixed(0)} Hz — the game ${was ? 'was' : 'is'} drawing ${n.displayHz.toFixed(0)} fps`
           : `${n.panelHz.toFixed(0)} Hz`,
     });
   }
@@ -177,13 +236,18 @@ const numberRows = computed(() => {
  * Measure again.
  *
  * The panel rate is re-measured (the page is idle when this panel is
- * open, so the measurement is clean), and the pacing state is re-read.
+ * open, so the measurement is clean), and the report is re-read.
+ *
+ * WHAT THIS DOES NOT DO: it cannot re-measure the ENGINE's frame cost.
+ * That number only exists while the game is running, so the only thing
+ * that refreshes it is playing another match — which is what the
+ * provenance finding says when the numbers came from the last game.
  */
 async function remeasure() {
   measuring.value = true;
   try {
     await ensurePanelRateMeasured();
-    report.value = clientReport();
+    report.value = readReport();
   } finally {
     measuring.value = false;
   }
@@ -194,7 +258,7 @@ onMounted(async () => {
   // this panel is idle — so this is the one moment the measurement is
   // guaranteed clean.
   await ensurePanelRateMeasured();
-  report.value = clientReport();
+  report.value = readReport();
 });
 </script>
 
@@ -225,6 +289,20 @@ onMounted(async () => {
     &.is-info {
       color: var(--ts-ink-muted);
     }
+  }
+
+  /*
+    The stamp on the numbers: where they came from, and how old they
+    are. Quiet, and in the panel's own label idiom — the same shape as
+    the fixes heading above it, in the muted ink instead of the lime.
+  */
+  &__source {
+    margin: 0 0 0.5rem;
+    font-family: var(--ts-font-display);
+    font-size: 0.78rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ts-ink-muted);
   }
 
   /* The numbers first, so the prose under them is checkable. */
