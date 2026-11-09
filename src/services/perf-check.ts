@@ -150,6 +150,15 @@ export interface PerfFacts {
    */
   panelHzFromSession?: boolean;
   /**
+   * THE DISPLAY'S RATE, MEASURED RIGHT NOW.
+   *
+   * When the facts come from the last match, this is the rate the
+   * landing page's own measurement gives — and it is kept apart from
+   * `panelHz` on purpose: `panelHz` is the rate the game's numbers
+   * belong to, and this one is a fact about the browser as it is now.
+   */
+  livePanelHz?: number;
+  /**
    * When the ENGINE'S COST was measured, in epoch milliseconds.
    *
    * This is NOT `measuredAt`: that one is the provenance — when the
@@ -779,6 +788,22 @@ export function resolvePerfFacts(
   if (!(session.engineWorkMs > 0)) return live;
 
   const panelHzIsLive = live.panelHz > 0;
+  // THE RATE THE GAME'S NUMBERS BELONG TO.
+  //
+  // The budget is the display's frame period, so a frame cost has to
+  // be compared against the rate the game was MEASURED at — not
+  // against a rate measured later, on another page, on the same
+  // machine.
+  //
+  // They are normally the same number, because it is the same
+  // monitor. When they are not, the SECOND one is the wrong one: a
+  // 7.20 ms frame measured on a 144 Hz panel is OVER that panel's
+  // 6.94 ms budget, and comparing it against a 60 Hz budget would
+  // tell the player they were using 43% of it and everything was
+  // fine. The readout would be cheerful and wrong, which is the
+  // worst thing a readout can be.
+  const sessionPanelHz = session.panelHz > 0 ? session.panelHz : 0;
+  const panelHzIsFromSession = sessionPanelHz > 0;
   return {
     ...live,
     // THE GAME'S NUMBERS: the session's, because the live page cannot
@@ -794,11 +819,15 @@ export function resolvePerfFacts(
     measuredFrames: session.measuredFrames,
     backingWidth: session.backingWidth,
     backingHeight: session.backingHeight,
-    // THE DISPLAY'S RATE: the live one, because the budget question is
-    // "can this machine hit the display's budget", and the engine's
-    // frame cost does not change with the display rate.
-    panelHz: panelHzIsLive ? live.panelHz : session.panelHz,
-    panelHzFromSession: !panelHzIsLive,
+    // THE DISPLAY'S RATE: the session's, because that is the rate the
+    // frame cost above was measured against — so the budget is the
+    // budget that applies to it.
+    panelHz: panelHzIsFromSession ? sessionPanelHz : live.panelHz,
+    panelHzFromSession: panelHzIsFromSession,
+    // AND THE RATE MEASURED RIGHT NOW, which is worth saying when it
+    // is not the same: the browser throttling the landing page is a
+    // fact about the browser, and the game's numbers cannot show it.
+    livePanelHz: panelHzIsLive ? live.panelHz : 0,
     // THE GPU: the live probe, because it reports the same GPU off a
     // throwaway canvas — and the session's, if the probe failed.
     renderer: live.renderer || session.renderer,
@@ -1174,6 +1203,39 @@ export function buildPerfReport(facts: PerfFacts, now = Date.now()): PerfReport 
         : fromSession
           ? `The browser was keeping up — it was delivering ${rate.toFixed(0)} refreshes a second.`
           : `The browser is keeping up — it is delivering ${rate.toFixed(0)} refreshes a second.`,
+    });
+  }
+
+  // --- the display's rate, NOW, AGAINST THE ONE THE GAME RAN AT -------
+  //
+  // THE READOUT RESTORES THE LAST MATCH'S NUMBERS ON THE LANDING
+  // PAGE, AND THE BROWSER IS STILL RUNNING WHILE IT DOES IT. So
+  // there are two rates in play, and they can differ:
+  //
+  //   - the rate the game was measured at, which is the budget its
+  //     frame cost is compared against; and
+  //   - the rate the browser is delivering RIGHT NOW, measured on
+  //     this page.
+  //
+  // They are normally the same number, because it is the same
+  // monitor. When they are not, it is worth saying out loud — a
+  // browser that has dropped to 60 Hz since the last match is
+  // throttling now, and the last match's numbers cannot show it.
+  if (
+    fromSession &&
+    (facts.livePanelHz ?? 0) > 0 &&
+    rate > 0 &&
+    Math.abs((facts.livePanelHz ?? 0) - rate) / rate > 0.1
+  ) {
+    const liveHz = facts.livePanelHz ?? 0;
+    findings.push({
+      id: 'refresh-now',
+      severity: 'info',
+      title: `Your browser is offering ${liveHz.toFixed(0)} refreshes a second right now`,
+      detail:
+        `Your last game ran at ${rate.toFixed(0)} Hz, and its numbers are measured against ` +
+        `that. The page in front of you is being given ${liveHz.toFixed(0)} ` +
+        `refreshes a second — so something in the browser has changed since you played.`,
     });
   }
 
