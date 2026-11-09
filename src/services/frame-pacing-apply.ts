@@ -580,17 +580,15 @@ let gameStartAtMs = 0;
 let lastTargetEveryNth: number | null = null;
 let consecutiveSame = 0;
 /**
- * THE ENGINE'S SUSTAINABLE RATE THAT THE GATE IN FORCE WAS CHOSEN FOR.
+ * WAS THE GATE IN FORCE FORCED BY THE HARNESS?
  *
- * It is the basis the deadband is measured against: a gate only moves
- * when the sustainable rate has moved away from this by more than
- * `COST_DEADBAND`, so a change of a percent or two cannot flip the
- * gate between one frame in one and one frame in two.
- *
- * Zero means "not known yet" -- before the first decision there is no
- * basis, and there is no band.
+ * A forced gate is the measurement harness's: it wants to see what a
+ * particular cap does, so the policy does not get to move it. The flag
+ * survives until the next policy decision, which is when the policy
+ * sees it.
  */
-let basisFps = 0;
+let forcedGate = false;
+
 
 /**
  * How many recent samples to keep per callback.
@@ -1072,6 +1070,13 @@ export async function applyFrameCap(
       panelHz,
       engineFps,
       engineWorkMs,
+      // THE GATE IN FORCE IS THE GATE IN FORCE.
+      //
+      // `core` is spread forward here, so `capFps` would be inherited
+      // from the previous window while `panelHz` moves on -- and the
+      // readout could then name a rate the gate no longer implies. It
+      // is derived from the gate, like every other path.
+      capFps: everyNth > 1 && panelHz > 0 ? panelHz / everyNth : 0,
       sustainableFps: sustainable,
       lateFrames,
       measuredFrames,
@@ -1097,6 +1102,15 @@ export async function applyFrameCap(
   // it does not touch the consecutive-window counter.
   if (opts.force && opts.everyNth) {
     everyNth = Math.max(1, Math.round(opts.everyNth));
+    // A FORCED GATE RESETS THE COUNTER.
+    //
+    // The counter is the policy's own history: how many consecutive
+    // settled windows have asked for the same target. A forced gate was
+    // not that policy's decision, so the history it would continue is
+    // not the policy's history.
+    lastTargetEveryNth = null;
+    consecutiveSame = 0;
+    forcedGate = true;
     const forcedFps = panelHz > 0 ? panelHz / everyNth : 0;
     core = {
       capFps: everyNth > 1 ? forcedFps : 0,
@@ -1136,11 +1150,20 @@ export async function applyFrameCap(
   // narrower gate is 1, and the second window that asks for the same
   // one is 2 -- which is what lets the policy narrow on the second
   // window and not on the first.
-  if (lastTargetEveryNth === target.everyNth) {
-    consecutiveSame += 1;
-  } else {
-    lastTargetEveryNth = target.everyNth;
-    consecutiveSame = 1;
+  // THE COUNTER COUNTS SETTLED WINDOWS ONLY.
+  //
+  // A warm-up reading is the least trustworthy one the engine will ever
+  // produce, and the policy treats it as untrustworthy everywhere else --
+  // it cannot move a gate in force. Counting it here would let the first
+  // settled window narrow the gate on the strength of two WARM-UP
+  // readings, which is exactly what the rule is against.
+  if (settled) {
+    if (lastTargetEveryNth === target.everyNth) {
+      consecutiveSame += 1;
+    } else {
+      lastTargetEveryNth = target.everyNth;
+      consecutiveSame = 1;
+    }
   }
 
   const decision = decideFrameGate({
@@ -1151,27 +1174,16 @@ export async function applyFrameCap(
     consecutiveSame,
     lateFraction,
     currentProvisional: core.provisional,
-    currentBasisFps: basisFps,
+    currentForced: forcedGate,
   });
+  forcedGate = false;
 
   // THE GATE IS THE GATE. `everyNth` IS what the shim enforces, and
   // the reported state is derived from it, so the state cannot say
   // "not capping" while the engine is still being offered every
   // second frame.
-  const gateMoved = decision.everyNth !== everyNth;
   everyNth = decision.everyNth;
   const effective = everyNth > 1 && panelHz > 0 ? panelHz / everyNth : 0;
-
-  // THE BASIS FOLLOWS THE GATE.
-  //
-  // When the gate moves, the new basis is the sustainable rate it was
-  // moved for -- and only then. The basis is the rate the GATE was
-  // chosen for, not the rate of the last window: if it followed every
-  // confirmation, a slow drift of a per cent a window would always be
-  // inside the band and the gate would never follow it at all.
-  if (gateMoved) {
-    basisFps = sustainable;
-  }
 
   core = {
     capFps: effective,
