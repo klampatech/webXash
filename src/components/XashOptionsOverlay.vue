@@ -249,6 +249,48 @@
             </div>
 
             <!--
+              THE DRAW COST.
+
+              The levers the player has on the cost of a frame. They
+              are NOT a default and nothing claims they help: the
+              project's own sweep found the effect smaller than the
+              drift, so the honest thing is to offer the switches and
+              the instrument — the Performance page measures the frame
+              cost, so a player can flip one, press Re-measure, and
+              read the new number in milliseconds.
+            -->
+            <div class="opts__card opts__card--stack">
+              <div class="opts__card-head">
+                <p class="opts__label">Draw cost</p>
+                <span class="opts__row-effect">
+                  Turn these down to make a frame cheaper, then check ESC → Performance for the
+                  new frame cost.
+                </span>
+              </div>
+              <div
+                v-for="sw in drawCostSwitches"
+                :key="sw.cvar"
+                class="opts__row opts__row--switch"
+              >
+                <span class="opts__row-label">
+                  {{ sw.label }}
+                  <span class="opts__row-effect">{{ sw.effect }}</span>
+                </span>
+                <button
+                  class="opts__switch-btn opts__switch-btn--single"
+                  :class="{ 'is-on': drawCostState[sw.cvar]?.cheap }"
+                  type="button"
+                  role="switch"
+                  :aria-checked="drawCostState[sw.cvar]?.cheap === true"
+                  :disabled="drawCostState[sw.cvar]?.known !== true"
+                  @click="toggleDrawCost(sw)"
+                >
+                  {{ drawCostState[sw.cvar]?.cheap ? 'Reduced' : 'Full' }}
+                </button>
+              </div>
+            </div>
+
+            <!--
               THE FULLSCREEN.
 
               Escape is not the way out of the fullscreen any more: the
@@ -286,7 +328,7 @@
             <TSPerformance
               context="game"
               :report="perfReport ?? undefined"
-              @remeasure="refreshPerfReport"
+              @remeasure="remeasurePerf"
             />
           </section>
         </div>
@@ -303,6 +345,12 @@ import { overlayOpen, closeOverlay } from '/@/services/escape-gate';
 import { isFullscreen, exitFullscreen, enterFullscreen } from '/@/services/fullscreen';
 import { noteFullscreenExitRequested } from '/@/services/escape-gate';
 import { readCvarFull, writeCvar } from '/@/services/engine-cvars';
+import {
+  DRAW_COST_SWITCHES,
+  isCheap,
+  valueFor,
+  type DrawCostSwitch,
+} from '/@/services/draw-cost.ts';
 import { logDebug } from '/@/services/debug-log';
 import { setBridgeSuspended } from '/@/services/keyboard-bridge';
 import TSPerformance from '/@/components/TSPerformance.vue';
@@ -312,6 +360,7 @@ import {
   installPerfSessionWriter,
   savePerfSession,
   liveReport,
+  remeasureEngineCost,
 } from '/@/services/perf-collect.ts';
 import {
   OPTION_SLIDERS,
@@ -538,6 +587,69 @@ function refreshPerfReport(): void {
   perfReport.value = props.report ?? liveReport();
 }
 
+/**
+ * RE-MEASURE, AND THE REPORT AFTERWARDS.
+ *
+ * The Performance page's "Re-measure" button asks for this. It does
+ * TWO things: it re-reads the pacer's own state, and it asks the
+ * pacer for a NEW measurement window.
+ *
+ * The second one is the point. The pacer measures every ten seconds
+ * on its own, but a player who has just turned a draw-cost switch
+ * off wants the new frame cost NOW — and a readout that cannot be
+ * asked for a fresh reading is a report, not an instrument.
+ */
+async function remeasurePerf(): Promise<void> {
+  await remeasureEngineCost();
+  refreshPerfReport();
+}
+
+// ---------------------------------------------------------------------------
+// THE DRAW COST
+// ---------------------------------------------------------------------------
+
+/** The switches, as the page shows them. */
+const drawCostSwitches = DRAW_COST_SWITCHES;
+
+/** What one draw-cost switch is doing right now. */
+interface DrawCostState {
+  /** Is the cvar in its cheap state? */
+  cheap: boolean;
+  /** Do we know the cvar at all? A cvar the engine did not answer is unknown. */
+  known: boolean;
+  /** The engine's own default, for putting the switch back. */
+  engineDefault: string | null;
+}
+
+/**
+ * The state of every draw-cost switch.
+ *
+ * A switch whose cvar the engine did not answer is shown as unknown
+ * and its button is disabled — a control that says "Reduced" for a
+ * cvar that was never read would be a lie, and a button that writes
+ * to a cvar that does not exist does nothing at all.
+ */
+const drawCostState = ref<Record<string, DrawCostState>>({});
+
+/**
+ * Turn a draw-cost switch on or off.
+ *
+ * The expensive state is the engine's OWN default, so turning a
+ * switch back restores what the engine had rather than a guess.
+ */
+function toggleDrawCost(sw: DrawCostSwitch): void {
+  const state = drawCostState.value[sw.cvar];
+  if (!state || !state.known) return;
+  const cheap = !state.cheap;
+  const value = valueFor(sw, cheap, state.engineDefault);
+  writeCvar(sw.cvar, value);
+  drawCostState.value = {
+    ...drawCostState.value,
+    [sw.cvar]: { ...state, cheap },
+  };
+  logDebug(`[opts] ${sw.cvar} -> ${value}`);
+}
+
 watch(
   () => props.report,
   (r) => {
@@ -684,6 +796,13 @@ onBeforeUnmount(() => {
  * slider that shows 0 is showing the player a field of view of zero.
  */
 async function refresh() {
+  // THE DRAW COST IS READ AT THE SAME TIME AS THE SLIDERS.
+  //
+  // They are both engine round-trips and there is no reason to wait
+  // for one before starting the other — doing them in series made the
+  // overlay take twice as long to fill in, for no reason at all.
+  const drawReadingsPromise = Promise.all(DRAW_COST_SWITCHES.map((s) => readCvarFull(s.cvar)));
+
   const readings = await Promise.all(OPTION_SLIDERS.map((s) => readCvarFull(s.cvar)));
 
   OPTION_SLIDERS.forEach((s, i) => {
@@ -701,6 +820,26 @@ async function refresh() {
   await refreshIdentity();
   name.value = displayName.value;
   model.value = engineModel.value;
+
+  // THE DRAW COST, read from the engine.
+  //
+  // A cvar the engine does not answer is not a cvar that is off; it
+  // is a cvar that is unknown, and the switch says so by being
+  // disabled. `r_lockpvs` in particular is worth knowing about: the
+  // player's own `r_lockpvs 1` from a console would otherwise be
+  // reported as "Full" and overwritten.
+  const drawReadings = await drawReadingsPromise;
+  const drawState: Record<string, DrawCostState> = {};
+  DRAW_COST_SWITCHES.forEach((s, i) => {
+    const reading = drawReadings[i];
+    drawState[s.cvar] = {
+      cheap: isCheap(s, reading.value),
+      known: reading.value !== null,
+      engineDefault: reading.defaultValue,
+    };
+    logDebug(`[opts] ${s.cvar}=${reading.value} (default ${reading.defaultValue})`);
+  });
+  drawCostState.value = drawState;
 
   refreshPerfReport();
 }
@@ -1223,6 +1362,26 @@ function quitToWebUi() {
     &--end {
       justify-content: flex-end;
     }
+
+    /* A row with a label on the left and a switch on the right. */
+    &--switch {
+      justify-content: space-between;
+      gap: 16px;
+
+      /* The label and its explanation are two lines. */
+      .opts__row-label {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+    }
+  }
+
+  /* THE SMALL SECONDARY LINE under a label. */
+  &__row-effect {
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--opts-muted);
   }
 
   /* THE "DEFAULT" CHIP: the number is the game's, not the player's. */

@@ -23,11 +23,20 @@
  * report says "not measured yet" rather than inventing a plausible
  * figure. A readout that guesses teaches the player to ignore it.
  */
-import { getPacingState, getIdleDisplayHz, measureIdleDisplayHz } from './frame-pacing-apply.ts';
+import {
+  applyFrameCap,
+  getPacingState,
+  getIdleDisplayHz,
+  getPacingHistory,
+  measureIdleDisplayHz,
+  type PacingState,
+  type PacingWindow,
+} from './frame-pacing-apply.ts';
 import { engineRendererInfo } from './webgl-context.ts';
 import {
   buildPerfReport,
   resolvePerfFacts,
+  type FrameSpacingFacts,
   type PerfBrowser,
   type PerfFacts,
   type PerfReport,
@@ -134,6 +143,16 @@ export function collectLivePerfFacts(): PerfFacts {
     costMeasuredAt: pacing.measuredAt || 0,
     costSettled: pacing.settled === true,
     gameStartAt: pacing.gameStartAt || 0,
+    // THE DISPLAY'S RATE AS IT WAS MEASURED AT LOAD.
+    //
+    // This is the reference the throttle test compares the live rate
+    // against: the live tick rate is stretched by the engine's own
+    // work, so it cannot tell a throttled browser from a slow engine,
+    // and the idle rate — taken before the engine existed — can.
+    idlePanelHz: pacing.idlePanelHz || getIdleDisplayHz(),
+    // THE SHAPE OF THE FRAME SPACING: the gaps between the frames the
+    // player saw. The engine's own counter cannot report these.
+    pacing: pacing.pacing,
     dpr,
     backingWidth: backing.width,
     backingHeight: backing.height,
@@ -191,10 +210,44 @@ export function readPerfSession(): PerfSessionSnapshot | null {
       costMeasuredAt: num(parsed.costMeasuredAt),
       costSettled: parsed.costSettled === true,
       gameStartAt: num(parsed.gameStartAt),
+      idlePanelHz: num(parsed.idlePanelHz),
+      pacing: readSpacing(parsed.pacing, num),
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * THE FRAME SPACING, IF THE SNAPSHOT CARRIES A USABLE ONE.
+ *
+ * A snapshot written by an older build has no pacing at all, and one
+ * written by a build that measured nothing has an empty one. Both
+ * restore as `null`, which the report reads as "not measured" rather
+ * than as "measured, and it was zero".
+ */
+function readSpacing(
+  raw: unknown,
+  num: (v: unknown) => number,
+): FrameSpacingFacts | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Partial<FrameSpacingFacts>;
+  const p50 = num(r.p50);
+  if (!(p50 > 0)) return null;
+  const buckets = Array.isArray(r.buckets)
+    ? r.buckets
+        .filter((b): b is { ms: number; count: number } => !!b && typeof b === 'object')
+        .map((b) => ({ ms: num(b.ms), count: num(b.count) }))
+        .filter((b) => b.ms > 0 && b.count > 0)
+    : [];
+  return {
+    p50,
+    p90: num(r.p90),
+    p99: num(r.p99),
+    max: num(r.max),
+    buckets,
+    samples: num(r.samples),
+  };
 }
 
 /**
@@ -254,6 +307,13 @@ export function savePerfSession(): boolean {
     costMeasuredAt: facts.costMeasuredAt ?? 0,
     costSettled: facts.costSettled === true,
     gameStartAt: facts.gameStartAt ?? 0,
+    // THE DISPLAY'S RATE AT LOAD, and the shape of the frame times.
+    //
+    // Both are the session's own: the landing page cannot measure
+    // either one, and a report that restored the game without them
+    // would lose the throttle test and the judder measurement.
+    idlePanelHz: facts.idlePanelHz ?? 0,
+    pacing: facts.pacing ?? null,
   };
   try {
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(snapshot));
@@ -324,6 +384,189 @@ export async function ensurePanelRateMeasured(): Promise<number> {
   const known = getIdleDisplayHz();
   if (known > 0) return known;
   return measureIdleDisplayHz();
+}
+
+/**
+ * MEASURE THE ENGINE'S FRAME COST AGAIN.
+ *
+ * THE SECOND HALF OF "Re-measure", AND THE HALF THAT MATTERS.
+ *
+ * The panel's refresh rate is measured while the page is idle, and
+ * the engine's frame cost is measured while the game is running —
+ * and the two cannot be measured at the same time. So this one is
+ * only for the running game.
+ *
+ * AND IT IS THE POINT OF THE WHOLE FEATURE. The readout is an
+ * instrument: the player turns a draw-cost switch off, presses
+ * Re-measure, and reads the frame cost. Without a way to re-measure
+ * the engine's cost, the readout can only report what it saw once,
+ * and a player has no way to find out whether anything they changed
+ * made a difference.
+ *
+ * The measurement is the pacer's own window — two seconds of the
+ * engine's own frames — so it is exactly the number the cap decision
+ * is made on, and the gate moves on it the same way it moves on the
+ * pacer's own periodic reading.
+ *
+ * Returns true when a measurement was taken.
+ */
+export async function remeasureEngineCost(): Promise<boolean> {
+  // No engine, no frame cost to measure. The landing page's canvas is
+  // a placeholder and the engine is not running there.
+  if (getPacingState().engineWorkMs <= 0) return false;
+  await applyFrameCap();
+  return true;
+}
+
+/**
+ * THE PERFORMANCE LOG, AS A FILE.
+ *
+ * THE ARTIFACT THAT MAKES A COMPLAINT CHECKABLE.
+ *
+ * "It stutters in fullscreen" is a claim about a machine, and it is
+ * a claim about a MOMENT — a player cannot tell whether the frame
+ * they stuttered on was the engine's fault, the browser's, or the
+ * display's, and they cannot tell it afterwards either.
+ *
+ * This is the whole timeline of the match: every measurement window
+ * the pacer took, with the engine's frame cost, the rate the game was
+ * drawing, the rate the browser was handing it, the gate in force and
+ * how many of the engine's frames arrived late. The drops are in
+ * there, and so is everything else that was happening when they
+ * happened.
+ *
+ * It is exported FROM THE GAME, on the machine the game is running
+ * on, and it measures the session the player is actually playing —
+ * which a harness attached to a DIFFERENT browser profile would not.
+ */
+export interface PerfLogExport {
+  /** The format's version, so a reader knows what it is looking at. */
+  version: number;
+  /** When the log was exported, in epoch milliseconds. */
+  exportedAt: number;
+  /** The browser. */
+  userAgent: string;
+  /** The GPU the client was running on. */
+  renderer: string;
+  /** The device pixel ratio. */
+  dpr: number;
+  /** The game's render size, in device pixels. */
+  backingWidth: number;
+  backingHeight: number;
+  /** The pacer's state at the moment of the export. */
+  pacing: PacingState;
+  /** The timeline of the match, oldest first. */
+  timeline: PacingWindow[];
+  /**
+   * THE SAME TIMELINE, GROUPED BY WHETHER THE GAME WAS FULLSCREEN.
+   *
+   * This is the comparison everybody asks for and nobody can make:
+   * "is fullscreen actually slower than windowed, on MY machine?"
+   *
+   * It is answered by MEDIANS and not by averages, because one
+   * expensive window — a scene change, a texture load — would drag an
+   * average far enough to make a difference that is not there.
+   */
+  byMode: {
+    fullscreen: ModeSummary;
+    windowed: ModeSummary;
+  };
+  /** The report, exactly as the player sees it. */
+  report: PerfReport;
+}
+
+/**
+ * ONE MODE'S WINDOWS, SUMMED.
+ *
+ * The median is the number that matters: the middle window, not the
+ * average of all of them.
+ */
+export interface ModeSummary {
+  /** How many windows there were. */
+  windows: number;
+  /** The median frame cost, in milliseconds. 0 when there were none. */
+  medianWorkMs: number;
+  /** The median rate the game was drawing, in fps. 0 when there were none. */
+  medianFps: number;
+  /** The worst frame cost in this mode, in milliseconds. */
+  worstWorkMs: number;
+}
+
+/**
+ * THE MEDIAN OF A LIST.
+ *
+ * A copy of the pacer's own, because the pacer's is not exported and
+ * this file is not the pacer.
+ */
+function median(values: number[]): number {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * SUMMARISE ONE MODE.
+ */
+function summarizeMode(windows: PacingWindow[]): ModeSummary {
+  if (!windows.length) {
+    return { windows: 0, medianWorkMs: 0, medianFps: 0, worstWorkMs: 0 };
+  }
+  return {
+    windows: windows.length,
+    medianWorkMs: median(windows.map((w) => w.engineWorkMs)),
+    medianFps: median(windows.map((w) => w.engineFps)),
+    worstWorkMs: Math.max(...windows.map((w) => w.engineWorkMs)),
+  };
+}
+
+/** The version of the export format. */
+export const PERF_LOG_VERSION = 1;
+
+/** Build the log. */
+export function buildPerfLog(): PerfLogExport {
+  const facts = collectLivePerfFacts();
+  const timeline = getPacingHistory();
+  return {
+    version: PERF_LOG_VERSION,
+    exportedAt: Date.now(),
+    userAgent: facts.userAgent,
+    renderer: facts.renderer,
+    dpr: facts.dpr,
+    backingWidth: facts.backingWidth,
+    backingHeight: facts.backingHeight,
+    pacing: getPacingState(),
+    timeline,
+    byMode: {
+      fullscreen: summarizeMode(timeline.filter((w) => w.fullscreen)),
+      windowed: summarizeMode(timeline.filter((w) => !w.fullscreen)),
+    },
+    report: buildPerfReport(facts),
+  };
+}
+
+/**
+ * DOWNLOAD THE LOG.
+ *
+ * A Blob and an anchor, and the browser does the rest. The file is
+ * named after the moment it was taken, so a folder of them sorts.
+ */
+export function downloadPerfLog(): string {
+  const log = buildPerfLog();
+  const stamp = new Date(log.exportedAt).toISOString().replace(/[:.]/g, '-');
+  const name = `bulletballet-perf-${stamp}.json`;
+  const blob = new Blob([JSON.stringify(log, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // The object URL is released on the next tick, or the blob is kept
+  // alive for the life of the page for nothing.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+  return name;
 }
 
 /**

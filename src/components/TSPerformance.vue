@@ -114,9 +114,30 @@
 
         <div class="ts-perf__foot">
           <span class="ts-perf__note">{{ note }}</span>
-          <button class="ts-perf__again" type="button" :disabled="measuring" @click="remeasure">
-            {{ measuring ? 'Measuring…' : 'Re-measure' }}
-          </button>
+          <div class="ts-perf__actions">
+            <button class="ts-perf__again" type="button" :disabled="measuring" @click="remeasure">
+              {{ measuring ? 'Measuring…' : 'Re-measure' }}
+            </button>
+            <!--
+              THE LOG.
+
+              "It stutters in fullscreen" is a claim about a moment
+              the player cannot go back to. This downloads the whole
+              timeline of the match — every measurement the pacer
+              took, with the frame cost, the rate the game was
+              drawing and the rate the browser was handing it — so the
+              claim can be checked instead of argued about.
+            -->
+            <button
+              class="ts-perf__again"
+              type="button"
+              :disabled="exporting"
+              @click="exportLog"
+            >
+              {{ exporting ? 'Saving…' : 'Export log' }}
+            </button>
+          </div>
+          <span v-if="exportedName" class="ts-perf__exported">{{ exportedName }}</span>
         </div>
       </div>
 
@@ -190,6 +211,8 @@ import {
   clientReport,
   ensurePanelRateMeasured,
   liveReport,
+  remeasureEngineCost,
+  downloadPerfLog,
 } from '/@/services/perf-collect.ts';
 import { describeSessionAge, formatMegapixels } from '/@/services/perf-check.ts';
 import type { PerfReport, PerfSeverity } from '/@/services/perf-check.ts';
@@ -250,21 +273,23 @@ const measuring = ref(false);
 /**
  * The tone of the verdict.
  *
- * THE SUMMARY NAMES THE BOTTLENECK.
+ * THE FINDINGS DECIDE IT, NOT THE SUMMARY TEXT.
  *
- * "Your browser is holding the game back" was the old wording, and it
- * was wrong often enough to cost a player an hour of settings
- * fiddling. The summary now says which of the two it is — the browser
- * offering too few refreshes, or the game not keeping up — and both
- * of those are a warning.
+ * The tone used to be read out of the summary string — "not set up",
+ * "only offering", "could not keep up" — which meant every new
+ * finding had to remember to add its wording to this list, and a
+ * finding nobody remembered got the wrong colour. The severities
+ * are already on the findings, so they are what the tone is made of.
+ *
+ * The one exception is the summary that says nothing has been
+ * measured yet: that is not a fault, and it is not an "ok" either.
  */
 const summaryTone = computed(() => {
   const s = report.value.summary;
-  if (s.includes('not set up')) return 'bad';
-  if (s.includes('holding the game back')) return 'warn';
-  if (s.includes('only offering')) return 'warn';
-  if (s.includes('could not keep up')) return 'warn';
   if (s.includes('not been measured')) return 'info';
+  const findings = report.value.findings;
+  if (findings.some((f) => f.severity === 'bad')) return 'bad';
+  if (findings.some((f) => f.severity === 'warn')) return 'warn';
   return 'ok';
 });
 
@@ -340,9 +365,21 @@ const note = computed(() =>
  * only at the foot of the panel.
  */
 const sourceLabel = computed(() => {
-  if (report.value.source !== 'last-session') return '';
-  const age = describeSessionAge(report.value.measuredAt, Date.now());
-  return `Last game — ${age}`;
+  if (report.value.source === 'last-session') {
+    const age = describeSessionAge(report.value.measuredAt, Date.now());
+    return `Last game — ${age}`;
+  }
+  // THE LIVE CASE SAYS HOW OLD THE READING IS TOO.
+  //
+  // The pacer re-measures every ten seconds, so a live reading is
+  // usually fresh — but a reading that stopped being refreshed is
+  // still printed as if it were now, and "the game is drawing 60 fps"
+  // is a lie when it was measured two minutes ago. The age is said
+  // in the same words as everything else.
+  if (report.value.costMeasuredAt > 0) {
+    return `Measured ${describeSessionAge(report.value.costMeasuredAt, Date.now())}`;
+  }
+  return '';
 });
 
 /**
@@ -411,6 +448,30 @@ const numberRows = computed(() => {
     rows.push(row);
   }
 
+  // THE SPREAD OF THE FRAME TIMES.
+  //
+  // The engine's counter says how many frames it drew; this says how
+  // far apart they were. That is the thing the eye reads as
+  // smoothness, and it is the one number that says whether a capped
+  // game is landing its frames evenly.
+  if (n.pacing && n.pacing.samples >= 10 && n.pacing.p50 > 0) {
+    rows.push({
+      label: 'Frame spacing',
+      value: `${n.pacing.p50.toFixed(1)} ms apart · worst ${n.pacing.max.toFixed(1)} ms`,
+    });
+  }
+
+  // THE NEXT RATE UP, AND HOW FAR IT IS.
+  //
+  // The one number that turns "the game is capped" into something
+  // the player can go and fix.
+  if (n.nextRate && n.nextRate.gapMs > 0) {
+    rows.push({
+      label: 'Next rate',
+      value: `${n.nextRate.gapMs.toFixed(2)} ms away from ${n.nextRate.targetFps.toFixed(0)} fps`,
+    });
+  }
+
   // ONLY WHEN THE GAME IS RUNNING.
   //
   // Before the engine boots, the canvas is a 300×150 placeholder — it
@@ -436,13 +497,16 @@ const numberRows = computed(() => {
 /**
  * Measure again.
  *
- * The panel rate is re-measured (the page is idle when this panel is
- * open, so the measurement is clean), and the report is re-read.
+ * TWO MEASUREMENTS, AND ONLY ONE OF THEM CAN HAPPEN AT A TIME.
  *
- * WHAT THIS DOES NOT DO: it cannot re-measure the ENGINE's frame cost.
- * That number only exists while the game is running, so the only thing
- * that refreshes it is playing another match — which is what the
- * provenance finding says when the numbers came from the last game.
+ * The panel's refresh rate is measured while the page is idle; the
+ * engine's frame cost is measured while the game is running. So both
+ * are asked for, and each one is a no-op when the game is not there.
+ *
+ * AND THE ENGINE'S COST IS THE ONE THAT MATTERS. It is the number
+ * the player changes when they turn a draw-cost switch off, and it is
+ * the only way they can find out whether the switch helped. Without
+ * this, the readout could only report what it saw once.
  */
 async function remeasure() {
   if (props.report) {
@@ -453,9 +517,39 @@ async function remeasure() {
   measuring.value = true;
   try {
     await ensurePanelRateMeasured();
+    await remeasureEngineCost();
     ownReport.value = readReport();
   } finally {
     measuring.value = false;
+  }
+}
+
+/**
+ * EXPORT THE LOG.
+ *
+ * The timeline of the match, as a file: every measurement the pacer
+ * took, with the frame cost, the rate the game was drawing, the rate
+ * the browser was handing it and how many of the engine's frames
+ * arrived late.
+ *
+ * WHY THE PLAYER NEEDS THIS AND NOT JUST THE NUMBERS ON SCREEN
+ * ------------------------------------------------------------
+ * "It stutters in fullscreen" is a claim about a MOMENT, and the
+ * player cannot go back to it. The numbers on screen are the state
+ * right now; the log is the whole match, and it is the thing that
+ * turns a complaint into something that can be checked.
+ */
+const exporting = ref(false);
+
+/** The name of the log that was just saved, so the player can find it. */
+const exportedName = ref('');
+
+function exportLog(): void {
+  exporting.value = true;
+  try {
+    exportedName.value = downloadPerfLog();
+  } finally {
+    exporting.value = false;
   }
 }
 
@@ -744,6 +838,31 @@ onMounted(async () => {
   &__note {
     font-size: 0.72rem;
     color: var(--perf-muted);
+  }
+
+  /* THE TWO BUTTONS, SIDE BY SIDE.
+   *
+   * "Re-measure" and "Export log" are the same kind of thing — the
+   * player acting on the readout — so they sit together and look
+   * alike.
+   */
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+  }
+
+  /* THE NAME OF THE LOG THAT WAS SAVED.
+   *
+   * The button goes quiet once it has worked, so the player is told
+   * what to look for in their downloads instead of wondering whether
+   * the click landed.
+   */
+  &__exported {
+    font-size: 0.68rem;
+    color: var(--perf-muted);
+    font-family: var(--perf-label-font);
   }
 
   &__again {
