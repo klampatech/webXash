@@ -230,6 +230,40 @@ body {
   text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.75);
 }
 
+/*
+ * THE WINDOW SCROLLBAR IS THE SHELL'S OWN.
+ *
+ * The browser's default is a light grey bar with light arrows on a
+ * light track, and on a dark terminal it reads as a hole punched in
+ * the page — the one piece of furniture on the whole shell that
+ * belongs to neither the game nor the landing page.
+ *
+ * So it is thin, and it is the shell's own edge green, and it lifts
+ * to the muted ink when the pointer is on it. The same treatment the
+ * buy menu's lists get, because they are the same design.
+ */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ts-edge) transparent;
+}
+
+html::-webkit-scrollbar {
+  width: 10px;
+}
+
+html::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html::-webkit-scrollbar-thumb {
+  background: var(--ts-edge);
+  border-radius: 5px;
+}
+
+html::-webkit-scrollbar-thumb:hover {
+  background: var(--ts-khaki-deep);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ts-panel,
   .ts-reticle::before,

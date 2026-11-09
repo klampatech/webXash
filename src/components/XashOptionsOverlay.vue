@@ -1,340 +1,295 @@
+<!--
+  THE OPTIONS OVERLAY — THE GAME'S OWN WINDOW.
+
+  THE REDESIGN
+  ============
+  The ESC menu is now the buy menu's twin: the same 960x620 frame, the
+  same palette, the same two fonts, and the same scale-to-fit rule. A
+  player who has just closed the buy menu and opened the options sees
+  the same window in the same place.
+
+  What changed is the shape of the thing inside it. The old overlay was
+  a column of groups under a row of tabs, and it was CONTENT-SIZED: the
+  panel grew and shrank with whatever the current tab held, so the Quit
+  button — the one control a player reaches for when they want to LEAVE
+  a match — moved up and down as the tabs changed. Kyle's redesign
+  makes it a fixed window with a SIDEBAR: three pages down the left,
+  the Quit button pinned at the bottom of the sidebar where it cannot
+  move, and only the content area scrolling.
+
+  THE THREE PAGES
+  ===============
+    Player       the character roster, the chosen character large, the
+                 name field beside it.
+    Game         the sliders (sensitivity, field of view, volume), the
+                 buy menu's style, and the fullscreen.
+    Performance  the readout: the verdict, the numbers, the findings.
+
+  THE PALETTE IS THE BUY MENU'S
+  ============================
+  Not a new palette and not an approximation: the buy panel's own
+  tokens, verbatim, because these are two windows into the same game
+  and a player should not have to learn a new colour scheme when they
+  open the other one. Barlow Condensed for the headings, Inter for the
+  interface.
+
+  THE KEYBOARD
+  ============
+  The engine registers its key listener on `window` in the BUBBLE
+  phase, so every keystroke in this panel is stopped before it gets
+  there. `stopPropagation()` and not `preventDefault()`: the engine
+  must not see the key, and the input's own behaviour must still
+  happen. The panel also SUSPENDS the engine's keyboard while it is
+  open, so a focused field is not enough on its own.
+
+  AND THE FOCUS TRAP
+  ==================
+  The name field is focused when the panel opens, because without it
+  the keystrokes go to `<body>` and the ENGINE eats them as game
+  commands (a name containing "w" walks the player forward). Three
+  things have to hold, and all three matter:
+
+    1. `v-show`, not `v-if`, so the field is always in the DOM;
+    2. the page is reset to "player" SYNCHRONOUSLY, before the await,
+       because `focus()` on a `display:none` element fails SILENTLY;
+    3. `await nextTick()` before the focus.
+-->
 <template>
-  <div v-if="open" class="opts" role="dialog" aria-label="Game options">
-    <!--
-      @keydown.stop / @keyup.stop — keep the keyboard away from the GAME.
-
-      The engine registers its key listener on `window` in the BUBBLE
-      phase (measured with CDP's DOMDebugger.getEventListeners). A key
-      typed into the name field bubbles up to `window` and the engine's
-      HUD_Key_Event runs its bind table: typing "seal" would walk the
-      player forward on the "s", reload on the "e" and duck on the "l".
-
-      `stopPropagation()` (not `preventDefault`) is the right tool: it
-      stops the event BEFORE it reaches `window`, so the engine never
-      sees it, and the input's own default action — putting the
-      character in the field — still happens. `preventDefault()` would
-      stop the character from being typed at all.
-
-      The capture-phase `keydown` on the panel is the belt to that
-      braces: a key pressed while the panel has focus but not in a
-      field must not reach the engine either.
-    -->
+  <div v-if="open" ref="root" class="opts" role="dialog" aria-modal="true" aria-label="Game options">
     <div
-      class="opts__panel"
+      ref="frame"
+      class="opts__frame"
       @keydown.stop
       @keyup.stop
       @keypress.stop
     >
+      <!-- THE HEADER: the window's title, and the way out of it. -->
       <header class="opts__head">
-        <div class="opts__brand">
-          <span class="opts__brand-mark" aria-hidden="true" />
-          <h2 class="opts__title">Options</h2>
-        </div>
-
-        <!--
-          THE TABS.
-
-          Kyle asked for the readout to have its own tab: "We can have
-          'Settings' and 'Your Client'". Two tabs, and that is all.
-
-          WHY THE STRIP IS OUTSIDE THE SCROLL AREA. The strip is not in
-          the scrolling body — it is fixed in the header, always
-          visible. That is the whole point: the readout is long, and
-          when it was the last group of the one long panel it pushed the
-          Quit button — the one control a player reaches for when they
-          want to LEAVE a match — down the scroll and out of sight.
-
-          With the tabs the Quit button stays in the Session group of
-          the Settings tab, the readout lives in the Your Client tab,
-          and the way back to the way out is one click away whatever
-          the readout says.
-
-          WHY IT SHARES THE HEADER ROW. It used to be a row of its own
-          under the header, and that row was the reason the Quit button
-          ended up LOWER than it had been before the tabs: the strip
-          cost the panel about fifty pixels of height, and the panel is
-          centred, so half of that came straight off the top of the
-          Quit button. Sharing the row costs ZERO extra height — the
-          strip takes the space between the brand mark and the close
-          button, which was empty anyway.
-
-          IT IS A REAL TABLIST. `role="tablist"` on the strip,
-          `role="tab"` + `aria-selected` + `aria-controls` on the buttons,
-          `role="tabpanel"` + `aria-labelledby` on the panels, and a
-          ROVING TABINDEX — the selected tab is the only one in the tab
-          order — so the arrow keys can move between the tabs without
-          walking the whole modal. Home and End jump to the ends, and the
-          selection follows the focus.
-
-          The ids are stable on purpose: the parent's test suite anchors
-          on them.
-        -->
-        <div
-          class="opts__tabs"
-          role="tablist"
-          aria-label="Options sections"
-          @keydown="onTabKeydown"
-        >
-          <button
-            id="opts-tab-settings"
-            ref="settingsTabBtn"
-            class="opts__tab"
-            :class="{ 'opts__tab--on': activeTab === 'settings' }"
-            type="button"
-            role="tab"
-            :aria-selected="activeTab === 'settings'"
-            aria-controls="opts-panel-settings"
-            :tabindex="activeTab === 'settings' ? 0 : -1"
-            @click="selectTab('settings')"
-          >
-            Settings
-          </button>
-          <button
-            id="opts-tab-client"
-            ref="clientTabBtn"
-            class="opts__tab"
-            :class="{ 'opts__tab--on': activeTab === 'client' }"
-            type="button"
-            role="tab"
-            :aria-selected="activeTab === 'client'"
-            aria-controls="opts-panel-client"
-            :tabindex="activeTab === 'client' ? 0 : -1"
-            @click="selectTab('client')"
-          >
-            Your Client
-          </button>
-        </div>
-
+        <h2 class="opts__title">Options</h2>
         <button class="opts__close" type="button" aria-label="Close" @click="closeOverlay">✕</button>
       </header>
 
-      <!--
-        THE BODY IS THE ONLY PART THAT SCROLLS.
-
-        The head and the strip stay where they are, so the Quit button
-        is never below the fold and the tab strip is never below the
-        fold either.
-      -->
       <div class="opts__body">
         <!--
-          THE SETTINGS TAB: everything the player can change, and the
-          one control that ends the match.
+          THE SIDEBAR.
+
+          It replaces the old tab strip, and it is a NAVIGATION, not a
+          tablist: the three pages are places in the window, not panels
+          of a tab widget, so the markup is a nav and the current page
+          is marked with `aria-current="page"`.
+
+          The Quit button is PINNED to the bottom of the sidebar, in the
+          one red in the palette. It is the control a player reaches for
+          when they want to leave a match, so it is in the same place on
+          every page and it is never below the fold.
         -->
-        <section
-          v-show="activeTab === 'settings'"
-          id="opts-panel-settings"
-          ref="settingsPanel"
-          class="opts__panel-content"
-          role="tabpanel"
-          aria-labelledby="opts-tab-settings"
-          tabindex="-1"
-        >
-        <!--
-          THE FOCUS FIX (the bug: "typing in the input is not captured by
-          the input").
-
-          Measured against production on 2026-10-27: the DOM input was
-          fine, and typing into it worked — but only AFTER a click. Open
-          the overlay and type without clicking, and every keystroke went
-          to <body> instead: the input never had focus, so the text went
-          nowhere and the ENGINE ate the keys as game commands (a name
-          containing "w" would walk the player forward).
-
-          So the input is focused when the overlay opens, and the engine's
-          view of the keyboard is suspended while it is open. The second
-          half matters as much as the first: the engine's key listeners
-          are on `window` (measured with CDP's DOMDebugger.getEventListeners
-          — the engine registers keydown/keyup/keypress there), so a
-          focused input does NOT stop the game from receiving the keys.
-          `setBridgeSuspended` already exists for exactly this.
-        -->
-        <section class="opts__group">
-          <h3 class="opts__legend">Identity</h3>
-          <label class="opts__row">
-            <span class="opts__label">Name</span>
-            <input
-              ref="nameInput"
-              v-model="name"
-              class="opts__input"
-              type="text"
-              maxlength="24"
-              spellcheck="false"
-              autocomplete="off"
-              @keyup.enter="applyName"
-            />
-          </label>
-          <button class="opts__btn" type="button" :disabled="!name.trim()" @click="applyName">
-            Set name
-          </button>
-
-          <!--
-            THE CHARACTER PICKER.
-
-            TS's own options menu has one, and the models are the
-            characters the mod ships — see player-identity.ts for how
-            the server treats a chosen model.
-
-            The picker is SHARED with the pre-join identity modal, so
-            the two menus cannot disagree about which characters exist
-            or about how a portrait maps to a model. The only thing
-            that differs is the colour: this panel wears the game's
-            amber, and the modal wears the shell's green.
-
-            Here the choice is applied ON THE CLICK, because the game IS
-            running: the model is a USERINFO cvar, and setting it
-            changes the skin the player is wearing in the match.
-          -->
-          <div class="opts__row opts__row--models">
-            <span class="opts__label">Character</span>
-            <CharacterPicker
-              class="opts__picker"
-              :model="model"
-              label="Character model"
-              @select="chooseModel"
-            />
-          </div>
-        </section>
-
-        <section class="opts__group">
-          <h3 class="opts__legend">Controls</h3>
-          <label class="opts__row">
-            <span class="opts__label">Sensitivity</span>
-            <input
-              v-model.number="sensitivity"
-              class="opts__input opts__input--num"
-              type="number"
-              min="0.1"
-              max="20"
-              step="0.1"
-            />
-          </label>
-          <label class="opts__row">
-            <span class="opts__label">Field of view</span>
-            <input
-              v-model.number="fov"
-              class="opts__input opts__input--num"
-              type="number"
-              min="30"
-              max="160"
-              step="1"
-            />
-          </label>
-          <label class="opts__row">
-            <span class="opts__label">Volume</span>
-            <input
-              v-model.number="volume"
-              class="opts__input opts__input--num"
-              type="number"
-              min="0"
-              max="1"
-              step="0.05"
-            />
-          </label>
-          <button class="opts__btn opts__btn--primary" type="button" @click="applySettings">Apply</button>
-        </section>
-
-        <!--
-          THE BUY MENU.
-
-          Two menus, one set of loadouts. 'Classic' is the game's own
-          canvas menu, drawn by the client library. 'Modern' is the DOM
-          panel: it reads the game's own prices, budget and slot count
-          from the port and sends the game's own key presses, so a
-          purchase behaves exactly as it does in the classic menu.
-
-          The saved loadouts are the game's (`tsbuylist.tsa`), so
-          switching never forks what the player has bought.
-        -->
-        <section class="opts__group">
-          <h3 class="opts__legend">Buy menu</h3>
-          <div class="opts__row">
-            <span class="opts__label">Buy menu</span>
-            <div class="opts__switch" role="radiogroup" aria-label="Buy menu style">
-              <button
-                v-for="mode in buyMenuModes"
-                :key="mode"
-                class="opts__switch-btn"
-                :class="{ 'opts__switch-btn--on': buyMenu === mode }"
-                type="button"
-                role="radio"
-                :aria-checked="buyMenu === mode"
-                @click="setBuyMenu(mode)"
-              >
-                {{ mode === 'classic' ? 'Classic' : 'Modern' }}
-              </button>
-            </div>
-          </div>
-        </section>
-
-        <section class="opts__group">
-          <h3 class="opts__legend">Session</h3>
-          <!--
-            THE FULLSCREEN TOGGLE.
-
-            The way in and out of the fullscreen, in one control, and it
-            shows the state it would leave you in.
-
-            Escape is not the way out any more: the browser takes that key
-            for the fullscreen on the browsers that do not implement the
-            Keyboard Lock API, and on Chromium it is the key that lets go
-            of the MOUSE mid-match - which is what a player pressing
-            Escape actually wants. The fullscreen is a deliberate choice
-            from here, or "Quit" (which leaves the match and the fullscreen
-            together).
-          -->
-          <div class="opts__row">
-            <span class="opts__label">Fullscreen</span>
+        <nav class="opts__side" aria-label="Options pages">
+          <div class="opts__side-nav">
             <button
-              class="opts__switch-btn"
-              :class="{ 'opts__switch-btn--on': inFullscreen }"
+              v-for="p in PAGES"
+              :key="p.key"
+              class="opts__side-btn"
+              :class="{ 'is-on': page === p.key }"
               type="button"
-              role="switch"
-              :aria-checked="inFullscreen"
-              @click="toggleFullscreen"
+              :aria-current="page === p.key ? 'page' : undefined"
+              @click="selectPage(p.key)"
             >
-              {{ inFullscreen ? 'On' : 'Off' }}
+              <span class="opts__side-label">{{ p.label }}</span>
+              <span
+                v-if="p.key === 'performance' && problemCount > 0"
+                class="opts__badge"
+                :title="`${problemCount} thing${problemCount === 1 ? '' : 's'} to fix`"
+              >{{ problemCount }}</span>
             </button>
           </div>
-          <button class="opts__btn opts__btn--danger" type="button" @click="quitToWebUi">
-            Quit
-          </button>
-        </section>
-        </section>
 
-        <!--
-          THE READOUT, ON ITS OWN TAB.
+          <button class="opts__quit" type="button" @click="quitToWebUi">Quit game</button>
+        </nav>
 
-          The landing page carries the same panel, as a tab. But the
-          landing page is DESTROYED when the engine boots
-          (`showXashSettingUI` goes false and never comes back), so the
-          frame cost, the budget and the delivered frame rate were only
-          ever measurable and never visible — the one number a player
-          cannot get is the one that explains why the game feels slow.
+        <!-- THE PAGES. Only this column scrolls. -->
+        <div class="opts__content">
+          <h3 class="opts__page-title">{{ pageTitle }}</h3>
 
-          Here the game IS running, so the numbers are the live ones: the
-          pacer's state and the engine's own frame cost.
+          <!--
+            THE PLAYER PAGE: the chosen character, large, with the name
+            field under it, and the whole roster beside it.
+          -->
+          <section
+            v-show="page === 'player'"
+            ref="playerPage"
+            tabindex="-1"
+            class="opts__page opts__page--split"
+          >
+            <div class="opts__card opts__selected">
+              <p class="opts__label">Selected</p>
+              <div class="opts__selected-portrait">
+                <img
+                  v-if="selectedModel"
+                  :src="`/models/${selectedModel}.png`"
+                  :alt="`${selectedModel} portrait`"
+                  width="150"
+                  height="150"
+                />
+                <span v-else class="opts__selected-empty">—</span>
+              </div>
+              <span class="opts__selected-name">{{ selectedLabel }}</span>
 
-          IT IS A TAB, NOT A GROUP, BECAUSE OF THE QUIT BUTTON. A readout
-          that pushes the way out of a match below the fold is a readout
-          that has cost the player something. Here the readout cannot
-          push anything: it is in its own panel, the Quit button is in
-          the Settings panel, and the strip that switches between them
-          never scrolls away.
+              <p class="opts__label opts__label--spaced">Name</p>
+              <input
+                ref="nameInput"
+                v-model="name"
+                class="opts__input"
+                type="text"
+                maxlength="24"
+                spellcheck="false"
+                autocomplete="off"
+                aria-label="Player name"
+                @keyup.enter="applyName"
+              />
+              <button
+                class="opts__btn opts__btn--ghost"
+                type="button"
+                :disabled="!name.trim()"
+                @click="applyName"
+              >
+                Set name
+              </button>
+            </div>
 
-          The tab's label is the heading — the overlay's own legend for
-          the readout is gone, because the strip says it already.
-        -->
-        <section
-          v-show="activeTab === 'client'"
-          id="opts-panel-client"
-          ref="clientPanel"
-          class="opts__panel-content"
-          role="tabpanel"
-          aria-labelledby="opts-tab-client"
-          tabindex="-1"
-        >
-          <TSPerformance context="game" />
-        </section>
+            <!--
+              THE ROSTER. The picker's own component, shared with the
+              pre-join identity modal, so the two menus cannot disagree
+              about which characters exist. Only the colours, the tile
+              size and the type are the caller's.
+            -->
+            <div class="opts__roster">
+              <CharacterPicker
+                :model="model"
+                label="Character model"
+                @select="chooseModel"
+              />
+            </div>
+          </section>
+
+          <!-- THE GAME PAGE: the sliders, the buy menu, the fullscreen. -->
+          <section
+            v-show="page === 'game'"
+            ref="gamePage"
+            tabindex="-1"
+            class="opts__page opts__page--stack"
+          >
+            <div class="opts__card opts__card--stack">
+              <p class="opts__label">Controls</p>
+
+              <div v-for="s in OPTION_SLIDERS" :key="s.key" class="opts__row opts__row--slider">
+                <span class="opts__row-label">
+                  {{ s.label }}
+                  <!--
+                    The row says when the number is the GAME'S and not
+                    the player's. The engine's `fov` cvar can hold 0
+                    while its default is 90, and 0 is not a field of
+                    view — so the slider shows the default and says so.
+                  -->
+                  <span v-if="sliderState[s.key].isDefault" class="opts__chip">default</span>
+                </span>
+
+                <input
+                  class="opts__range"
+                  type="range"
+                  :min="s.min"
+                  :max="s.max"
+                  :step="s.step"
+                  :value="sliderState[s.key].value"
+                  :style="{ '--fill': sliderPercent(s, sliderState[s.key].value) + '%' }"
+                  :aria-label="s.label"
+                  @input="onSliderInput(s, $event)"
+                />
+
+                <input
+                  class="opts__input opts__input--num"
+                  type="number"
+                  :min="s.min"
+                  :max="s.max"
+                  :step="s.step"
+                  :value="numberDraft[s.key] ?? formatSlider(s, sliderState[s.key].value)"
+                  :aria-label="`${s.label} value`"
+                  @input="onNumberInput(s, $event)"
+                  @change="onNumberCommit(s)"
+                  @blur="onNumberCommit(s)"
+                />
+              </div>
+
+              <div class="opts__row opts__row--end">
+                <button class="opts__btn opts__btn--primary" type="button" @click="applySettings">
+                  Apply
+                </button>
+              </div>
+            </div>
+
+            <!-- THE BUY MENU'S STYLE. -->
+            <div class="opts__card opts__card--split">
+              <div class="opts__card-head">
+                <p class="opts__label">Buy menu</p>
+                <span class="opts__row-label">Style</span>
+              </div>
+              <div class="opts__switch" role="radiogroup" aria-label="Buy menu style">
+                <button
+                  v-for="mode in buyMenuModes"
+                  :key="mode"
+                  class="opts__switch-btn"
+                  :class="{ 'is-on': buyMenu === mode }"
+                  type="button"
+                  role="radio"
+                  :aria-checked="buyMenu === mode"
+                  @click="setBuyMenu(mode)"
+                >
+                  {{ mode === 'classic' ? 'Classic' : 'Modern' }}
+                </button>
+              </div>
+            </div>
+
+            <!--
+              THE FULLSCREEN.
+
+              Escape is not the way out of the fullscreen any more: the
+              browser takes that key, and on Chromium it is the key that
+              lets go of the MOUSE mid-match — which is what a player
+              pressing Escape actually wants. So the fullscreen is a
+              deliberate choice from here, and this is the control that
+              makes it one.
+            -->
+            <div class="opts__card opts__card--split">
+              <div class="opts__card-head">
+                <p class="opts__label">Display</p>
+                <span class="opts__row-label">Fullscreen</span>
+              </div>
+              <button
+                class="opts__switch-btn opts__switch-btn--single"
+                :class="{ 'is-on': inFullscreen }"
+                type="button"
+                role="switch"
+                :aria-checked="inFullscreen"
+                @click="toggleFullscreen"
+              >
+                {{ inFullscreen ? 'On' : 'Off' }}
+              </button>
+            </div>
+          </section>
+
+          <!-- THE READOUT. -->
+          <section
+            v-show="page === 'performance'"
+            ref="perfPage"
+            tabindex="-1"
+            class="opts__page opts__page--perf"
+          >
+            <TSPerformance
+              context="game"
+              :report="perfReport ?? undefined"
+              @remeasure="refreshPerfReport"
+            />
+          </section>
+        </div>
       </div>
     </div>
   </div>
@@ -347,13 +302,25 @@ import { useXashStore } from '/@/stores/store.ts';
 import { overlayOpen, closeOverlay } from '/@/services/escape-gate';
 import { isFullscreen, exitFullscreen, enterFullscreen } from '/@/services/fullscreen';
 import { noteFullscreenExitRequested } from '/@/services/escape-gate';
-import { readCvar, writeCvar } from '/@/services/engine-cvars';
+import { readCvarFull, writeCvar } from '/@/services/engine-cvars';
 import { logDebug } from '/@/services/debug-log';
 import { setBridgeSuspended } from '/@/services/keyboard-bridge';
 import TSPerformance from '/@/components/TSPerformance.vue';
 import CharacterPicker from '/@/components/CharacterPicker.vue';
 import { applyBuyMenuMode, type BuyMenuMode } from '/@/services/buy-menu';
-import { installPerfSessionWriter, savePerfSession } from '/@/services/perf-collect.ts';
+import {
+  installPerfSessionWriter,
+  savePerfSession,
+  liveReport,
+} from '/@/services/perf-collect.ts';
+import {
+  OPTION_SLIDERS,
+  clampToSlider,
+  formatSlider,
+  readSlider,
+  sliderPercent,
+  type OptionSlider,
+} from '/@/services/options-values.ts';
 import {
   applyModel,
   applyName as applyEngineName,
@@ -362,108 +329,231 @@ import {
   engineModel,
   refreshIdentity,
 } from '/@/services/player-identity';
+import type { PerfReport } from '/@/services/perf-check.ts';
 
 const open = overlayOpen;
 
+/**
+ * A report to show, when the caller has one.
+ *
+ * The panel reads the LIVE game itself, so this is empty in the game.
+ * It exists so the dev harness can put a report with findings in front
+ * of the layout — the readout's interesting states are the ones with
+ * something wrong, and a harness with no game running cannot make one.
+ */
+const props = withDefaults(defineProps<{ report?: PerfReport | null }>(), {
+  report: null,
+});
+
 const name = ref('');
 const model = ref('');
-const sensitivity = ref<number | null>(null);
-const fov = ref<number | null>(null);
-const volume = ref<number | null>(null);
-
 const nameInput = ref<HTMLInputElement | null>(null);
 
-/**
- * THE TABS.
- *
- * Two of them: the settings, and the readout. The readout has its own
- * tab because it is the one LONG thing in this modal, and when it was
- * the last group of the one long panel it pushed the Quit button — the
- * one control a player reaches for when they want to leave a match —
- * down the scroll and out of sight.
- *
- * With the tabs, the Quit button is in the Session group of the
- * Settings tab, the readout is in the Your Client tab, and the strip
- * that switches between them sits OUTSIDE the scroll area, so the way
- * out is always one click away.
- */
-type OptsTab = 'settings' | 'client';
-
-/** The tabs, in the order the arrow keys walk them. */
-const TAB_ORDER: OptsTab[] = ['settings', 'client'];
-
-/** Which tab is showing. The overlay always OPENS on the settings. */
-const activeTab = ref<OptsTab>('settings');
-
-// The tab buttons and the panels, so the focus can be moved between
-// them. The roving tabindex lives on the buttons; the panels carry
-// `tabindex="-1"` so they can be focused programmatically.
-const settingsTabBtn = ref<HTMLButtonElement | null>(null);
-const clientTabBtn = ref<HTMLButtonElement | null>(null);
-const settingsPanel = ref<HTMLElement | null>(null);
-const clientPanel = ref<HTMLElement | null>(null);
-
-function tabButton(tab: OptsTab): HTMLButtonElement | null {
-  return tab === 'settings' ? settingsTabBtn.value : clientTabBtn.value;
-}
-
-function tabPanel(tab: OptsTab): HTMLElement | null {
-  return tab === 'settings' ? settingsPanel.value : clientPanel.value;
-}
+/** The three pages, so the focus can follow the player. */
+const playerPage = ref<HTMLElement | null>(null);
+const gamePage = ref<HTMLElement | null>(null);
+const perfPage = ref<HTMLElement | null>(null);
 
 /**
- * Switch tabs.
- *
- * The focus moves to the panel that was chosen, so a keyboard or a
- * screen-reader user lands in the thing they just picked instead of
- * being left at the top of the modal.
- *
- * The arrow keys are the exception: they keep the focus ON the strip
- * (the selection follows the focus there), so a player can keep
- * arrowing between the tabs instead of having to come back to the
- * strip for every switch.
+ * THE PAGES, in the order the sidebar lists them.
  */
-function selectTab(tab: OptsTab, focus: 'panel' | 'tab' = 'panel'): void {
-  activeTab.value = tab;
-  void nextTick(() => {
-    if (focus === 'panel') {
-      tabPanel(tab)?.focus();
-    } else {
-      tabButton(tab)?.focus();
-    }
-  });
-}
+type OptsPage = 'player' | 'game' | 'performance';
+
+const PAGES: { key: OptsPage; label: string }[] = [
+  { key: 'player', label: 'Player' },
+  { key: 'game', label: 'Game' },
+  { key: 'performance', label: 'Performance' },
+];
 
 /**
- * THE TAB STRIP'S KEYS.
+ * Which page is showing.
  *
- * A tablist is not a row of buttons. ArrowLeft and ArrowRight move
- * between the tabs, Home and End jump to the ends, and the selection
- * follows the focus — which is what the roving tabindex is for: only
- * the selected tab is in the tab order, so Tab does not walk the strip
- * twice.
+ * The panel always OPENS on the player page, because the name field
+ * lives there and the focus has to land in it: `focus()` on a hidden
+ * input fails SILENTLY, so opening on another page would leave the
+ * field dead and the ENGINE would eat the keystrokes as game commands.
  */
-function onTabKeydown(e: KeyboardEvent): void {
-  const current = TAB_ORDER.indexOf(activeTab.value);
-  let next = current;
-  if (e.key === 'ArrowLeft') {
-    next = (current - 1 + TAB_ORDER.length) % TAB_ORDER.length;
-  } else if (e.key === 'ArrowRight') {
-    next = (current + 1) % TAB_ORDER.length;
-  } else if (e.key === 'Home') {
-    next = 0;
-  } else if (e.key === 'End') {
-    next = TAB_ORDER.length - 1;
-  } else {
+const page = ref<OptsPage>('player');
+
+const pageTitle = computed(() => {
+  const p = PAGES.find((x) => x.key === page.value);
+  return p ? p.label : '';
+});
+
+async function selectPage(next: OptsPage): Promise<void> {
+  page.value = next;
+  if (next === 'performance') {
+    // The badge's number comes from the same report the page shows, so
+    // it is refreshed whenever the page comes forward.
+    refreshPerfReport();
+  }
+
+  // THE FOCUS FOLLOWS THE PAGE.
+  //
+  // The name field holds the focus while the Player page is up. When
+  // the player leaves that page the field is hidden — and a focus on a
+  // hidden element falls back to <body>, where the ENGINE's listeners
+  // are waiting. The page itself takes the focus instead, so a screen
+  // reader says where the player is and the arrow keys still work.
+  await nextTick();
+  if (next === 'player') {
+    nameInput.value?.focus();
+    nameInput.value?.select();
     return;
   }
-  e.preventDefault();
-  selectTab(TAB_ORDER[next], 'tab');
+  const target = next === 'game' ? gamePage.value : perfPage.value;
+  target?.focus();
 }
 
-// The buy menu's style. It lives in the store (and is persisted), but
-// it is NOT a cvar: it is the port's `ts_buy_mode` command, a client
-// library switch, so it never reaches the launch args.
+// ---------------------------------------------------------------------------
+// THE SLIDERS
+// ---------------------------------------------------------------------------
+
+/**
+ * What each slider shows.
+ *
+ * `isDefault` is true when the cvar held nothing usable and the
+ * engine's own default is being shown instead.
+ */
+const sliderState = ref<Record<OptionSlider['key'], { value: number; isDefault: boolean }>>({
+  sensitivity: { value: 2, isDefault: false },
+  fov: { value: 90, isDefault: false },
+  volume: { value: 1, isDefault: false },
+});
+
+/**
+ * What the number field is showing while it is being typed into.
+ *
+ * The field is bound to a string, not to the value: binding a number
+ * to a number input rewrites the text on every keystroke, and a
+ * half-typed "1." becomes "1" under the player's cursor.
+ */
+const numberDraft = ref<Record<string, string | undefined>>({});
+
+function onSliderInput(spec: OptionSlider, e: Event): void {
+  const raw = Number((e.target as HTMLInputElement).value);
+  const value = clampToSlider(spec, raw);
+  sliderState.value[spec.key] = { value, isDefault: false };
+  numberDraft.value = { ...numberDraft.value, [spec.key]: formatSlider(spec, value) };
+}
+
+function onNumberInput(spec: OptionSlider, e: Event): void {
+  const text = (e.target as HTMLInputElement).value;
+  numberDraft.value = { ...numberDraft.value, [spec.key]: text };
+}
+
+function onNumberCommit(spec: OptionSlider): void {
+  const draft = numberDraft.value[spec.key];
+  if (draft === undefined) return;
+  const parsed = Number(draft);
+  if (!Number.isFinite(parsed)) {
+    // An empty or broken field falls back to what the slider holds.
+    numberDraft.value = {
+      ...numberDraft.value,
+      [spec.key]: formatSlider(spec, sliderState.value[spec.key].value),
+    };
+    return;
+  }
+  const value = clampToSlider(spec, parsed);
+  sliderState.value[spec.key] = { value, isDefault: false };
+  numberDraft.value = { ...numberDraft.value, [spec.key]: formatSlider(spec, value) };
+}
+
+/**
+ * Write the sliders back to the engine.
+ *
+ * The value written is the one the slider SHOWS, which is always
+ * inside the slider's range. The old panel wrote the raw cvar value,
+ * and the engine's `fov` cvar can hold 0 while its default is 90 — so
+ * the old Apply could write a field of view of ZERO.
+ */
+function applySettings(): void {
+  for (const s of OPTION_SLIDERS) {
+    writeCvar(s.cvar, sliderState.value[s.key].value);
+  }
+  // The values are the player's now, whatever they were before.
+  for (const s of OPTION_SLIDERS) {
+    sliderState.value[s.key] = { ...sliderState.value[s.key], isDefault: false };
+  }
+  logDebug('[opts] applied', JSON.stringify(sliderState.value));
+}
+
+// ---------------------------------------------------------------------------
+// THE IDENTITY
+// ---------------------------------------------------------------------------
+
+/** The character the player is wearing, in the mod's own spelling. */
+const selectedModel = computed(() => canonicalModel(model.value) ?? '');
+
+/** The name of the selected character, for the large portrait's label. */
+const selectedLabel = computed(() => {
+  const m = selectedModel.value;
+  return m ? m : 'Not chosen';
+});
+
+function applyName(): void {
+  const n = name.value.trim();
+  if (!n) return;
+  if (applyEngineName(n)) {
+    logDebug(`[opts] name set to "${n}"`);
+  }
+}
+
+function chooseModel(m: string): void {
+  if (applyModel(m)) {
+    // The CANONICAL spelling, not the one that was clicked: the engine
+    // puts this string into `models/player/<name>/<name>.mdl`, and the
+    // case is part of the path.
+    model.value = canonicalModel(m) ?? m;
+    logDebug(`[opts] model set to "${model.value}"`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// THE READOUT
+// ---------------------------------------------------------------------------
+
+/** The report the Performance page shows, and the badge's number. */
+const perfReport = ref<PerfReport | null>(props.report ?? null);
+
+/**
+ * How many things want the player's attention.
+ *
+ * A WARNING and an ERROR both count: the badge is "things to fix", and
+ * a software renderer is more worth a badge than a late frame.
+ */
+const problemCount = computed(() => {
+  const r = perfReport.value;
+  if (!r) return 0;
+  return r.findings.filter((f) => f.severity === 'warn' || f.severity === 'bad').length;
+});
+
+/**
+ * Re-read the readout.
+ *
+ * In the game this is the LIVE report: the player is looking at the
+ * game right now, and a stale number would be a lie.
+ */
+function refreshPerfReport(): void {
+  perfReport.value = props.report ?? liveReport();
+}
+
+watch(
+  () => props.report,
+  (r) => {
+    if (r) perfReport.value = r;
+  },
+);
+
+// ---------------------------------------------------------------------------
+// THE BUY MENU
+// ---------------------------------------------------------------------------
+
+/**
+ * The buy menu's style. It lives in the store (and is persisted), but
+ * it is NOT a cvar: it is the port's `ts_buy_mode` command, a client
+ * library switch, so it never reaches the launch args.
+ */
 const store = useXashStore();
 const { tsConfig } = storeToRefs(store);
 const buyMenuModes: BuyMenuMode[] = ['classic', 'modern'];
@@ -491,86 +581,14 @@ function setBuyMenu(mode: BuyMenuMode): void {
   logDebug(`[opts] buy menu -> ${mode}`);
 }
 
-/** Load the current values from the engine when the overlay opens. */
-async function refresh() {
-  const [s, f, v] = await Promise.all([
-    readCvar('sensitivity'),
-    readCvar('fov'),
-    readCvar('volume'),
-  ]);
-  if (s !== null) sensitivity.value = Number(s);
-  if (f !== null) fov.value = Number(f);
-  if (v !== null) volume.value = Number(v);
-  logDebug(`[opts] loaded sensitivity=${s} fov=${f} volume=${v}`);
-
-  // The identity, too: the field starts with the name the player is
-  // actually playing under, and the picker shows the current model.
-  await refreshIdentity();
-  name.value = displayName.value;
-  model.value = engineModel.value;
-}
-
-/**
- * Open the overlay with the keyboard in the right place.
- *
- * The focus is the fix for "typing in the input is not captured by the
- * input" (measured: without a click, every keystroke went to <body>).
- * `nextTick` waits for the field to exist before focusing it.
- */
-watch(open, async (isOpen) => {
-  if (!isOpen) {
-    // Hand the keyboard back to the game.
-    setBridgeSuspended(false);
-    return;
-  }
-  // Take the keyboard away from the game: the engine's key listeners
-  // are on `window`, so a focused DOM input does NOT stop the engine
-  // from receiving the keys.
-  setBridgeSuspended(true);
-  // THE OVERLAY ALWAYS OPENS ON THE SETTINGS.
-  //
-  // The name input lives in the Settings panel, and `focus()` on a
-  // HIDDEN input fails SILENTLY — so if the overlay opened on the
-  // readout tab, the name field would never take the focus, every
-  // keystroke would go to <body>, and the engine would eat them as
-  // game commands. That is the same class of bug the focus fix above
-  // was about, so the tab is reset before the field is focused.
-  activeTab.value = 'settings';
-  void refresh();
-  await nextTick();
-  nameInput.value?.focus();
-  nameInput.value?.select();
-});
-
-function applySettings() {
-  if (sensitivity.value !== null) writeCvar('sensitivity', sensitivity.value);
-  if (fov.value !== null) writeCvar('fov', fov.value);
-  if (volume.value !== null) writeCvar('volume', volume.value);
-}
-
-function applyName() {
-  const n = name.value.trim();
-  if (!n) return;
-  if (applyEngineName(n)) {
-    logDebug(`[opts] name set to "${n}"`);
-  }
-}
-
-function chooseModel(m: string) {
-  if (applyModel(m)) {
-    // The CANONICAL spelling, not the one that was clicked: the engine
-    // puts this string into `models/player/<name>/<name>.mdl`, so it has
-    // to be the spelling the asset tree uses.
-    model.value = canonicalModel(m) ?? m;
-    logDebug(`[opts] model set to "${model.value}"`);
-  }
-}
+// ---------------------------------------------------------------------------
+// THE FULLSCREEN
+// ---------------------------------------------------------------------------
 
 /**
  * Is the page in fullscreen right now?
  *
- * The "Leave fullscreen" button is only useful when it is, and the
- * fullscreen can change without the overlay knowing (the browser's own
+ * The state can change without the panel knowing (the browser's own
  * chrome can leave it), so it is tracked from the event.
  */
 const inFullscreen = ref(isFullscreen());
@@ -579,43 +597,11 @@ function onFullscreenChange(): void {
   inFullscreen.value = isFullscreen();
 }
 
-onMounted(() => document.addEventListener('fullscreenchange', onFullscreenChange));
-onBeforeUnmount(() => document.removeEventListener('fullscreenchange', onFullscreenChange));
-
-/**
- * KEEP THE SESSION WHEN THE PAGE GOES AWAY.
- *
- * Quitting to the web UI is a full page load, and everything the
- * readout knows lives in module state that dies with the page — so the
- * last match's numbers are written to `sessionStorage` on the way out
- * and restored on the landing page.
- *
- * The write is guarded on a MEASURED FRAME, so the landing page's own
- * `pagehide` cannot erase the session it is about to show.
- */
-let removeSessionWriter: (() => void) | null = null;
-
-onMounted(() => {
-  removeSessionWriter = installPerfSessionWriter();
-});
-
-onBeforeUnmount(() => {
-  removeSessionWriter?.();
-  removeSessionWriter = null;
-});
-
-/**
- * Leave the fullscreen.
- *
- * The keyboard lock claims Escape in Chromium, so a tap of Escape
- * releases the mouse instead of leaving the fullscreen (which is what
- * the player wants mid-match). This is the way out.
- */
 /**
  * The fullscreen toggle.
  *
- * A click is a user gesture, and `requestFullscreen()` only works from
- * one - so this is the only way IN once the browser has taken the
+ * A click is a user gesture, and `requestFullscreen()` only works
+ * from one — so this is the only way IN once the browser has taken the
  * fullscreen away with an Escape.
  *
  * Going OUT is told to the escape gate first, so that it does not put
@@ -633,12 +619,152 @@ async function toggleFullscreen(): Promise<void> {
   logDebug('[opts] entered fullscreen:', inFullscreen.value);
 }
 
+// ---------------------------------------------------------------------------
+// THE FRAME
+// ---------------------------------------------------------------------------
+
+/**
+ * THE PANEL SCALES TO THE VIEWPORT.
+ *
+ * The frame is the design's own 960 x 620 and is always DRAWN at that
+ * size; the scale factor is what changes. CSS cannot divide one
+ * length by another, so the factor is computed here — from the layer's
+ * box (minus its padding) against the frame's own size — and handed to
+ * the CSS as --opts-scale.
+ *
+ * This is the buy panel's rule, unchanged, so the two windows in the
+ * game behave the same way in a small window and in a big one.
+ */
+const MAX_SCALE = 1.8;
+const MIN_SCALE = 0.45;
+
+const root = ref<HTMLElement | null>(null);
+const frame = ref<HTMLElement | null>(null);
+
+function updateScale(): void {
+  const layer = root.value;
+  const panel = frame.value;
+  if (!layer || !panel) return;
+  const style = window.getComputedStyle(layer);
+  const padX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+  const padY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+  const availW = layer.clientWidth - (Number.isFinite(padX) ? padX : 0);
+  const availH = layer.clientHeight - (Number.isFinite(padY) ? padY : 0);
+  const baseW = panel.offsetWidth;
+  const baseH = panel.offsetHeight;
+  if (availW <= 0 || availH <= 0 || baseW <= 0 || baseH <= 0) return;
+  const factor = Math.min(availW / baseW, availH / baseH);
+  const scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, factor));
+  panel.style.setProperty('--opts-scale', scale.toFixed(4));
+}
+
+let resizeObserver: ResizeObserver | null = null;
+
+onMounted(() => {
+  document.addEventListener('fullscreenchange', onFullscreenChange);
+  resizeObserver = new ResizeObserver(() => updateScale());
+  if (root.value) resizeObserver.observe(root.value);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener('fullscreenchange', onFullscreenChange);
+  resizeObserver?.disconnect();
+  resizeObserver = null;
+});
+
+// ---------------------------------------------------------------------------
+// THE LIFECYCLE
+// ---------------------------------------------------------------------------
+
+/**
+ * Load the current values from the engine when the overlay opens.
+ *
+ * The cvars are read with their DEFAULTS as well as their values: the
+ * engine's `fov` cvar can hold 0 while its default is 90, and a
+ * slider that shows 0 is showing the player a field of view of zero.
+ */
+async function refresh() {
+  const readings = await Promise.all(OPTION_SLIDERS.map((s) => readCvarFull(s.cvar)));
+
+  OPTION_SLIDERS.forEach((s, i) => {
+    const reading = readings[i];
+    const resolved = readSlider(s, reading.value, reading.defaultValue);
+    sliderState.value[s.key] = { value: resolved.value, isDefault: resolved.isDefault };
+    numberDraft.value = { ...numberDraft.value, [s.key]: formatSlider(s, resolved.value) };
+    logDebug(
+      `[opts] loaded ${s.cvar}=${reading.value} (default ${reading.defaultValue}) -> ${resolved.value}`,
+    );
+  });
+
+  // The identity, too: the field starts with the name the player is
+  // actually playing under, and the picker shows the current model.
+  await refreshIdentity();
+  name.value = displayName.value;
+  model.value = engineModel.value;
+
+  refreshPerfReport();
+}
+
+/**
+ * Open the overlay with the keyboard in the right place.
+ *
+ * The focus is the fix for "typing in the input is not captured by
+ * the input" (measured: without a click, every keystroke went to
+ * <body>). `nextTick` waits for the field to exist before focusing it.
+ */
+watch(open, async (isOpen) => {
+  if (!isOpen) {
+    // Hand the keyboard back to the game.
+    setBridgeSuspended(false);
+    return;
+  }
+  // Take the keyboard away from the game: the engine's key listeners
+  // are on `window`, so a focused DOM input does NOT stop the engine
+  // from receiving the keys.
+  setBridgeSuspended(true);
+  // THE PAGE IS RESET BEFORE THE FIELD IS FOCUSED.
+  //
+  // The name input lives on the player page, and `focus()` on a HIDDEN
+  // input fails SILENTLY — so if the panel opened on another page, the
+  // name field would never take the focus, every keystroke would go
+  // to <body>, and the engine would eat them as game commands. The
+  // reset is synchronous, and the focus comes after the tick.
+  page.value = 'player';
+  void refresh();
+  await nextTick();
+  nameInput.value?.focus();
+  nameInput.value?.select();
+});
+
+/**
+ * KEEP THE SESSION WHEN THE PAGE GOES AWAY.
+ *
+ * Quitting to the web UI is a full page load, and everything the
+ * readout knows lives in module state that dies with the page — so the
+ * last match's numbers are written to `sessionStorage` on the way out
+ * and restored on the landing page.
+ *
+ * The write is guarded on a MEASURED FRAME, so the landing page's own
+ * `pagehide` cannot erase the session it is about to show.
+ */
+let removeSessionWriter: (() => void) | null = null;
+
+onMounted(() => {
+  removeSessionWriter = installPerfSessionWriter();
+  updateScale();
+});
+
+onBeforeUnmount(() => {
+  removeSessionWriter?.();
+  removeSessionWriter = null;
+});
+
 /**
  * Leave the match and go back to the site.
  *
- * A full page load, not a state toggle: the engine's state lives in WASM
- * memory and on the server, and the honest way out of a match is to leave
- * it. The landing page is the site root.
+ * A full page load, not a state toggle: the engine's state lives in
+ * WASM memory and on the server, and the honest way out of a match is
+ * to leave it. The landing page is the site root.
  */
 function quitToWebUi() {
   setBridgeSuspended(false);
@@ -664,380 +790,638 @@ function quitToWebUi() {
 </script>
 
 <style scoped lang="scss">
+/*
+ * THE PALETTE — THE BUY MENU'S, VERBATIM.
+ *
+ * These are not this panel's colours and not the shell's phosphor
+ * green: they are the buy panel's own tokens, the same gold-on-dark
+ * family, because these are two windows into the same game. The
+ * overlay opens INSIDE the match, over the game's own amber HUD, and
+ * a green menu in the middle of an amber game read as two systems
+ * fighting.
+ *
+ *   --opts-bg      #14110d  the window's ground
+ *   --opts-card    #1f1a13  the cards
+ *   --opts-focus   #2a2216  the selected row's fill
+ *   --opts-border  #33291d  the hairlines
+ *   --opts-edge    #4a3d2b  the buttons' own edges
+ *   --opts-text    #f2e9d8  the text
+ *   --opts-muted   #b3a68e  the labels
+ *   --opts-accent  #f2b84b  the accent: headings, the selected row
+ *   --opts-warn    #ffb35a  a warning
+ *   --opts-ok      #8fd18a  all well
+ *   --opts-danger  #ff8a73  the one red: the Quit button
+ */
 .opts {
-  /*
-   * THE AMBER SCHEME — the GAME's palette, not the shell's.
-   *
-   * Everything else in this app is a phosphor-green operator terminal:
-   * the landing page, the boot screen, the disconnect panel. This panel
-   * is the exception, and it is not arbitrary: it opens INSIDE the
-   * match, over the game's own amber HUD, so a green menu in the middle
-   * of an amber game read as two systems fighting. The game's amber is
-   * TS's own — `iTeamColors[0]`, rgb(255,170,0) — and these values are
-   * sampled from the design mock Kyle sent, not eyeballed.
-   *
-   * The tokens are scoped here on purpose: the shell's `--ts-*` palette
-   * is unchanged for every other surface, and this one panel gets the
-   * game's.
-   *
-   *   --opts-ground   #13110d  the panel ground, and the text on amber
-   *   --opts-surface  #1e1a14  inputs, buttons, card bodies
-   *   --opts-raise    #292217  the character's portrait tile
-   *   --opts-amber    #e9bb5f  THE accent: headings, selected states
-   *   --opts-amber-dim #c5b381 the section legends
-   *   --opts-ink      #f1e9da  body text
-   *   --opts-ink-muted #b1a791 labels, unselected states
-   *   --opts-edge     #493c22  field and card borders
-   *   --opts-divider  #32291f  the hairlines between sections
-   */
-  --opts-ground: #13110d;
-  --opts-surface: #1e1a14;
-  --opts-raise: #292217;
-  --opts-amber: #e9bb5f;
-  --opts-amber-hot: #f2c87b;
-  --opts-amber-dim: #c5b381;
-  --opts-ink: #f1e9da;
-  --opts-ink-muted: #b1a791;
-  --opts-edge: #493c22;
-  --opts-divider: #32291f;
+  --opts-bg: #14110d;
+  --opts-card: #1f1a13;
+  --opts-card-2: #262016;
+  --opts-focus: #2a2216;
+  --opts-border: #33291d;
+  --opts-edge: #4a3d2b;
+  --opts-text: #f2e9d8;
+  --opts-muted: #b3a68e;
+  --opts-accent: #f2b84b;
+  --opts-warn: #ffb35a;
+  --opts-ok: #8fd18a;
+  --opts-danger: #ff8a73;
+  --opts-danger-border: #7a362b;
+  --opts-bar-bg: #2a241b;
+
+  --opts-font-display: 'Barlow Condensed', 'Oswald', 'Arial Narrow', sans-serif;
+  --opts-font: Inter, 'Helvetica Neue', system-ui, -apple-system, sans-serif;
 
   position: absolute;
   inset: 0;
   display: flex;
-  /*
-   * THE PANEL'S TOP EDGE IS ANCHORED, NOT CENTRED.
-   *
-   * The modal used to be one long panel — long enough to hit its
-   * 88vh cap — and centred, so its top edge sat a fixed 4vh from the
-   * top of the screen (6vh of panel, less the panel's own padding and
-   * border). Centring a CONTENT-SIZED panel puts the top edge wherever
-   * the content happens to end: switch from the Settings tab to the
-   * readout and the whole modal jumped down half the height it lost.
-   *
-   * Anchoring the top puts it back where it was, and it costs the
-   * panel nothing: the body scrolls, the head does not move, and the
-   * Quit button stays exactly where it was.
-   */
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding-top: 4vh;
-  background: rgba(19, 17, 13, 0.92);
+  padding: 24px;
+  background: rgba(20, 17, 13, 0.92);
   /* Above the HUD (1000) and the buy panel (1001): the overlay is a
      MODAL, and the panel can be open when the player reaches for the
      options (the game opens its own buy menu when the player becomes
      an observer). The panel's own toggle lives in here, so it has to
      be reachable. */
   z-index: 2000;
+  font-family: var(--opts-font);
+  color: var(--opts-text);
+  -webkit-font-smoothing: antialiased;
 
-  &__panel {
-    display: flex;
-    flex-direction: column;
-    width: min(28rem, 92vw);
-    max-height: 88vh;
-    padding: 1.1rem 1.2rem 1.3rem;
-    background: var(--opts-ground);
-    border: 1px solid var(--opts-edge);
-    /* The buy menu's frame radius. The settings panel and the buy menu
-       are both in-game surfaces, and one square and one rounded read as
-       two different products. These are the same numbers the modern
-       buy menu uses: 14 for the frame, 10 for a card, 8 for a row, a
-       button or a tab, 6 for a key. */
-    border-radius: 14px;
-    box-shadow: 0 1.5rem 3rem rgba(0, 0, 0, 0.6);
-    /* The PANEL does not scroll — the BODY does. The head and the tab
-       strip stay where they are, so the strip (and with it the way back
-       to the Settings tab) is never scrolled away. */
-    overflow: hidden;
+  /*
+   * THE PANEL BRINGS ITS OWN BOX SIZING.
+   *
+   * The app's reset sets `box-sizing: border-box` globally, but the
+   * panel is also mounted by the dev harness, on a page that has no
+   * reset — and a frame that is 56px wider than the window it is
+   * supposed to be is a frame that overflows it. The buy panel sets
+   * the same rule for the same reason.
+   */
+  &,
+  & *,
+  & *::before,
+  & *::after {
+    box-sizing: border-box;
   }
 
+  /*
+   * THE FRAME: THE DESIGN'S OWN 960 x 620, DRAWN AT THAT SIZE.
+   *
+   * The scale factor is what changes with the window, and it is
+   * computed in the script (CSS cannot divide one length by
+   * another). The buy panel works the same way, so the two windows in
+   * the game are the same window.
+   */
+  &__frame {
+    width: 960px;
+    height: 620px;
+    /*
+     * The frame NEVER flexes. It is a fixed 960 x 620 window and the
+     * only thing that changes with the viewport is the SCALE, so a
+     * flex parent that squeezed it would be changing the design.
+     */
+    flex: none;
+    transform: scale(var(--opts-scale, 1));
+    transform-origin: center center;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 24px;
+    background: var(--opts-bg);
+    border: 1px solid var(--opts-border);
+    border-radius: 14px;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.75);
+  }
+
+  /* THE HEADER: the title, and the way out. */
   &__head {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    /* The head never shrinks: the body is the part that scrolls. */
+    justify-content: space-between;
+    gap: 16px;
     flex: none;
-    /* The strip shares this row, so this gap is the whole separation
-       between the header and the body. */
-    margin-bottom: 0.55rem;
-  }
-
-  &__brand {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    /* The brand keeps its size: the strip takes what is left over. */
-    flex: none;
-  }
-
-  /* The BB mark, masked so it takes the accent colour. */
-  &__brand-mark {
-    width: 9px;
-    height: 21px;
-    flex: none;
-    background-color: var(--opts-amber);
-    -webkit-mask: url('../assets/brand/bb-mark.svg') no-repeat center / contain;
-    mask: url('../assets/brand/bb-mark.svg') no-repeat center / contain;
   }
 
   &__title {
     margin: 0;
-    font-family: var(--ts-font-display);
-    font-size: 1.1rem;
-    letter-spacing: 0.08em;
-    color: var(--opts-amber);
-    white-space: nowrap;
+    font-family: var(--opts-font-display);
+    font-weight: 700;
+    font-size: 30px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--opts-accent);
   }
 
-  /* The close button.
-
-     It used to carry a 1px border around a small glyph, which made it
-     read as an empty text input rather than a button. So: no resting
-     border, a real 2rem hit area, and the glyph optically centred
-     instead of sitting on a text baseline.
-
-     The resting state follows the panel's own idiom (`opts__model`,
-     `opts__switch-btn`): a muted glyph over a faint lime wash, so the
-     2rem footprint is visible without shouting. Hover lifts it to the
-     lime and doubles the wash.
-
-     The focus ring is the app's own phosphor ring (the same one
-     `opts__input` and `opts__model` use), not the browser default.
-     It stays square: the panel is a GoldSrc game panel, and sharp
-     rectangles are its visual language.
-  */
+  /* The close button: a square ghost, in the design's own shape. */
   &__close {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 2rem;
-    min-height: 2rem;
+    width: 44px;
+    height: 44px;
     padding: 0;
-    background: rgba(233, 187, 95, 0.08);
-    border: none;
+    background: transparent;
+    border: 1px solid var(--opts-edge);
     border-radius: 8px;
-    color: var(--opts-ink-muted);
-    font-size: 0.95rem;
+    color: var(--opts-text);
+    font-size: 18px;
     line-height: 1;
     cursor: pointer;
 
     &:hover {
-      background: rgba(233, 187, 95, 0.16);
-      color: var(--opts-amber);
+      border-color: var(--opts-accent);
+      color: var(--opts-accent);
     }
 
     &:focus-visible {
       outline: none;
-      box-shadow: 0 0 0 1px var(--opts-amber);
-
-      /* Forced colours force `box-shadow` to none, so the phosphor
-         ring is gone. Keep an outline, or a keyboard user in Windows
-         High Contrast gets nothing at all. */
-      @media (forced-colors: active) {
-        outline: 2px solid ButtonText;
-        outline-offset: 2px;
-      }
+      border-color: var(--opts-accent);
+      box-shadow: 0 0 0 1px var(--opts-accent);
     }
 
-    /* Same story at rest: forced colours paint no background and no
-       box-shadow, and the border is gone, so the button would have no
-       visible container. The outline is that container. */
+    /* Forced colours paint no background and no box-shadow, and the
+       border is gone, so the button would have no visible container.
+       The outline is that container. */
     @media (forced-colors: active) {
       outline: 2px solid ButtonText;
       outline-offset: 2px;
     }
   }
 
-  &__group {
-    padding: 0.7rem 0 0.5rem;
-    border-top: 1px solid var(--opts-divider);
-  }
-
-  /* THE TAB STRIP.
-
-     It sits in the HEAD ROW, outside the scroll area, so it is always
-     visible: the player can always get back to the Settings — and to
-     the Quit button — in one click, whatever the readout says.
-
-     It used to be a row of its own under the head, and that row was
-     the reason the Quit button ended up LOWER than it had been before
-     the tabs: the strip cost the panel about fifty pixels of height,
-     and the panel is centred, so half of that came straight off the
-     top of the Quit button. Sharing the row costs ZERO extra height —
-     the strip takes the space between the brand mark and the close
-     button, which was empty anyway. */
-  &__tabs {
-    display: flex;
-    gap: 0.3rem;
-    /* The strip takes the space between the brand and the close
-       button, and it never shrinks out of the row: it is the way back
-       to the Settings tab, and it has to be on screen at all times. */
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-
-  /* A tab. The same shape as the character picker and the Classic /
-     Modern switch, with the chosen one lit. */
-  &__tab {
-    flex: 1 1 auto;
-    min-width: 0;
-    padding: 0.26rem 0.5rem;
-    background: var(--opts-surface);
-    border: 1px solid var(--opts-edge);
-    border-radius: 8px;
-    color: var(--opts-ink-muted);
-    font-family: var(--ts-font-mono);
-    font-size: 0.8rem;
-    letter-spacing: 0.06em;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    cursor: pointer;
-
-    &:hover {
-      border-color: var(--opts-amber);
-      color: var(--opts-ink);
-    }
-
-    &:focus-visible {
-      outline: none;
-      border-color: var(--opts-amber);
-      box-shadow: 0 0 0 1px var(--opts-amber);
-    }
-
-    /* The chosen tab is the amber plate, with the ground colour as its
-       label — the same idiom as `opts__switch-btn--on`. */
-    &--on {
-      background: var(--opts-amber);
-      border-color: var(--opts-amber);
-      color: var(--opts-ground);
-    }
-  }
-
-  /* THE SCROLLING BODY.
-
-     The only part of the modal that scrolls. The hairline that used to
-     be under the tab strip lives here now: it is the separation
-     between the fixed head and the scrolling body. */
+  /* THE BODY: the sidebar, and the pages. */
   &__body {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    border-top: 1px solid var(--opts-divider);
-  }
-
-  /* A tab panel. */
-  &__panel-content {
-    padding-top: 0.7rem;
-
-    /* The first group of a panel does not need its own rule: the tab
-       strip's hairline already separates the strip from the body. */
-    > .opts__group:first-child {
-      padding-top: 0;
-      border-top: none;
-    }
-
-    /* The panel is focused programmatically when a tab is chosen, so
-       it needs a focus shape of its own — the browser's default blue
-       ring does not belong in this palette. */
-    &:focus-visible {
-      outline: none;
-      box-shadow: inset 0 0 0 1px rgba(233, 187, 95, 0.45);
-    }
-  }
-
-  &__legend {
-    margin: 0 0 0.5rem;
-    font-family: var(--ts-font-mono);
-    font-size: 0.68rem;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--opts-amber-dim);
-  }
-
-  &__row {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.8rem;
-    margin-bottom: 0.45rem;
-
-    &--models {
-      align-items: flex-start;
-      flex-direction: column;
-      gap: 0.4rem;
-      margin-top: 0.7rem;
-    }
-  }
-
-  &__label {
-    font-size: 0.82rem;
-    color: var(--opts-ink);
-  }
-
-  &__input {
-    width: 9rem;
-    padding: 0.28rem 0.45rem;
-    background: var(--opts-surface);
-    border: 1px solid var(--opts-edge);
-    border-radius: 8px;
-    color: var(--opts-ink);
-    font-family: var(--ts-font-mono);
-    font-size: 0.82rem;
-
-    /* A phosphor focus ring: the field's own colour plus a halo, so the
-       focus is unmistakable without a browser-default blue outline. */
-    &:focus {
-      outline: none;
-      border-color: var(--opts-amber);
-      box-shadow: 0 0 0 1px var(--opts-amber), 0 0 12px rgba(233, 187, 95, 0.25);
-    }
-
-    &--num {
-      width: 6rem;
-    }
+    flex: 1;
+    min-height: 0;
+    gap: 20px;
+    border-top: 1px solid var(--opts-border);
+    padding-top: 12px;
   }
 
   /*
-   * THE CHARACTER PICKER, IN THE GAME'S AMBER.
-
-   * The picker's own layout, tiles and portraits live in
-   * `CharacterPicker.vue`, which is shared with the pre-join identity
-   * modal. What this panel owns is the COLOUR: the picker reads its
-   * palette from these variables, and here they are the game's amber
-   * rather than the shell's phosphor green.
+   * THE SIDEBAR.
    *
-   * The chosen character's tile is the amber plate with the ground
-   * colour as its label — the same idiom as `opts__switch-btn--on`.
+   * 190px, the design's own width, with the Quit button PINNED to the
+   * bottom: it is the control a player reaches for when they want to
+   * leave a match, so it is in the same place on every page and it is
+   * never below the fold.
    */
-  &__picker {
-    --picker-surface: var(--opts-surface);
-    --picker-edge: var(--opts-edge);
-    --picker-tile: var(--opts-raise);
-    --picker-ink: var(--opts-ink-muted);
-    --picker-accent: var(--opts-amber);
-    --picker-on-surface: var(--opts-raise);
-    --picker-on-edge: var(--opts-amber);
-    --picker-on-ink: var(--opts-amber);
-
-    /* The roster is as wide as the panel. */
-    width: 100%;
+  &__side {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 190px;
+    flex: none;
   }
 
+  &__side-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    min-height: 0;
+  }
+
+  &__side-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 46px;
+    padding: 0 14px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: var(--opts-muted);
+    font-family: var(--opts-font);
+    font-size: 15px;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+
+    &:hover {
+      color: var(--opts-text);
+    }
+
+    &:focus-visible {
+      outline: none;
+      border-color: var(--opts-accent);
+      box-shadow: 0 0 0 1px var(--opts-accent);
+    }
+
+    /* The current page: the game's focus fill, a gold edge, and the
+       text in the full ink. */
+    &.is-on {
+      background: var(--opts-focus);
+      border-color: var(--opts-accent);
+      color: var(--opts-text);
+    }
+  }
+
+  &__side-label {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /*
+   * THE BADGE: how many things want the player's attention.
+   *
+   * It is the only amber pill in the panel, and it is on the
+   * Performance page because that is the page where the things are.
+   */
+  &__badge {
+    margin-left: auto;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: #3a2a12;
+    color: var(--opts-warn);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+
+  /* THE QUIT BUTTON: the one red element in the window. */
+  &__quit {
+    min-height: 44px;
+    padding: 0 20px;
+    background: transparent;
+    border: 1px solid var(--opts-danger-border);
+    border-radius: 8px;
+    color: var(--opts-danger);
+    font-family: var(--opts-font);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    flex: none;
+
+    &:hover {
+      background: rgba(255, 138, 115, 0.12);
+      border-color: var(--opts-danger);
+    }
+
+    &:focus-visible {
+      outline: none;
+      border-color: var(--opts-danger);
+      box-shadow: 0 0 0 1px var(--opts-danger);
+    }
+  }
+
+  /* THE PAGES' COLUMN. */
+  &__content {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  &__page-title {
+    margin: 0;
+    flex: none;
+    font-family: var(--opts-font-display);
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--opts-accent);
+  }
+
+  /*
+   * A PAGE.
+   *
+   * Only this scrolls. The title, the sidebar and the Quit button are
+   * outside it, so nothing that matters can be pushed off the window.
+   */
+  &__page {
+    display: flex;
+    gap: 16px;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+
+    /*
+     * THE SCROLLBAR IS THE PANEL'S OWN.
+     *
+     * The browser's default is a light grey bar on a light track, and
+     * on this dark panel it reads as a scratch across the design. So
+     * it is thin, and it is the panel's own border colour — the same
+     * treatment the buy menu's lists get, because they are the same
+     * design.
+     */
+    scrollbar-width: thin;
+    scrollbar-color: var(--opts-border) transparent;
+
+    &::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background: var(--opts-border);
+      border-radius: 4px;
+    }
+
+    &::-webkit-scrollbar-thumb:hover {
+      background: var(--opts-edge);
+    }
+
+    /*
+     * The page takes the focus when the player changes page, so the
+     * focus ring would draw a box around the whole window. The page
+     * is a container, not a control — there is nothing to point at.
+     */
+    &:focus {
+      outline: none;
+    }
+
+    &--stack {
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* The readout lays itself out, and its own column scrolls. */
+    &--perf {
+      display: block;
+      overflow: hidden;
+    }
+  }
+
+  /* A CARD: the design's own card. */
+  &__card {
+    background: var(--opts-card);
+    border: 1px solid var(--opts-border);
+    border-radius: 10px;
+    padding: 16px;
+
+    &--stack {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      /*
+       * The Controls card holds three sliders and the Apply button,
+       * and it has to FIT the window with the Buy menu and Display
+       * cards below it — so the rows are 12px apart rather than the
+       * mockup's roomier 20. The mockup's frame had two cards; this
+       * one has three.
+       */
+      gap: 12px;
+    }
+
+    /* A card with a label on one side and a control on the other. */
+    &--split {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+  }
+
+  &__card-head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  /* THE SMALL LABEL: the design's own `.t`. */
+  &__label {
+    margin: 0;
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--opts-muted);
+
+    &--spaced {
+      margin-top: 6px;
+    }
+  }
+
+  &__row-label {
+    font-size: 15px;
+    color: var(--opts-text);
+  }
+
+  /* A ROW: a label, a control, or a label and a control. */
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+
+    &--slider {
+      .opts__row-label {
+        width: 168px;
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+    }
+
+    &--end {
+      justify-content: flex-end;
+    }
+  }
+
+  /* THE "DEFAULT" CHIP: the number is the game's, not the player's. */
+  &__chip {
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--opts-card-2);
+    color: var(--opts-muted);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  /* THE SLIDER.
+   *
+   * A native range input, so the keyboard works on it (the arrow keys
+   * move it, and it announces itself), drawn in the design's own
+   * shape: a 6px track, a gold fill up to the thumb, and a round
+   * thumb in the ink colour with a gold edge.
+   */
+  &__range {
+    flex: 1;
+    min-width: 0;
+    height: 18px;
+    margin: 0;
+    background: transparent;
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+
+    /* The track, with the fill painted up to the thumb's position. */
+    &::-webkit-slider-runnable-track {
+      height: 6px;
+      border-radius: 3px;
+      background: linear-gradient(
+        to right,
+        var(--opts-accent) 0%,
+        var(--opts-accent) var(--fill, 0%),
+        var(--opts-bar-bg) var(--fill, 0%),
+        var(--opts-bar-bg) 100%
+      );
+    }
+
+    &::-moz-range-track {
+      height: 6px;
+      border-radius: 3px;
+      background: var(--opts-bar-bg);
+    }
+
+    &::-moz-range-progress {
+      height: 6px;
+      border-radius: 3px;
+      background: var(--opts-accent);
+    }
+
+    /* The thumb: the ink colour, with the gold edge. */
+    &::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      margin-top: -6px;
+      border-radius: 9px;
+      background: var(--opts-text);
+      border: 2px solid var(--opts-accent);
+    }
+
+    &::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      border-radius: 9px;
+      background: var(--opts-text);
+      border: 2px solid var(--opts-accent);
+    }
+
+    &:focus-visible {
+      outline: none;
+
+      &::-webkit-slider-thumb {
+        box-shadow: 0 0 0 3px rgba(242, 184, 75, 0.35);
+      }
+
+      &::-moz-range-thumb {
+        box-shadow: 0 0 0 3px rgba(242, 184, 75, 0.35);
+      }
+    }
+  }
+
+  /* THE TEXT FIELDS. */
+  &__input {
+    width: 100%;
+    height: 44px;
+    padding: 0 12px;
+    background: var(--opts-card);
+    border: 1px solid var(--opts-border);
+    border-radius: 8px;
+    color: var(--opts-text);
+    font-family: var(--opts-font);
+    font-size: 15px;
+
+    &:focus {
+      outline: none;
+      border-color: var(--opts-accent);
+      box-shadow: 0 0 0 3px rgba(242, 184, 75, 0.25);
+    }
+
+    &--num {
+      width: 96px;
+      flex: none;
+    }
+  }
+
+  /* THE SELECTED CHARACTER, LARGE. */
+  &__selected {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    width: 236px;
+    flex: none;
+    align-self: flex-start;
+  }
+
+  &__selected-portrait {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 150px;
+    background: var(--opts-focus);
+    border: 1px solid var(--opts-edge);
+    border-radius: 10px;
+    overflow: hidden;
+
+    img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      image-rendering: auto;
+    }
+  }
+
+  &__selected-empty {
+    font-family: var(--opts-font-display);
+    font-size: 64px;
+    font-weight: 700;
+    color: var(--opts-accent);
+  }
+
+  &__selected-name {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-align: center;
+    color: var(--opts-text);
+  }
+
+  /* THE ROSTER: the picker's own component, in the game's colours. */
+  &__roster {
+    flex: 1;
+    min-width: 0;
+
+    /*
+     * The picker's colours are the CALLER's, and the picker's own
+     * styles live in its own scoped sheet — so these are set on the
+     * wrapper and read by the child.
+     */
+    --picker-surface: var(--opts-card);
+    --picker-edge: var(--opts-border);
+    --picker-ink: var(--opts-muted);
+    --picker-accent: var(--opts-accent);
+    --picker-on-surface: var(--opts-focus);
+    --picker-on-edge: var(--opts-accent);
+    --picker-on-ink: var(--opts-accent);
+    --picker-tile: var(--opts-focus);
+    --picker-tile-size: 68px;
+    --picker-font: var(--opts-font);
+    --picker-name-size: 10px;
+    --picker-gap: 8px;
+    --picker-tile-pad: 8px 2px;
+  }
+
+  /* THE BUTTONS. */
   &__btn {
-    margin-top: 0.35rem;
-    padding: 0.35rem 0.7rem;
-    background: var(--opts-surface);
+    min-height: 44px;
+    padding: 0 20px;
+    background: transparent;
     border: 1px solid var(--opts-edge);
     border-radius: 8px;
-    color: var(--opts-ink);
-    font-family: var(--ts-font-mono);
-    font-size: 0.75rem;
-    letter-spacing: 0.06em;
+    color: var(--opts-text);
+    font-family: var(--opts-font);
+    font-size: 14px;
+    font-weight: 500;
     cursor: pointer;
 
     &:hover:not(:disabled) {
-      background: var(--opts-raise);
-      border-color: var(--opts-amber);
+      border-color: var(--opts-accent);
+      color: var(--opts-accent);
     }
 
     &:disabled {
@@ -1045,79 +1429,73 @@ function quitToWebUi() {
       cursor: default;
     }
 
-    /* The mock's Apply: a solid amber plate with the ground colour as
-       the label. It is the only filled button in the panel, so it is
+    &:focus-visible {
+      outline: none;
+      border-color: var(--opts-accent);
+      box-shadow: 0 0 0 1px var(--opts-accent);
+    }
+
+    /* The Apply button: the one filled button in the window, so it is
        the only one that reads as the primary action. */
     &--primary {
-      background: var(--opts-amber);
-      border-color: var(--opts-amber);
-      color: var(--opts-ground);
+      min-height: 44px;
+      padding: 0 32px;
+      background: var(--opts-accent);
+      border-color: var(--opts-accent);
+      color: var(--opts-bg);
+      font-size: 16px;
       font-weight: 600;
 
       &:hover:not(:disabled) {
-        background: var(--opts-amber-hot);
-        border-color: var(--opts-amber-hot);
-        color: var(--opts-ground);
-      }
-    }
-
-    /* The Quit button stays red: it is the one control here that ends
-       the session, and red is the system's danger colour in every
-       palette it has. */
-    &--danger {
-      border-color: rgba(255, 92, 92, 0.5);
-      color: #ffb4b4;
-
-      &:hover:not(:disabled) {
-        background: rgba(255, 92, 92, 0.16);
-        border-color: #ff8b8b;
+        background: #f7c96a;
+        border-color: #f7c96a;
+        color: var(--opts-bg);
       }
     }
   }
 
-  /* The Classic / Modern switch. Two states, so two buttons — the same
-     shape as the character picker above, with the chosen one lit. */
+  /* THE CLASSIC / MODERN SWITCH, and the fullscreen switch. */
   &__switch {
     display: inline-flex;
-    border: 1px solid var(--opts-edge);
+    border: 1px solid var(--opts-border);
     border-radius: 8px;
-    /* Clip the lit half to the container's own radius, so the selected
-       side is a rounded plate and not a square block inside a rounded
-       frame — which is what the mock shows. */
     overflow: hidden;
+    flex: none;
   }
 
   &__switch-btn {
-    background: var(--opts-surface);
+    min-height: 44px;
+    padding: 0 18px;
+    background: transparent;
     border: none;
-    border-right: 1px solid var(--opts-divider);
-    color: var(--opts-ink-muted);
-    font-family: var(--ts-font-mono);
-    font-size: 0.7rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    padding: 0.28rem 0.75rem;
+    color: var(--opts-muted);
+    font-family: var(--opts-font);
+    font-size: 14px;
+    font-weight: 500;
     cursor: pointer;
 
-    &:last-child {
-      border-right: none;
-    }
-
     &:hover {
-      color: var(--opts-ink);
+      color: var(--opts-text);
     }
 
     &:focus-visible {
       outline: none;
-      border-color: var(--opts-amber);
-      box-shadow: 0 0 0 1px var(--opts-amber);
+      box-shadow: inset 0 0 0 1px var(--opts-accent);
     }
 
-    /* The chosen side is the amber plate, with the ground colour as its
-       label — the mock's Modern. */
-    &--on {
-      background: var(--opts-amber);
-      color: var(--opts-ground);
+    /* The chosen side is the amber plate, with the ground colour as
+       its label. */
+    &.is-on {
+      background: var(--opts-accent);
+      color: var(--opts-bg);
+      font-weight: 600;
+    }
+
+    /* The single-button switch: the fullscreen's own control. */
+    &--single {
+      min-width: 72px;
+      border: 1px solid var(--opts-border);
+      border-radius: 8px;
     }
   }
 }
