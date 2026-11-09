@@ -118,6 +118,22 @@ export function sustainableFps(workMs: number, safetyFactor = 0.85): number {
 export const COMMON_REFRESH_RATES = [24, 30, 48, 60, 72, 75, 90, 100, 120, 144, 165, 240, 360];
 
 /**
+ * HOW FAR A MEASURED DISPLAY RATE MAY DRIFT BELOW ITS NOMINAL RATE
+ * BEFORE THE CAP CHOOSER STOPS BELIEVING IT.
+ *
+ * HALF A PERCENT. A browser's frame timestamps land a fraction under
+ * the panel's real rate, and the cap chooser only offers rates at or
+ * under the display's rate -- so a 120 Hz panel measured at 119.976 Hz
+ * would be capped at 60 and flip between the two as the measurement
+ * jitters.
+ *
+ * The tolerance is on the DISPLAY's side of the comparison only. The
+ * engine's side is exact: the pacer must never ask for more frames
+ * than the engine can finish.
+ */
+export const DISPLAY_RATE_TOLERANCE = 0.005;
+
+/**
  * Pick the cap for a display.
  *
  * `displayHz` is the refresh rate the browser is actually delivering
@@ -152,7 +168,30 @@ export function chooseFrameCap(
 
   // Never ask for more than the display can show, or more than the
   // engine can do.
-  const ceiling = Math.min(displayHz, sustainable);
+  //
+  // THE DISPLAY'S SIDE GETS A TOLERANCE; THE ENGINE'S DOES NOT.
+  //
+  // A DISPLAY'S RATE IS NOMINAL, AND THE MEASUREMENT DRIFTS UNDER
+  // IT. A browser's rAF timestamps land a fraction below the panel's
+  // real rate: 119.976 Hz on a 120 Hz display, 59.94 on a 60 Hz one,
+  // 143.88 on a 144 Hz one. The candidate list only offers rates AT
+  // OR UNDER the display's rate, so a measured 119.976 EXCLUDES 120
+  // -- and the highest rate left that divides the display evenly is
+  // 60.
+  //
+  // That is not a rounding detail. It halves the frame rate on every
+  // machine, and because the measurement jitters either side of the
+  // nominal rate, the pacer flips between 60 and 120 every few
+  // seconds. Measured on Kyle's M3 Pro on 2026-11-08: the cap went
+  // from one frame in one to one frame in two with the engine's cost
+  // unchanged at 1.33 ms.
+  //
+  // The tolerance is half a percent: enough for the drift, far too
+  // small to let a 60 Hz display be asked for 120. The ENGINE's side
+  // stays exact -- the pacer must never ask for more frames than the
+  // engine can finish.
+  const displayCeiling = displayHz * (1 + DISPLAY_RATE_TOLERANCE);
+  const ceiling = Math.min(displayCeiling, sustainable);
 
   const candidates = COMMON_REFRESH_RATES.filter((hz) => hz <= ceiling);
 
@@ -225,4 +264,564 @@ export function frameIntervalMs(fps: number): number {
 export function isLate(intervalMs: number, budgetMs: number): boolean {
   if (!isFinite(intervalMs) || !isFinite(budgetMs) || budgetMs <= 0) return false;
   return intervalMs > budgetMs * 1.5;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// THE GATE DECISION — the hysteresis.
+//
+// WHY THIS IS HERE AND NOT IN THE MACHINERY
+// -----------------------------------------
+// The machinery measures; this decides. The decision is the part that
+// has to be right about the PLAYER, not about the machine, and it is
+// the part that is pure — which is why it lives in a file with no
+// imports, where the parent's unit suite can exercise it directly.
+//
+// THE BUG THIS FIXES
+// ------------------
+// The pacer used to decide ONCE, three seconds after the engine booted,
+// from a two-second window, and never measure again for the rest of the
+// match. On Kyle's M3 Pro that produced a 30 fps cap on a machine that
+// could have run the game at 60:
+//
+//     the boot reading      15.94 ms a frame
+//     sustainableFps(15.94) = 53
+//     chooseFrameCap(120, 53) = 30 fps
+//     120 / 30 = 4          -> one frame in four
+//
+// The whole difference between "30 fps on a machine that was drawing
+// 60" and "60 fps" is the QUALITY of one measurement: the engine needs
+// 25-30 seconds to reach steady state, and the first window is the
+// most expensive one it will ever produce.
+//
+// So the pacer measures warm, measures again, and moves the gate only
+// when the evidence supports it.
+//
+// THE ASYMMETRY IS THE POINT
+// --------------------------
+// Widening the gate (more frames) risks judder; narrowing it (fewer
+// frames) risks a player who feels the game got slower. The engine
+// getting FASTER after the warm-up is the normal case and is the case
+// worth acting on immediately. The engine getting slower for one window
+// is usually a scene, not a regression.
+
+/**
+ * How late the engine's frames have to be before the gate is not
+ * allowed to widen.
+ *
+ * FIVE PER CENT. Above this, the engine is already missing its slots,
+ * and asking it for more frames would make the judder worse. This is
+ * the single most important number in the policy: it is the guard
+ * against making the player's experience WORSE.
+ */
+export const LATE_FRACTION_LIMIT = 0.05;
+
+/**
+ * How many consecutive windows have to ask for the same NARROWER gate
+ * before it is adopted.
+ *
+ * TWO. One expensive window — a firefight, a shader compilation, a GC
+ * pause — must not halve the player's frame rate. A scene is not a
+ * regression.
+ */
+/**
+ * HOW MANY CONSECUTIVE SETTLED WINDOWS HAVE TO ASK FOR THE SAME GATE
+ * BEFORE THE GATE MOVES.
+ *
+ * TWO. In both directions: widening and narrowing.
+ */
+export const GATE_CONSECUTIVE_WINDOWS = 2;
+
+/**
+ * HOW FAR PAST A THRESHOLD THE ENGINE'S COST HAS TO BE BEFORE THE GATE
+ * CLOSES.
+ *
+ * FOUR PER CENT.
+ *
+ * The engine's frame cost is measured with about 1.4% of noise -- 7.00 ms
+ * and 7.20 ms are the same view on the same machine -- and the gate
+ * changes at a THRESHOLD: 850/120 = 7.083 ms of frame cost on a 120 Hz
+ * panel. A reading that straddles the threshold would close the gate
+ * and open it again, and the player's frame rate would pump between
+ * 60 and 120 every half minute.
+ *
+ * So the gate only closes when the cost is genuinely past the threshold,
+ * by more than the noise. A real change -- a firefight, a different part
+ * of the map -- is far bigger than this and gets through.
+ *
+ * IT IS A COST, NOT A RATE. A band on the SUSTAINABLE RATE cannot do this
+ * job: the gate's decisions are discrete steps, and on a 120 Hz panel the
+ * step from 60 fps to 120 fps is a 0.8% change in the sustainable rate
+ * (119 -> 121, at 7.14 -> 7.00 ms of frame cost). A band wide enough to
+ * protect that step swallows the step itself, and the player sits at
+ * 60 fps until the engine is 12% faster.
+ */
+export const NARROW_COST_HYSTERESIS = 0.04;
+
+/** What the pacer is told about the window it is deciding on. */
+export interface FrameGateInput {
+  /** The DISPLAY's refresh rate, measured while the page was idle. */
+  panelHz: number;
+  /** The engine's per-frame cost from this window, in milliseconds. */
+  engineWorkMs: number;
+  /** The gate in force right now: display ticks per engine frame. 1 = uncapped. */
+  currentEveryNth: number;
+  /** Is this window past the engine's warm-up? */
+  settled: boolean;
+  /**
+   * How many consecutive windows have asked for the SAME target gate.
+   * The caller counts them; this function only reads the count.
+   */
+  consecutiveSame: number;
+  /**
+   * The fraction of this window's engine frames that arrived late
+   * (lateFrames / measuredFrames), 0..1.
+   */
+  lateFraction: number;
+  /**
+   * Is the gate in force right now a PROVISIONAL (warm-up) decision?
+   *
+   * Optional, and defaulted to false: the caller only needs it when a
+   * measurement cannot be used and the existing gate has to be left
+   * exactly as it was, provisional flag and all.
+   */
+  currentProvisional?: boolean;
+  /**
+   * Was the gate in force FORCED -- set by the measurement harness, not
+   * chosen by the policy?
+   *
+   * A forced gate is the harness's business: it wants to see what a
+   * particular cap does, so the policy does not get to move it. It is
+   * separate from "provisional": a forced gate is not the policy's
+   * decision either, but it is not the policy's to revise.
+   */
+  currentForced?: boolean;
+}
+
+/** What the pacer decided, and why. */
+export interface FrameGateDecision {
+  /** The gate to use: display ticks per engine frame. 1 = uncapped. */
+  everyNth: number;
+  /** The frame rate that gate means, in fps. */
+  capFps: number;
+  /** Did the gate change? */
+  changed: boolean;
+  /** Is the gate in force still a PROVISIONAL (warm-up) decision? */
+  provisional: boolean;
+  /** Why — this string goes in the log and the diagnostics. */
+  reason: string;
+  /**
+   * The gate this window ASKED for, before the hysteresis rules.
+   *
+   * The caller counts the consecutive windows that asked for the same
+   * target, and it cannot count them without this.
+   */
+  targetEveryNth: number;
+  /** The frame rate that target means, in fps. */
+  targetFps: number;
+}
+
+/**
+ * The gate a window ASKS for, before the hysteresis rules.
+ *
+ * The caller needs this on its own: it counts the consecutive windows
+ * that asked for the SAME target, and it cannot count them without
+ * knowing the target. So the arithmetic lives here, once, and both
+ * the caller and `decideFrameGate` use it.
+ */
+export interface FrameTarget {
+  /** The gate the CAP CHOICE asks for, before the physical slot floor. */
+  capEveryNth?: number;
+  /** The gate the engine's frame needs so that it FITS its slot. */
+  slotEveryNth?: number;
+  /** Display ticks per engine frame. 1 = uncapped. */
+  everyNth: number;
+  /** The frame rate that means, in fps. */
+  fps: number;
+  /** The frame rate the engine can sustain, in fps. */
+  sustainableFps: number;
+}
+
+/**
+ * The target gate for a window: the EXISTING policy, and nothing else.
+ *
+ * `chooseFrameCap(panelHz, sustainableFps(engineWorkMs))` picks the
+ * highest standard rate that is no greater than the display's and no
+ * greater than the engine's sustainable rate, preferring one that
+ * divides the display rate evenly. The gate is that rate expressed
+ * as "one engine frame every N display ticks".
+ *
+ * The pacer can never ask for more than the engine sustains: that is
+ * `chooseFrameCap`'s contract and it does not change.
+ */
+export function computeFrameTarget(panelHz: number, engineWorkMs: number): FrameTarget {
+  const sustainable = sustainableFps(engineWorkMs);
+  const panelOk = isFinite(panelHz) && panelHz > 0;
+  const costOk = isFinite(engineWorkMs) && engineWorkMs > 0;
+
+  // A MEASUREMENT THAT CANNOT BE USED PRODUCES NO GATE.
+  //
+  // `chooseFrameCap` says "no cap" with a rate of 0, and turning that
+  // into a gate must not become "one frame in every tick of the
+  // display" -- that is one frame a second. And a NaN panel must not
+  // become a NaN gate: the shim holds the engine's callback until
+  // `tick % everyNth === 0`, and `tick % NaN` is never true, so the
+  // engine would never draw again.
+  if (!panelOk || !costOk || sustainable <= 0) {
+    return { everyNth: 1, fps: 0, sustainableFps: sustainable };
+  }
+
+  const cap = chooseFrameCap(panelHz, sustainable);
+  if (!cap.fps || cap.fps <= 0) {
+    return { everyNth: 1, fps: 0, sustainableFps: sustainable };
+  }
+
+  // THE GATE IS A WHOLE NUMBER OF TICKS.
+  //
+  // The tick count is the one nearest the cap's rate, so the gate
+  // lands on the rate that was asked for -- on a 100 Hz panel the
+  // cap's rate may not be on the panel's grid, and rounding the
+  // OTHER way would throw the cap away entirely.
+  const capEveryNth = Math.max(1, Math.round(panelHz / cap.fps));
+
+  // AND THE ENGINE'S FRAME MUST FIT IN THE SLOT IT IS GIVEN.
+  //
+  // This is the promise that matters, and it is physical rather than
+  // a policy line: the engine draws one frame every N ticks, so the
+  // slot is N/panelHz long, and a frame that does not fit in its slot
+  // overruns it and judders. The margin in `sustainableFps` is about
+  // headroom; this is about the frame landing at all.
+  // THE SLOT THE FRAME NEEDS.
+  //
+  // The engine draws one frame every N ticks, so the slot is N/panelHz
+  // long, and a frame that does not fit in its slot overruns it and
+  // judders. This is the promise that matters, and it is physical
+  // rather than a policy line.
+  const slotEveryNth = Math.max(1, Math.ceil((engineWorkMs * panelHz) / 1000));
+
+  // THE CAP'S CHOICE AND THE SLOT ARE SEPARATE, because they are
+  // separate things: the cap is a policy (how many frames the engine
+  // could be asked for) and the slot is physics (how many ticks its
+  // frame actually fits in). The gate is the stricter of the two.
+  const everyNth = Math.max(capEveryNth, slotEveryNth);
+
+  return {
+    everyNth,
+    capEveryNth,
+    slotEveryNth,
+    fps: panelHz / everyNth,
+    sustainableFps: sustainable,
+  };
+}
+
+/**
+ * How a gate is described in the log.
+ *
+ * "not capping" for an open gate, because that is the phrase the
+ * diagnostics, the log and the tests all look for.
+ */
+function describeGate(everyNth: number, panelHz: number): string {
+  if (!isFinite(everyNth) || everyNth <= 1) return 'not capping';
+  const fps = panelHz > 0 ? panelHz / everyNth : 0;
+  return `1 frame in ${everyNth} (${fps.toFixed(0)} fps)`;
+}
+
+/**
+ * Decide the gate.
+ *
+ * THE RULES, exactly:
+ *
+ *   1. A MEASUREMENT THAT CANNOT BE USED changes nothing. The gate
+ *      in force stays, and the reason says the measurement was not
+ *      usable — a readout that guesses is worse than no readout.
+ *   2. Otherwise the target is the EXISTING policy: the highest rate
+ *      that is both no greater than the display's and no greater than
+ *      the engine's sustainable rate, landing evenly on the display's
+ *      grid. The pacer can never ask for more than the engine
+ *      sustains; that is `chooseFrameCap`'s contract and it does not
+ *      change.
+ *   3. A WARM-UP WINDOW NEVER MOVES AN EXISTING GATE. If there is no
+ *      gate yet, the target is adopted as a PROVISIONAL one — the
+ *      player gets protection from judder in the first seconds, and
+ *      the readout says the decision was provisional.
+ *   4. A SETTLED WINDOW may move the gate:
+ *        - the same gate: kept, and the provisional flag cleared;
+ *        - a WIDER gate: adopted immediately, UNLESS more than 5% of
+ *          the engine's frames arrived late — then it is REFUSED,
+ *          because the engine is already missing its slots;
+ *        - a NARROWER gate: adopted only when two consecutive
+ *          windows have asked for it.
+ */
+export function decideFrameGate(input: FrameGateInput): FrameGateDecision {
+  const current = Math.max(1, Math.round(input.currentEveryNth || 1));
+  const currentProvisional = input.currentProvisional === true;
+  const currentForced = input.currentForced === true;
+  const currentFps = input.panelHz > 0 ? input.panelHz / current : 0;
+
+  // --- RULE 1: a measurement that cannot be used ------------------------
+  const noPanel = !isFinite(input.panelHz) || input.panelHz <= 0;
+  const noCost = !isFinite(input.engineWorkMs) || input.engineWorkMs <= 0;
+  if (noPanel || noCost) {
+    const why =
+      noPanel && noCost
+        ? "the display's rate and the engine's frame cost are both unknown"
+        : noPanel
+          ? "the display's rate is unknown"
+          : "the engine's frame cost is unknown";
+    return {
+      everyNth: current,
+      capFps: currentFps,
+      changed: false,
+      provisional: currentProvisional,
+      targetEveryNth: current,
+      targetFps: currentFps,
+      reason:
+        `the measurement was not usable (${why}); ` +
+        `the existing gate is left in place (${describeGate(current, input.panelHz)})`,
+    };
+  }
+
+  // --- RULE 2: the target, from the existing policy ---------------------
+  const target = computeFrameTarget(input.panelHz, input.engineWorkMs);
+  const sustainable = target.sustainableFps;
+  const targetEveryNth = target.everyNth;
+  const targetFps = target.fps;
+  const measured =
+    `the engine costs ${input.engineWorkMs.toFixed(2)} ms a frame ` +
+    `(${sustainable.toFixed(0)} fps) against a ${input.panelHz.toFixed(0)} Hz display`;
+  const targetText = describeGate(targetEveryNth, input.panelHz);
+
+  // --- A FORCED GATE IS NOT THE POLICY'S TO MOVE -------------------------
+  if (currentForced) {
+    return {
+      everyNth: current,
+      capFps: currentFps,
+      changed: false,
+      provisional: currentProvisional,
+      targetEveryNth: current,
+      targetFps: currentFps,
+      reason:
+        `the gate was forced to ${describeGate(current, input.panelHz)} by the ` +
+        `measurement harness, so the policy leaves it alone`,
+    };
+  }
+
+  // --- RULE 3: a warm-up window -----------------------------------------
+  if (!input.settled) {
+    if (current <= 1) {
+      // No gate yet: adopt the target as a PROVISIONAL one, so the
+      // player is protected from judder in the first seconds.
+      return {
+        everyNth: targetEveryNth,
+        capFps: targetFps,
+        changed: targetEveryNth !== current,
+        provisional: true,
+        targetEveryNth,
+        targetFps,
+        reason:
+          `${measured} -> ${targetText}; the reading is PROVISIONAL ` +
+          `(the engine is still warming up, so the cost will come down)`,
+      };
+    }
+    // A PROVISIONAL gate may follow the latest warm-up reading.
+    //
+    // A provisional gate was taken from the least trustworthy reading
+    // the engine will ever produce -- the warm-up window, while it
+    // compiles shaders and streams the map -- and it cannot move again
+    // until the first settled window, which is 15-20 seconds into a
+    // match. The player would sit on the warm-up's gate for the whole
+    // of it.
+    //
+    // A gate that has been SETTLED may not move on a warm-up reading.
+    // That is the rule that stops the pacer chasing the engine around.
+    if (currentProvisional) {
+      return {
+        everyNth: targetEveryNth,
+        capFps: targetFps,
+        changed: targetEveryNth !== current,
+        provisional: true,
+        targetEveryNth,
+        targetFps,
+        reason:
+          `${measured} -> ${targetText}; the gate is still PROVISIONAL, so it ` +
+          `follows the latest warm-up reading`,
+      };
+    }
+    // A gate is already in force: it stays, whatever the warm-up
+    // reading says.
+    return {
+      everyNth: current,
+      capFps: currentFps,
+      changed: false,
+      provisional: currentProvisional,
+      targetEveryNth,
+      targetFps,
+      reason:
+        `${measured} -> ${targetText}; the window is still inside the ` +
+        `engine's warm-up, so the gate in force ` +
+        `(${describeGate(current, input.panelHz)}) is left in place`,
+    };
+  }
+
+  // --- RULE 4: a settled window -----------------------------------------
+  if (targetEveryNth === current) {
+    // The settled reading CONFIRMS the gate, so it is no longer
+    // provisional.
+    return {
+      everyNth: current,
+      capFps: currentFps,
+      changed: false,
+      provisional: false,
+      targetEveryNth,
+      targetFps,
+      reason:
+        `${measured} -> ${targetText}; the settled reading confirms the gate`,
+    };
+  }
+
+  // THE DEADBAND: A GATE DOES NOT MOVE FOR A MARGINAL CHANGE --------
+  //
+  // The gate in force was chosen for a particular sustainable rate.
+  // The engine's sustainable rate has to move away from that by more
+  // than the band before the gate follows it.
+  //
+  // Without this, the gate flips on a change of a percent or two: the
+  // sustainable rate crosses the display's own rate at 7.083 ms of
+  // frame cost on a 120 Hz panel, and the widening being immediate
+  // while the narrowing needs two windows, the frame rate pumps
+  // between one frame in one and one frame in two every half minute.
+  //
+  // A REAL change in the engine's cost -- a firefight, a different
+  // part of the map -- moves the sustainable rate far more than the
+  // band, and the gate follows it then.
+  //
+  // THE BAND ONLY EXISTS WHEN THE BASIS IS KNOWN. Before the first
+  // decision there is no basis, and the first decision is free to move
+  // the gate: otherwise the gate could never be set at all.
+  const consecutive = Math.max(0, Math.round(input.consecutiveSame || 0));
+
+  if (targetEveryNth < current) {
+    // WIDER: more frames.
+    const lateFraction = isFinite(input.lateFraction) ? Math.max(0, input.lateFraction) : 0;
+    if (lateFraction > LATE_FRACTION_LIMIT) {
+      // THE MOST IMPORTANT RULE IN THE FEATURE.
+      //
+      // The engine is already missing its slots. Asking it for more
+      // frames would make the judder WORSE, so the gate stays exactly
+      // where it is.
+      const pct = (lateFraction * 100).toFixed(0);
+      return {
+        everyNth: current,
+        capFps: currentFps,
+        changed: false,
+        provisional: currentProvisional,
+        targetEveryNth,
+        targetFps,
+        reason:
+          `${measured} -> ${targetText}; the engine is already missing its ` +
+          `slots (${pct}% of its frames arrived late), so the gate is NOT ` +
+          `widened — asking for more frames would make the judder worse`,
+      };
+    }
+    // TWO CONSECUTIVE SETTLED WINDOWS, IN BOTH DIRECTIONS.
+    //
+    // A gate that widens on the first window and narrows only on the
+    // second ratchets: any flicker in the target opens the gate, and a
+    // flicker back does not close it. Requiring two consecutive SETTLED
+    // windows in both directions means a target that flickers never
+    // moves the gate, while a change that PERSISTS does -- and a
+    // persistent improvement is a 2x frame rate on a 120 Hz panel.
+    if (consecutive < GATE_CONSECUTIVE_WINDOWS) {
+      return {
+        everyNth: current,
+        capFps: currentFps,
+        changed: false,
+        provisional: currentProvisional,
+        targetEveryNth,
+        targetFps,
+        reason:
+          `${measured} -> ${targetText}; only ${consecutive} settled window` +
+          `${consecutive === 1 ? '' : 's'} in a row have asked for it, so the ` +
+          `gate in force (${describeGate(current, input.panelHz)}) is left in place`,
+      };
+    }
+    if (targetEveryNth <= 1) {
+      return {
+        everyNth: targetEveryNth,
+        capFps: targetFps,
+        changed: true,
+        provisional: false,
+        targetEveryNth,
+        targetFps,
+        reason:
+          `${measured} -> ${targetText}; the engine keeps up with the ` +
+          `display, so the gate comes off`,
+      };
+    }
+    return {
+      everyNth: targetEveryNth,
+      capFps: targetFps,
+      changed: true,
+      provisional: false,
+      targetEveryNth,
+      targetFps,
+      reason:
+        `${measured} -> ${targetText}; the engine is landing its frames on ` +
+        `time, so the gate widens`,
+    };
+  }
+
+  // NARROWER: fewer frames.
+  //
+  // AND THE COST HAS TO BE PAST THE THRESHOLD, not merely past the
+  // measurement noise.
+  //
+  // The threshold for this step is the cost at which the rate the target
+  // asks for stops being sustainable -- 850 * everyNth / panelHz -- and
+  // the physical one is the slot itself, 1000 / panelHz. The gate
+  // closes when the cost is past the EASIER of the two, by more than the
+  // hysteresis: the gate is meant to be closed by a real change, not by
+  // the measurement.
+  const capThreshold = (850 * targetEveryNth) / input.panelHz;
+  const slotThreshold = 1000 / input.panelHz;
+  const threshold = Math.min(capThreshold, slotThreshold);
+  if (input.engineWorkMs < threshold * (1 + NARROW_COST_HYSTERESIS)) {
+    return {
+      everyNth: current,
+      capFps: currentFps,
+      changed: false,
+      provisional: currentProvisional,
+      targetEveryNth,
+      targetFps,
+      reason:
+        `${measured} -> ${targetText}; the engine's cost has not yet passed ` +
+        `the ${threshold.toFixed(2)} ms threshold for that gate, so the gate ` +
+        `in force (${describeGate(current, input.panelHz)}) is left in place`,
+    };
+  }
+
+  if (consecutive < GATE_CONSECUTIVE_WINDOWS) {
+    return {
+      everyNth: current,
+      capFps: currentFps,
+      changed: false,
+      provisional: currentProvisional,
+      targetEveryNth,
+      targetFps,
+      reason:
+        `${measured} -> ${targetText}; waiting for a second window before ` +
+        `narrowing the gate — one expensive window must not halve the ` +
+        `player's frame rate`,
+    };
+  }
+  return {
+    everyNth: targetEveryNth,
+    capFps: targetFps,
+    changed: true,
+    provisional: false,
+    targetEveryNth,
+    targetFps,
+    reason:
+      `${measured} -> ${targetText}; the cost has been high for ` +
+      `${consecutive} windows in a row, so the gate narrows`,
+  };
 }

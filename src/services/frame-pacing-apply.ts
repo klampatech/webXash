@@ -101,36 +101,78 @@
  * to get wrong than a few microseconds per frame.
  */
 import {
-  chooseFrameCap,
+  computeFrameTarget,
+  decideFrameGate,
   frameIntervalMs,
   isLate,
-  shouldCap,
   sustainableFps,
-  type FrameCap,
 } from './frame-pacing.ts';
+
+/**
+ * HOW LONG THE ENGINE IS GIVEN TO WARM UP.
+ *
+ * FIFTEEN SECONDS, measured from the engine's FIRST FRAME.
+ *
+ * WHY THE NUMBER IS A PARAMETER AND NOT A LAW
+ * -------------------------------------------
+ * The research (`docs/CLIENT-PERF-RESEARCH.md`) measured the engine's
+ * frame cost settling over 25-30 seconds: the first window is the
+ * most expensive one the engine will ever produce, because it is
+ * compiling shaders and streaming the map.
+ *
+ * Thirty seconds would leave the first half-minute of a match on a
+ * provisional cap, which is a long time to be wrong in public. Fifteen
+ * is where the curve has flattened enough for the median to be
+ * representative, and the policy's own 0.85 safety factor covers the
+ * rest: a cost measured 15% too low still leaves the engine inside
+ * its budget.
+ *
+ * It is a constant so it can be named, tested and changed in one
+ * place — and it is a PARAMETER of `applyFrameCap`, so a measurement
+ * can be taken with the warm-up turned off.
+ */
+export const WARMUP_MS = 15000;
+
+/**
+ * HOW LONG A MEASUREMENT WINDOW IS.
+ *
+ * TWO SECONDS. Long enough to hold a couple of hundred frames on a
+ * fast display, short enough that the cost it reports is about NOW
+ * and not about ten seconds ago.
+ */
+const OBSERVE_MS = 2000;
 
 /** What the pacer decided, for the log and the diagnostics. */
 export interface PacingState {
   /** The cap in force, in frames per second. 0 = no cap. */
   capFps: number;
   /**
-   * The measured refresh rate the browser is delivering RIGHT NOW.
+   * The rate the BROWSER is delivering ticks at, right now.
    *
-   * This is the rate the GAME is achieving, which is NOT the same
-   * thing as the display's rate when the engine cannot keep up: the
-   * browser then misses vsyncs and this drops. It is the honest
-   * answer to "how many frames a second is the game drawing", and the
-   * readout shows it beside `panelHz`.
+   * This is the browser's own tick rate, measured from the intervals
+   * between the ticks. It is NOT the rate the game is drawing at: the
+   * browser keeps ticking at full speed while the engine draws every
+   * Nth tick, so with a cap in force these two numbers say different
+   * things. The game's own rate is `engineFps`.
    */
-  displayHz: number;
+  browserHz: number;
   /**
    * The DISPLAY's refresh rate, measured while the page was idle.
    *
    * This is the one the cap decision uses. It is measured separately
-   * because the live rate above is contaminated by the engine's own
-   * work — see the note on `measureIdleDisplayHz`.
+   * because the live tick rate is contaminated by the engine's own
+   * work -- see the note on `measureIdleDisplayHz`.
    */
   panelHz: number;
+  /**
+   * The rate the GAME is drawing frames at.
+   *
+   * MEASURED DIRECTLY, from the engine's own frame starts. This is the
+   * number the readout's "the game was drawing N fps" uses, and it is
+   * the reason the readout stopped confusing the browser's tick rate
+   * with the game's frame rate.
+   */
+  engineFps: number;
   /** The engine's measured per-frame cost, in milliseconds. */
   engineWorkMs: number;
   /** The frame rate the engine can sustain. */
@@ -146,23 +188,66 @@ export interface PacingState {
   /** How many display ticks per engine frame. 1 = every tick. */
   everyNth: number;
   /**
-   * How many display ticks arrived LATE in the measurement window --
-   * the browser dropped a frame to catch up.
+   * Is the gate in force a PROVISIONAL decision?
    *
-   * This is the unevenness the cap exists to remove, counted rather
-   * than described.
+   * True when the gate was taken from a warm-up reading -- the first
+   * seconds of the match, before the engine had settled. The readout
+   * says so, because a provisional number is not a measurement of the
+   * machine; it is a measurement of the engine warming up.
    */
-  lateTicks: number;
+  provisional: boolean;
   /**
-   * How many display ticks the measurement window saw.
+   * How many of the ENGINE's frames arrived LATE in the measurement
+   * window -- the game did not land in its slot.
    *
-   * `lateTicks` on its own is a count with nothing to be a fraction
-   * OF, so a window that saw 10 ticks and a window that saw 1000
+   * THIS COUNTS THE ENGINE'S FRAMES, NOT THE BROWSER'S TICKS. The old
+   * metric counted tick gaps over 1.5x the tick budget, which with a
+   * cap engaged read a quarter of the ticks as "late" even when the
+   * game was perfectly paced -- because the engine's frame overruns
+   * the tick it started on. The metric that answers "is the judder
+   * gone" is the ENGINE's frame spacing against the GATE's period.
+   */
+  lateFrames: number;
+  /**
+   * How many of the ENGINE's frames the measurement window saw.
+   *
+   * `lateFrames` on its own is a count with nothing to be a fraction
+   * OF, so a window that saw 10 frames and a window that saw 1000
    * would report the same number for the same problem. This is the
    * denominator, and it is what makes "8% of frames arrived late" a
    * statement about the client rather than about the window length.
    */
-  measuredTicks: number;
+  measuredFrames: number;
+  /**
+   * The fraction of the engine's frames that arrived late, 0..1.
+   *
+   * This is the number the policy's widening rule reads: above 5%, the
+   * engine is already missing its slots and the gate must not be
+   * widened.
+   */
+  lateFraction: number;
+  /**
+   * When the measurement window closed, in epoch milliseconds.
+   *
+   * The readout says when the numbers were measured, so a player can
+   * tell a reading taken in the first seconds of a match from one
+   * taken a minute in.
+   */
+  measuredAt: number;
+  /**
+   * Was that window past the engine's warm-up?
+   *
+   * False means the reading describes the engine WARMING UP, not the
+   * machine. The readout says which it is.
+   */
+  settled: boolean;
+  /**
+   * When the engine's FIRST FRAME was, in epoch milliseconds.
+   *
+   * The warm-up is measured from here, and it is what lets the
+   * readout say "measured 32 seconds into your game".
+   */
+  gameStartAt: number;
   /** Why. */
   reason: string;
 }
@@ -175,24 +260,36 @@ export interface PacingState {
  */
 interface PacingCore {
   capFps: number;
-  displayHz: number;
+  browserHz: number;
   panelHz: number;
+  engineFps: number;
   engineWorkMs: number;
   sustainableFps: number;
-  lateTicks: number;
-  measuredTicks: number;
+  provisional: boolean;
+  lateFrames: number;
+  measuredFrames: number;
+  lateFraction: number;
+  measuredAt: number;
+  settled: boolean;
+  gameStartAt: number;
   reason: string;
 }
 
 /** The pacer singleton's state. Read by the diagnostics. */
 let core: PacingCore = {
   capFps: 0,
-  displayHz: 0,
+  browserHz: 0,
   panelHz: 0,
+  engineFps: 0,
   engineWorkMs: 0,
   sustainableFps: 0,
-  lateTicks: 0,
-  measuredTicks: 0,
+  provisional: false,
+  lateFrames: 0,
+  measuredFrames: 0,
+  lateFraction: 0,
+  measuredAt: 0,
+  settled: false,
+  gameStartAt: 0,
   reason: 'not measured yet',
 };
 
@@ -426,8 +523,72 @@ interface CallbackStats {
    * for why the median and not the mean.
    */
   samples: number[];
+  /**
+   * The recent frame STARTS of this callback, in performance-clock
+   * milliseconds.
+   *
+   * The gaps between them are the ENGINE's frame spacing, which is
+   * what the late-frame metric measures and what the engine's own
+   * frame rate is counted from. The browser's tick rate cannot answer
+   * either question: with the gate in force the browser keeps ticking
+   * at the panel's rate while the engine draws every Nth tick, so the
+   * two numbers say different things.
+   *
+   * The starts are recorded from the clock reading the shim already
+   * takes around every callback, so this costs NO extra clock read --
+   * which matters, because the parent's fake-clock harness counts
+   * those reads to keep its samples deterministic.
+   */
+  starts: number[];
 }
 const stats = new Map<unknown, CallbackStats>();
+
+/**
+ * WHEN EACH CALLBACK WAS FIRST SEEN.
+ *
+ * The engine's TRUE first frame is what the warm-up is measured from,
+ * and the first frame happens long before the first measurement
+ * window closes -- so this map is NOT cleared between windows. Only
+ * the one-shot callbacks (the app's spinner, the key-binding calls)
+ * are pruned, and they are pruned because they will never be seen
+ * again.
+ */
+interface FirstSeen {
+  /** The performance-clock timestamp of the first frame. */
+  perf: number;
+  /** The same moment, in epoch milliseconds. */
+  epoch: number;
+}
+const firstSeen = new Map<unknown, FirstSeen>();
+
+/**
+ * The engine's first frame, in epoch milliseconds.
+ *
+ * 0 until the engine's callback has been identified.
+ */
+let gameStartAtMs = 0;
+
+/**
+ * The last target gate a window asked for, and how many windows in a
+ * row have asked for it.
+ *
+ * THE COUNTER INCLUDES THE CURRENT WINDOW: the first window that
+ * asks for a narrower gate counts as 1, and the second window that
+ * asks for the same one counts as 2 -- which is what lets the policy
+ * narrow the gate on the second window and not on the first.
+ */
+let lastTargetEveryNth: number | null = null;
+let consecutiveSame = 0;
+/**
+ * WAS THE GATE IN FORCE FORCED BY THE HARNESS?
+ *
+ * A forced gate is the measurement harness's: it wants to see what a
+ * particular cap does, so the policy does not get to move it. The flag
+ * survives until the next policy decision, which is when the policy
+ * sees it.
+ */
+let forcedGate = false;
+
 
 /**
  * How many recent samples to keep per callback.
@@ -442,9 +603,6 @@ const MAX_SAMPLES = 240;
 const intervals: number[] = [];
 let lastTickAt = 0;
 
-/** How long to observe before deciding. */
-const OBSERVE_MS = 2000;
-
 /**
  * Record one callback's duration.
  *
@@ -452,16 +610,45 @@ const OBSERVE_MS = 2000;
  * IS its frame -- input, simulation and rendering all happen inside
  * it. So timing it measures the thing the cap is supposed to fit
  * inside the display's frame budget.
+ *
+ * The START is the frame's position on the clock, and the gaps
+ * between the starts are the engine's frame spacing.
  */
-function noteCallback(cb: unknown, durationMs: number): void {
+function noteCallback(cb: unknown, startedAt: number, durationMs: number): void {
   let s = stats.get(cb);
   if (!s) {
-    s = { calls: 0, samples: [] };
+    s = { calls: 0, samples: [], starts: [] };
     stats.set(cb, s);
   }
   s.calls++;
   s.samples.push(durationMs);
+  s.starts.push(startedAt);
   if (s.samples.length > MAX_SAMPLES) s.samples.shift();
+  if (s.starts.length > MAX_SAMPLES) s.starts.shift();
+  if (!firstSeen.has(cb)) {
+    firstSeen.set(cb, { perf: startedAt, epoch: epochFromPerf(startedAt) });
+  }
+}
+
+/**
+ * A performance-clock timestamp, in epoch milliseconds.
+ *
+ * `performance.timeOrigin` is the browser's own epoch for the
+ * performance clock, so adding the timestamp to it gives the same
+ * instant on both clocks without reading the clock again -- and NOT
+ * reading the clock again matters, because every extra read moves
+ * the parent's fake clock and changes the samples it collects.
+ *
+ * Where there is no time origin (the fake clock in the test harness),
+ * the wall clock is used instead.
+ */
+function epochFromPerf(perfMs: number): number {
+  const origin =
+    typeof performance !== 'undefined'
+      ? (performance as unknown as { timeOrigin?: number }).timeOrigin
+      : undefined;
+  if (typeof origin === 'number' && isFinite(origin)) return origin + perfMs;
+  return Date.now();
 }
 
 /**
@@ -513,7 +700,7 @@ function onTick(time: number): void {
     } catch (e) {
       console.error('[frame-pacing] a frame callback threw:', e);
     }
-    noteCallback(cb, performance.now() - started);
+    noteCallback(cb, started, performance.now() - started);
   }
 
   // Keep the chain alive: if anything is still pending -- including the
@@ -609,6 +796,7 @@ export function uninstallFramePacing(): void {
   core = {
     ...core,
     capFps: 0,
+    provisional: false,
     reason: 'the frame-pacing shim was uninstalled; not capping',
   };
 }
@@ -616,26 +804,35 @@ export function uninstallFramePacing(): void {
 /**
  * The measurement, from the shim's own observations.
  *
- * `displayHz` is the refresh rate the browser is delivering, from the
- * median interval between display ticks.
+ * `browserHz` is the rate the BROWSER is delivering ticks at, from the
+ * median interval between the ticks.
  *
  * `engineWorkMs` is how long the engine's own callback takes -- the
  * engine's per-frame cost, measured directly, not inferred.
  *
- * `lateTicks` is how many display ticks arrived late -- the browser
- * dropped a frame to catch up. That is the unevenness this feature
- * exists to remove, counted.
+ * `engineFps` is how many frames the GAME is drawing, counted from
+ * the engine's own frame starts. It is NOT the browser's rate: with
+ * the gate in force the browser keeps ticking at the panel's rate
+ * while the engine draws every Nth tick.
+ *
+ * `lateFrames` is how many of the ENGINE's frames arrived late --
+ * measured against the GATE's period, so a game that is landing its
+ * frames on time reads zero even though the browser's ticks are
+ * uneven. That is the unevenness this feature exists to remove,
+ * counted where it happens.
  */
 export function readMeasurement(): {
-  displayHz: number;
+  browserHz: number;
   engineWorkMs: number;
-  lateTicks: number;
+  engineFps: number;
+  lateFrames: number;
+  measuredFrames: number;
 } {
-  // The refresh rate: the median interval between ticks.
-  let displayHz = 0;
+  // The browser's tick rate: the median interval between ticks.
+  let browserHz = 0;
   if (intervals.length >= 10) {
     const median = medianOf(intervals);
-    if (median > 0) displayHz = 1000 / median;
+    if (median > 0) browserHz = 1000 / median;
   }
 
   // The engine's cost: the callback with the most calls is the one
@@ -661,16 +858,44 @@ export function readMeasurement(): {
     engineWorkMs = medianOf(best.samples);
   }
 
-  // How many display ticks arrived LATE. The threshold is RELATIVE to
-  // the frame budget (see `isLate`), never a constant, so it is
-  // correct on a 165 Hz display as well as on a 60 Hz one.
-  const budget = frameIntervalMs(displayHz);
-  let lateTicks = 0;
-  for (const gap of intervals) {
-    if (isLate(gap, budget)) lateTicks++;
+  // The ENGINE's frame rate, counted from its own frame starts.
+  //
+  // NOT the browser's rate. The browser keeps ticking at the panel's
+  // rate while the engine draws every Nth tick, so with the gate in
+  // force the two numbers are a factor of N apart -- and only one of
+  // them is the frame rate the player is looking at.
+  const starts = best ? best.starts : [];
+  let engineFps = 0;
+  if (starts.length >= 2) {
+    const span = starts[starts.length - 1] - starts[0];
+    if (span > 0) engineFps = ((starts.length - 1) / span) * 1000;
   }
 
-  return { displayHz, engineWorkMs, lateTicks };
+  // How many of the ENGINE's frames arrived LATE.
+  //
+  // The threshold is RELATIVE to the GATE's period (see `isLate`),
+  // never a constant, so it is correct on a 165 Hz display as well as
+  // on a 60 Hz one. And it is measured against the GATE's period and
+  // not the browser's tick budget: with a 30 fps gate (a slot every
+  // 33.3 ms) and the engine's frames landing every 33.3 ms, the
+  // frames are NOT late. The old metric counted the BROWSER's tick
+  // gaps, which with a cap engaged read a quarter of the ticks as
+  // "late" even when the game was perfectly paced.
+  const panelHz = Math.max(browserHz, idleDisplayHz);
+  const gateFps = panelHz > 0 ? panelHz / Math.max(1, everyNth) : 0;
+  const budget = frameIntervalMs(gateFps);
+  let lateFrames = 0;
+  for (let i = 1; i < starts.length; i++) {
+    if (isLate(starts[i] - starts[i - 1], budget)) lateFrames++;
+  }
+
+  return {
+    browserHz,
+    engineWorkMs,
+    engineFps,
+    lateFrames,
+    measuredFrames: starts.length,
+  };
 }
 
 /**
@@ -703,15 +928,36 @@ export function wantsNoFrameCap(): boolean {
  * The measurement window is `observeMs`. Call it again later to
  * re-measure; the cap is recomputed and the gate adjusted.
  *
+ * THE WINDOW IS NEVER THE WHOLE STORY. The first window closes while
+ * the engine is still warming up, so the gate it produces is
+ * PROVISIONAL, and the caller keeps calling this function for the
+ * rest of the match. The policy in `frame-pacing.ts` decides what a
+ * window is allowed to do to the gate: a warm-up window never moves
+ * a gate that is already in force, a settled window may widen it
+ * when the engine's frames are landing on time, and may narrow it
+ * only after two windows in a row have asked for it.
+ *
  * `force` applies the cap even when the engine keeps up with the
  * display. That is for MEASUREMENT -- on a 60 Hz test box the engine
  * has twice the budget it needs, so the cap would never engage on its
  * own, and the point of measuring it is to see what it DOES.
+ * `everyNth` with it sets a SPECIFIC gate, for the same reason.
+ *
+ * `warmupMs` is the engine's warm-up, measured from its first frame.
+ * It is a parameter so a measurement can be taken with the warm-up
+ * turned off -- which is what the parent's test harness does when it
+ * wants a settled decision from a two-second window.
  */
 export async function applyFrameCap(
-  opts: { observeMs?: number; force?: boolean; everyNth?: number } = {},
+  opts: {
+    observeMs?: number;
+    force?: boolean;
+    everyNth?: number;
+    warmupMs?: number;
+  } = {},
 ): Promise<PacingState> {
   const observeMs = opts.observeMs ?? OBSERVE_MS;
+  const warmupMs = opts.warmupMs ?? WARMUP_MS;
 
   // The player can switch the cap OFF for their session. It is ON by
   // default, and this is the one thing that turns it off.
@@ -728,12 +974,18 @@ export async function applyFrameCap(
     everyNth = 1;
     core = {
       capFps: 0,
-      displayHz: 0,
+      browserHz: 0,
       panelHz: idleDisplayHz,
+      engineFps: 0,
       engineWorkMs: 0,
       sustainableFps: 0,
-      lateTicks: 0,
-      measuredTicks: 0,
+      provisional: false,
+      lateFrames: 0,
+      measuredFrames: 0,
+      lateFraction: 0,
+      measuredAt: 0,
+      settled: false,
+      gameStartAt: gameStartAtMs,
       reason: 'the frame cap is switched OFF for this session (?nocap=1)',
     };
     return getPacingState();
@@ -754,30 +1006,21 @@ export async function applyFrameCap(
 
   await new Promise((r) => setTimeout(r, observeMs));
 
-  const { displayHz, engineWorkMs, lateTicks } = readMeasurement();
+  const { browserHz, engineWorkMs, engineFps, lateFrames, measuredFrames } = readMeasurement();
+  const lateFraction = measuredFrames > 0 ? lateFrames / measuredFrames : 0;
   const sustainable = sustainableFps(engineWorkMs);
 
-  // If the window was empty, say so plainly. "0 fps against a 0 Hz
-  // display" reads like a fact about the display; it is actually a
-  // fact about the measurement having failed.
-  if (intervals.length < 10 || engineWorkMs <= 0) {
-    core = {
-      ...core,
-      displayHz,
-      panelHz: Math.max(displayHz, idleDisplayHz),
-      engineWorkMs,
-      lateTicks,
-      measuredTicks: intervals.length,
-      reason:
-        `the measurement window was empty ` +
-        `(${intervals.length} ticks, ${stats.size} callbacks seen) -- ` +
-        `the engine may not be running yet; ` +
-        (everyNth > 1
-          ? `the existing cap (1 frame in ${everyNth}) is left in place`
-          : `not capping`),
-    };
-    return getPacingState();
-  }
+  // THE DISPLAY'S RATE, NOT THE RATE THE GAME IS ACHIEVING.
+  //
+  // The live tick rate is the display's period PLUS the engine's
+  // work, so when the engine overruns the frame period the browser
+  // misses vsyncs and the live rate reads LOW. The idle measurement
+  // is the display's real rate. The cap has to be a divisor of THAT,
+  // or the frames it lets through do not land on the display's grid.
+  const panelHz = Math.max(browserHz, idleDisplayHz);
+
+  // WHEN THE WINDOW CLOSED, in epoch milliseconds.
+  const measuredAt = Date.now();
 
   // Identify the engine's callback: the one called most often.
   let bestCb: unknown = null;
@@ -794,61 +1037,175 @@ export async function applyFrameCap(
     engineCallback = bestCb;
   }
 
-  // THE DISPLAY'S RATE, NOT THE RATE THE GAME IS ACHIEVING.
-  //
-  // The live tick rate is the display's period PLUS the engine's
-  // work, so when the engine overruns the frame period the browser
-  // misses vsyncs and the live rate reads LOW. The idle measurement
-  // is the display's real rate. The cap has to be a divisor of THAT,
-  // or the frames it lets through do not land on the display's grid.
-  const panelHz = Math.max(displayHz, idleDisplayHz);
+  // THE ENGINE'S FIRST FRAME. The warm-up is measured from here, and
+  // it has to be the TRUE first frame -- the one from before the
+  // first measurement window -- not the first frame of this window.
+  const seen = firstSeen.get(engineCallback);
+  if (seen && (!gameStartAtMs || seen.epoch < gameStartAtMs)) {
+    gameStartAtMs = seen.epoch;
+  }
 
-  const need = opts.force || shouldCap(panelHz, sustainable);
-  if (!need) {
-    // THE GATE COMES OFF HERE. `everyNth` IS the gate, so setting it
-    // to 1 is what stops the engine being offered every second
-    // frame -- and the reported state is derived from it, so "not
-    // capping" cannot leave the engine at half speed while the log
-    // says it is running uncapped.
-    everyNth = 1;
+  // The one-shot callbacks are pruned: they will never be seen
+  // again, and the map is about the engine's frame, not about every
+  // callback the app has ever registered.
+  for (const cb of [...firstSeen.keys()]) {
+    if (cb !== engineCallback && !stats.has(cb)) firstSeen.delete(cb);
+  }
+
+  // IS THIS WINDOW PAST THE WARM-UP?
+  //
+  // The engine's cost falls over the first seconds of a match -- it
+  // is compiling shaders and streaming the map -- and a reading taken
+  // during that is a picture of the warm-up, not of the machine.
+  const ageMs = gameStartAtMs > 0 ? Math.max(0, measuredAt - gameStartAtMs) : 0;
+  const settled = gameStartAtMs > 0 && ageMs >= warmupMs;
+
+  // If the window was empty, say so plainly. "0 fps against a 0 Hz
+  // display" reads like a fact about the display; it is actually a
+  // fact about the measurement having failed.
+  if (intervals.length < 10 || engineWorkMs <= 0) {
     core = {
-      capFps: 0,
-      displayHz,
+      ...core,
+      browserHz,
       panelHz,
+      engineFps,
       engineWorkMs,
+      // THE GATE IN FORCE IS THE GATE IN FORCE.
+      //
+      // `core` is spread forward here, so `capFps` would be inherited
+      // from the previous window while `panelHz` moves on -- and the
+      // readout could then name a rate the gate no longer implies. It
+      // is derived from the gate, like every other path.
+      capFps: everyNth > 1 && panelHz > 0 ? panelHz / everyNth : 0,
       sustainableFps: sustainable,
-      lateTicks,
-      measuredTicks: intervals.length,
+      lateFrames,
+      measuredFrames,
+      lateFraction,
+      measuredAt,
+      settled,
+      gameStartAt: gameStartAtMs,
       reason:
-        `the engine sustains ${sustainable.toFixed(0)} fps against a ` +
-        `${panelHz.toFixed(0)} Hz display; not capping` +
-        (panelHz > displayHz + 1
-          ? ` (the game is delivering ${displayHz.toFixed(0)} fps)`
-          : ''),
+        `the measurement window was empty ` +
+        `(${intervals.length} ticks, ${stats.size} callbacks seen) -- ` +
+        `the engine may not be running yet; ` +
+        (everyNth > 1
+          ? `the existing cap (1 frame in ${everyNth}) is left in place`
+          : `not capping`),
     };
     return getPacingState();
   }
 
-  const cap: FrameCap = chooseFrameCap(panelHz, sustainable);
-  // `everyNth` may be given directly, to measure a specific cap.
-  everyNth = Math.max(
-    1,
-    opts.everyNth ?? Math.round(panelHz / Math.max(1, cap.fps)),
-  );
-  const effective = panelHz / everyNth;
+  // THE MEASUREMENT OVERRIDE: a SPECIFIC gate, applied directly.
+  //
+  // This is the A/B harness's business -- it wants to see what a
+  // particular cap does -- so it does not go through the policy and
+  // it does not touch the consecutive-window counter.
+  if (opts.force && opts.everyNth) {
+    everyNth = Math.max(1, Math.round(opts.everyNth));
+    // A FORCED GATE RESETS THE COUNTER.
+    //
+    // The counter is the policy's own history: how many consecutive
+    // settled windows have asked for the same target. A forced gate was
+    // not that policy's decision, so the history it would continue is
+    // not the policy's history.
+    lastTargetEveryNth = null;
+    consecutiveSame = 0;
+    forcedGate = true;
+    const forcedFps = panelHz > 0 ? panelHz / everyNth : 0;
+    core = {
+      capFps: everyNth > 1 ? forcedFps : 0,
+      browserHz,
+      panelHz,
+      engineFps,
+      engineWorkMs,
+      sustainableFps: sustainable,
+      // A forced gate is not a decision the policy made from a
+      // settled reading, so it is provisional by definition.
+      provisional: true,
+      lateFrames,
+      measuredFrames,
+      lateFraction,
+      measuredAt,
+      settled,
+      gameStartAt: gameStartAtMs,
+      reason:
+        `forced to one frame in ${everyNth} for measurement ` +
+        `(${forcedFps.toFixed(1)} fps, budget ` +
+        `${frameIntervalMs(forcedFps).toFixed(2)} ms)`,
+    };
+    return getPacingState();
+  }
+
+  // THE POLICY.
+  //
+  // The target gate comes from the existing policy -- the highest
+  // rate that is no greater than the display's and no greater than
+  // what the engine sustains -- and the hysteresis rules decide what
+  // the window is allowed to do with it.
+  const target = computeFrameTarget(panelHz, engineWorkMs);
+
+  // THE CONSECUTIVE-WINDOW COUNTER.
+  //
+  // The count INCLUDES this window: the first window that asks for a
+  // narrower gate is 1, and the second window that asks for the same
+  // one is 2 -- which is what lets the policy narrow on the second
+  // window and not on the first.
+  // THE COUNTER COUNTS SETTLED WINDOWS ONLY.
+  //
+  // A warm-up reading is the least trustworthy one the engine will ever
+  // produce, and the policy treats it as untrustworthy everywhere else --
+  // it cannot move a gate in force. Counting it here would let the first
+  // settled window narrow the gate on the strength of two WARM-UP
+  // readings, which is exactly what the rule is against.
+  if (settled) {
+    if (lastTargetEveryNth === target.everyNth) {
+      consecutiveSame += 1;
+    } else {
+      lastTargetEveryNth = target.everyNth;
+      consecutiveSame = 1;
+    }
+  }
+
+  const decision = decideFrameGate({
+    panelHz,
+    engineWorkMs,
+    currentEveryNth: everyNth,
+    settled,
+    consecutiveSame,
+    lateFraction,
+    currentProvisional: core.provisional,
+    currentForced: forcedGate,
+  });
+  forcedGate = false;
+
+  // THE GATE IS THE GATE. `everyNth` IS what the shim enforces, and
+  // the reported state is derived from it, so the state cannot say
+  // "not capping" while the engine is still being offered every
+  // second frame.
+  everyNth = decision.everyNth;
+  const effective = everyNth > 1 && panelHz > 0 ? panelHz / everyNth : 0;
 
   core = {
     capFps: effective,
-    displayHz,
+    browserHz,
     panelHz,
+    engineFps,
     engineWorkMs,
     sustainableFps: sustainable,
-    lateTicks,
-    measuredTicks: intervals.length,
+    provisional: decision.provisional,
+    lateFrames,
+    measuredFrames,
+    lateFraction,
+    measuredAt,
+    settled,
+    gameStartAt: gameStartAtMs,
     reason:
-      `${cap.reason}; the engine runs 1 frame in ${everyNth} ` +
-      `(effective ${effective.toFixed(1)} fps, budget ` +
-      `${frameIntervalMs(effective).toFixed(2)} ms)`,
+      decision.reason +
+      (everyNth > 1
+        ? `; the gate is one frame in ${everyNth} ` +
+          `(effective ${effective.toFixed(1)} fps, budget ` +
+          `${frameIntervalMs(effective).toFixed(2)} ms)`
+        : '; not capping'),
   };
   return getPacingState();
 }

@@ -439,6 +439,47 @@ const WINDOW_ARGS = ['-windowed', ...DEFAULT_ARGS];
 const FULLSCREEN_ARGS = ['-fullscreen', ...DEFAULT_ARGS];
 const CONSOLE_ARG = '-console';
 
+/**
+ * HOW OFTEN THE PACER MEASURES, AFTER THE FIRST READING.
+ *
+ * TEN SECONDS, for the rest of the match.
+ *
+ * WHY IT KEEPS MEASURING
+ * ----------------------
+ * The pacer used to decide ONCE, three seconds after the engine
+ * booted, from a two-second window, and never look again. Three
+ * things make that number wrong for most of a match:
+ *
+ *   - the engine WARMING UP: the first window is the most expensive
+ *     one it will ever produce, because it is compiling shaders and
+ *     streaming the map;
+ *   - the SCENE: the server rotates the map every three minutes, and
+ *     what is on screen moves the engine's cost with it;
+ *   - the MACHINE: a laptop that throttles, a browser tab that was
+ *     in the background, a charger that was unplugged.
+ *
+ * A one-shot number cannot be right for a match.
+ *
+ * WHY IT DOES NOT OVERLAP
+ * -----------------------
+ * `applyFrameCap` is async -- it waits out its own measurement window
+ * -- so the next one is scheduled only after the previous one has
+ * come back. Two windows measuring at once would have them writing
+ * the same state, and the second one's numbers would be the first
+ * one's leftovers.
+ */
+const REMEASURE_MS = 10000;
+
+/**
+ * HOW LONG AFTER BOOT THE FIRST MEASUREMENT IS TAKEN.
+ *
+ * THREE SECONDS, as before. The player must not judder in the first
+ * seconds of a match, so the first reading is taken early and is
+ * PROVISIONAL: it protects the player while the engine warms up, and
+ * the settled readings that follow are the ones that decide.
+ */
+const FIRST_MEASURE_MS = 3000;
+
 const onBeforeUnload = (event: Event) => {
   // The deliberate reconnect sets this flag: it is navigating on
   // purpose, and a confirmation dialog in front of the recovery is
@@ -1794,19 +1835,38 @@ class XashLoader {
     // refresh rate from the tick intervals. If the engine keeps up,
     // nothing is gated at all.
     //
-    // It runs on a delay so the engine is warm -- the first frames
-    // after boot include shader compilation and map streaming, and
-    // capping on those would be measuring the wrong thing.
-    setTimeout(() => {
-      void applyFrameCap()
-        .then((s) => {
+    // IT MEASURES EARLY, AND THEN IT KEEPS MEASURING.
+    //
+    // The first reading is taken three seconds in, so the player is
+    // protected from judder in the first seconds -- but that reading
+    // is PROVISIONAL, because the engine is still warming up and the
+    // first window is the most expensive one it will ever produce.
+    // Every ten seconds after that, for the rest of the match, the
+    // pacer measures again: the engine's cost moves with the scene,
+    // the machine, and the browser, and a one-shot number cannot be
+    // right for a match.
+    //
+    // The settled reading -- the one taken past the engine's warm-up
+    // -- is what is allowed to move the gate, and it moves it only
+    // when the evidence supports it (see `decideFrameGate`).
+    //
+    // THE MEASUREMENTS DO NOT OVERLAP: the next one is scheduled
+    // after the previous one has come back.
+    window.setTimeout(() => {
+      const measure = async () => {
+        try {
+          const s = await applyFrameCap();
           logDebug(`[frame-pacing] ${s.reason}`);
           console.log('[frame-pacing]', s.reason);
-        })
-        .catch((e) => {
+        } catch (e) {
           console.warn('[frame-pacing] the measurement failed:', e);
-        });
-    }, 3000);
+        }
+        window.setTimeout(() => {
+          void measure();
+        }, REMEASURE_MS);
+      };
+      void measure();
+    }, FIRST_MEASURE_MS);
   }
 
   public static removeReloadListener() {
