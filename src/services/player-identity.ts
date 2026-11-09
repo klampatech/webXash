@@ -31,24 +31,60 @@
 // wrong was that it never FOCUSED its input, so the keystrokes never
 // went into the field at all (see XashOptionsOverlay.vue).
 //
-// THE CAVEAT — READ THIS BEFORE PROMISING A MODEL CHOICE
-// --------------------------------------------------------
-// `model` is a USERINFO cvar, so the server sees it on the next
+// THE MODEL NAME IS CASE-SENSITIVE, AND THAT IS THE WHOLE BATTLE
+// ---------------------------------------------------------------
+// The engine resolves a player model as
+// `models/player/<name>/<name>.mdl` — the name goes into the path
+// VERBATIM, with no case folding and no normalisation:
+//
+//   R_StudioSetupPlayerModel, ref/gl/gl_studio.c (xash3d-fwgs)
+//     Q_snprintf( state->modelname, sizeof( state->modelname ),
+//                 "models/player/%s/%s.mdl", info->model, info->model );
+//
+// The mod's directories are `Bodysaver`, `Spetsnaz` and `SpeziClaus` —
+// capitalised — and the archive is unpacked into a case-sensitive
+// filesystem. So `setinfo model "bodysaver"` asks for a file that does
+// not exist, the model fails to load, and the engine SILENTLY falls back
+// to the default player model: the player picks a character and gets
+// somebody else, with nothing on screen to say why.
+//
+// Nothing lowercases the name on the way. The client sends the cvar
+// value as it is (`Cvar_UpdateInfo` -> `CL_UpdateInfo` -> `setinfo
+// "model" "<value>"`), the server stores the string as it is
+// (`SV_SetInfo_f` -> `Info_SetValueForKey`), and the client resolves
+// the path from the string it gets back (`SV_FullClientUpdate` ->
+// `svc_updateuserinfo` -> `player->model`). EVERY hop is verbatim.
+//
+// So the list below carries the model names EXACTLY as the mod ships
+// them, and `canonicalModel` is the one place that maps a name the
+// player (or a stale localStorage entry) might have typed back to the
+// spelling the engine will resolve.
+//
+// THE SERVER KEEPS THE CHOICE — MEASURED, NOT ASSUMED
+// -----------------------------------------------------
+// The `model` key is a USERINFO cvar, so the server sees it on the next
 // userinfo update. Whether the server KEEPS it is the server's
-// decision, and TS 3.0's ruleset resets it:
+// decision, and under TS 3.0's ruleset it depends on the GAME MODE:
 //
 //   crates/server/src/rules/lifecycle.rs :: multiplay_userinfo_changed
 //     — a `model` that differs from the team name and is not one of the
 //       nine HLDM models is ALLOWED through, unchanged.
 //   crates/server/src/rules/teams.rs :: userinfo_changed
-//     — with a team limit and the 3.0 ruleset, the model key is REPLACED
-//       with `model_for(&team)` — a RANDOM model from that team's list.
+//     — only reached in TEAMPLAY. With a team limit and the 3.0
+//       ruleset, the model key is REPLACED with `model_for(&team)` — a
+//       RANDOM model from that team's list.
 //
-// The live server runs `mp_teamlist "team1;team2;team3;team4"` with
-// `mp_teammodels "seal;merc|gordon;laurence|agent|hitman;castor"`, so
-// the model a player ends up with is chosen by the server from their
-// team's list. The browser can ASK for a model; whether the server
-// grants it depends on the ruleset the server is running.
+// The live server runs `mp_teamplay 0` (deathmatch) — read from
+// production over RCON on 2026-11-09 — so `state::teamplay()` is false
+// and `teams::userinfo_changed` never runs. The player's choice is
+// KEPT. None of TS's sixteen characters is one of the nine HLDM models
+// (`barney`, `gina`, `gman`, `helmet`, `hgrunt`, `recon`, `robo`,
+// `scientist`, `zombie`) and `mp_defaultteam` is 0, so
+// `multiplay_userinfo_changed` leaves the model alone.
+//
+// IF THE SERVER EVER TURNS TEAMPLAY ON, the choice is discarded and
+// replaced with a random model from the player's team. That is the
+// server's ruleset, not the client's, and the client cannot change it.
 //
 // This module therefore reports what the CLIENT knows, and never claims
 // the server agreed. `applyModel` returns whether the client-side cvar
@@ -56,9 +92,16 @@
 //
 // THE MODEL LIST
 // --------------
-// The models are TS's own, and the list is the server's
-// `mp_teammodels` value, split on `|`. It is kept here as data so the
-// picker and the launch-argument builder cannot disagree about it.
+// TS's mod ships SEVENTEEN model directories and SIXTEEN usable
+// characters. The seventeenth is `ala`, which ships as
+// `models/player/ala/ala2.mdl`: the engine resolves a player model as
+// `models/player/<name>/<name>.mdl`, so the name "ala" resolves to a
+// file that does not exist and the engine falls back to the default
+// player model. There is no such character in the game.
+//
+// The list is kept here as data so the picker, the launch-argument
+// builder and the model setter cannot disagree about it. The order is
+// alphabetical, case-insensitively, so the picker reads as a roster.
 
 import { ref, computed } from 'vue';
 import XashLoader from '/@/services/xash-loader';
@@ -66,22 +109,54 @@ import { readCvar } from '/@/services/engine-cvars';
 import { logDebug } from '/@/services/debug-log';
 
 /**
- * TS's player models, grouped by the team that owns them.
+ * Every character the player can choose, in the mod's own spelling.
  *
- * The groups come from the server's `mp_teammodels` cvar, which is
- * `team1;team2|...`-separated: `seal;merc|gordon;laurence|agent|hitman;castor`.
- * The teams are `team1`..`team4`, and each pipe-separated group is one
- * team's models.
+ * The CASE IS PART OF THE VALUE — see the note at the top of this file.
+ * `Bodysaver`, `Spetsnaz` and `SpeziClaus` are capitalised in the
+ * asset tree, and the engine puts this string straight into a file
+ * path.
  */
-export const TS_MODEL_GROUPS: readonly (readonly string[])[] = [
-  ['seal', 'merc'],
-  ['gordon', 'laurence'],
-  ['agent'],
-  ['hitman', 'castor'],
+export const TS_MODELS: readonly string[] = [
+  'agent',
+  'agentsmith',
+  'Bodysaver',
+  'castor',
+  'dude',
+  'gordon',
+  'hitman',
+  'jesus',
+  'laurence',
+  'merc',
+  'niobe',
+  'sandman',
+  'seal',
+  'seraph',
+  'Spetsnaz',
+  'SpeziClaus',
 ];
 
-/** Every model, flattened, in the server's own order. */
-export const TS_MODELS: readonly string[] = TS_MODEL_GROUPS.flat();
+/**
+ * The model's own spelling, or null if the name is not a character.
+ *
+ * The lookup is case-INSENSITIVE and the RESULT is the canonical
+ * spelling, because the two places a name comes from are not under the
+ * player's control:
+ *
+ *   - the ENGINE reports the model it has, which is whatever the
+ *     server last sent;
+ *   - a SAVED identity is read back from localStorage, and it may have
+ *     been written by a build whose list spelled the character
+ *     differently.
+ *
+ * Both are matched loosely and then sent on in the spelling the engine
+ * can resolve. The model name that goes on the wire is NEVER the one
+ * that was typed.
+ */
+export function canonicalModel(name: string): string | null {
+  const wanted = name.trim().toLowerCase();
+  if (!wanted) return null;
+  return TS_MODELS.find((m) => m.toLowerCase() === wanted) ?? null;
+}
 
 /** The model the player has chosen, or '' for the server's default. */
 export const chosenModel = ref<string>('');
@@ -161,12 +236,15 @@ export function applyName(name: string): boolean {
  * unknown model would be rejected by the server, and the TS ruleset
  * treats the `model` key as a TEAM name in teamplay, so a bogus value
  * can read as a team change.
+ *
+ * The name is matched case-insensitively and sent in the mod's own
+ * spelling — see the note at the top of this file about why the case
+ * is not a detail.
  */
 export function applyModel(model: string): boolean {
-  const m = model.trim().toLowerCase();
-  if (!m) return false;
-  if (!TS_MODELS.includes(m)) {
-    logDebug(`[identity] refusing unknown model "${m}"`);
+  const m = canonicalModel(model);
+  if (!m) {
+    logDebug(`[identity] refusing unknown model "${model}"`);
     return false;
   }
   chosenModel.value = m;
@@ -196,9 +274,9 @@ export function applyModel(model: string): boolean {
 export function identityLaunchArgs(): string[] {
   const args: string[] = [];
   const n = chosenName.value.trim();
-  const m = chosenModel.value.trim().toLowerCase();
+  const m = canonicalModel(chosenModel.value);
   if (n) args.push(`+setinfo name "${n.replace(/["\\]/g, '')}"`);
-  if (m && TS_MODELS.includes(m)) args.push(`+setinfo model "${m}"`);
+  if (m) args.push(`+setinfo model "${m}"`);
   return args;
 }
 
@@ -226,8 +304,13 @@ export function loadSavedIdentity(): SavedIdentity {
     if (typeof parsed.name === 'string' && parsed.name.trim()) {
       chosenName.value = parsed.name.trim();
     }
-    if (typeof parsed.model === 'string' && TS_MODELS.includes(parsed.model)) {
-      chosenModel.value = parsed.model;
+    // The saved model is matched loosely and stored in the mod's own
+    // spelling: the entry may have been written by a build that spelled
+    // the character differently, and what goes back on the wire has to
+    // be a name the engine can resolve.
+    if (typeof parsed.model === 'string') {
+      const m = canonicalModel(parsed.model);
+      if (m) chosenModel.value = m;
     }
     return parsed;
   } catch {
