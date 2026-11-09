@@ -33,41 +33,28 @@
         />
       </label>
 
+      <!--
+        THE CHARACTER PICKER.
+
+        The portraits are the character's own art: the game's painted
+        portrait for the seven characters it draws, and a uniform render
+        of the model for the nine it does not. The component is shared
+        with the ESC options overlay, so the two menus cannot disagree
+        about which characters exist.
+
+        The choice is NOT applied on the click. This modal is a form:
+        the model is set when the player commits with "Join as ...", and
+        it rides out on the launch arguments, so the server learns it
+        with the connect. Clicking a portrait here chooses; it does not
+        change the running game (there isn't one yet).
+      -->
       <div class="ident__row ident__row--models">
         <span class="ident__label">Character</span>
-        <div class="ident__models" role="group" aria-label="Character model">
-          <button
-            v-for="m in models"
-            :key="m"
-            class="ident__model"
-            type="button"
-            :class="{ 'ident__model--on': model === m }"
-            :aria-pressed="model === m"
-            @click="model = m"
-          >
-            <!--
-              The picture is the GAME'S OWN PORTRAIT: the .bmp that
-              ships beside the model, with its flat backdrop made
-              transparent so the character sits on the panel.
-
-              It was a 3D render once. The renderer applied each
-              bone's bind-pose world matrix to vertices that already
-              carried their bind position, so the position was added
-              twice: one gordon vertex moved 67.7 units on a 22-unit
-              character, and the heads floated with the hands detached
-              from the arms. The portrait is correct and it is free.
-            -->
-            <img
-              class="ident__model-img"
-              :src="`/models/${m}.png`"
-              :alt="`${m} character preview`"
-              width="72"
-              height="72"
-              loading="lazy"
-            />
-            <span class="ident__model-name">{{ m }}</span>
-          </button>
-        </div>
+        <CharacterPicker
+          :model="model"
+          label="Character model"
+          @select="selectModel"
+        />
       </div>
 
       <label class="ident__remember">
@@ -94,8 +81,8 @@
 
 <script setup lang="ts">
 import { ref, watch, nextTick } from 'vue';
+import CharacterPicker from '/@/components/CharacterPicker.vue';
 import {
-  TS_MODELS,
   applyModel,
   applyName,
   displayName,
@@ -116,7 +103,6 @@ const props = withDefaults(
 
 const emit = defineEmits<{ (e: 'confirm'): void; (e: 'close'): void }>();
 
-const models = TS_MODELS;
 const name = ref('');
 const model = ref('');
 const remember = ref(true);
@@ -124,6 +110,17 @@ const nameInput = ref<HTMLInputElement | null>(null);
 
 function close() {
   emit('close');
+}
+
+/**
+ * Choose a character.
+ *
+ * The click only CHOOSES. The model is applied on commit, because the
+ * commit is what sends the launch arguments — and the launch
+ * arguments are what the server sees with the connect.
+ */
+function selectModel(m: string) {
+  model.value = m;
 }
 
 async function prepare() {
@@ -232,6 +229,8 @@ function commit() {
       flex-direction: column;
       gap: 0.45rem;
       margin-top: 0.9rem;
+      /* The roster is as wide as the panel. */
+      width: 100%;
     }
   }
 
@@ -256,69 +255,15 @@ function commit() {
     }
   }
 
-  &__models {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-  }
+  /*
+   * THE CHARACTER PICKER'S OWN STYLES LIVE IN THE COMPONENT.
 
-  &__model {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.28rem 0.6rem;
-    background: rgba(0, 255, 65, 0.06);
-    border: 1px solid rgba(0, 255, 65, 0.28);
-    color: var(--ts-ink-muted);
-    font-family: var(--ts-font-mono);
-    font-size: 0.72rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    cursor: pointer;
-
-    &:hover {
-      border-color: var(--ts-lime);
-      color: var(--ts-ink);
-    }
-
-    &:focus-visible {
-      outline: none;
-      border-color: var(--ts-signal);
-      box-shadow: 0 0 0 1px var(--ts-signal);
-    }
-
-    &--on {
-      background: rgba(0, 255, 65, 0.16);
-      border-color: var(--ts-signal);
-      color: var(--ts-ink-bright);
-    }
-  }
-
-  // The character's own portrait, on transparent pixels.
-  //
-  // The game's portrait art has a flat grey backdrop, which is removed
-  // so the character sits on the panel rather than on a grey card.
-  // It is sized to the button, and `contain` keeps its aspect.
-  //
-  // `image-rendering` is `auto`, not `pixelated`: the portrait is
-  // 164x200 and the box is 72px, so the nearest-neighbour downscale
-  // threw away two thirds of it. The 3D render it replaced was square
-  // and scaled cleanly, which is why it was `pixelated` then.
-  &__model-img {
-    display: block;
-    width: 72px;
-    height: 72px;
-    object-fit: contain;
-    image-rendering: auto;
-    background: rgba(0, 0, 0, 0.35);
-    border-radius: 2px;
-  }
-
-  &__model-name {
-    line-height: 1;
-  }
-
+   * The picker is shared with the ESC options overlay, and its tiles,
+   * its portraits and its grid are all inside `CharacterPicker.vue`.
+   * What this panel owns is the LAYOUT around it: the label above the
+   * roster, and the panel's own colours, which the component reads
+   * through its `--picker-*` variables.
+   */
   &__remember {
     display: flex;
     align-items: center;

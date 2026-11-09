@@ -168,46 +168,30 @@
           </button>
 
           <!--
-            The character picker. TS's own options menu has one (the
-            screenshot Kyle sent), and the models are the server's
-            `mp_teammodels` list — see player-identity.ts for how the
-            server treats a chosen model.
+            THE CHARACTER PICKER.
+
+            TS's own options menu has one, and the models are the
+            characters the mod ships — see player-identity.ts for how
+            the server treats a chosen model.
+
+            The picker is SHARED with the pre-join identity modal, so
+            the two menus cannot disagree about which characters exist
+            or about how a portrait maps to a model. The only thing
+            that differs is the colour: this panel wears the game's
+            amber, and the modal wears the shell's green.
+
+            Here the choice is applied ON THE CLICK, because the game IS
+            running: the model is a USERINFO cvar, and setting it
+            changes the skin the player is wearing in the match.
           -->
           <div class="opts__row opts__row--models">
             <span class="opts__label">Character</span>
-            <div class="opts__models" role="group" aria-label="Character model">
-              <button
-                v-for="m in models"
-                :key="m"
-                class="opts__model"
-                type="button"
-                :class="{ 'opts__model--on': model === m }"
-                :aria-pressed="model === m"
-                @click="chooseModel(m)"
-              >
-                <!--
-                  The picture is the GAME'S OWN PORTRAIT: the .bmp that
-                  ships beside the model, with its flat backdrop made
-                  transparent so the character sits on the panel.
-
-                  It was a 3D render once. The renderer applied each
-                  bone's bind-pose world matrix to vertices that already
-                  carried their bind position, so the position was added
-                  twice: one gordon vertex moved 67.7 units on a 22-unit
-                  character, and the heads floated with the hands detached
-                  from the arms. The portrait is correct and it is free.
-                -->
-                <img
-                  class="opts__model-img"
-                  :src="`/models/${m}.png`"
-                  :alt="`${m} character preview`"
-                  width="72"
-                  height="72"
-                  loading="lazy"
-                />
-                <span class="opts__model-name">{{ m }}</span>
-              </button>
-            </div>
+            <CharacterPicker
+              class="opts__picker"
+              :model="model"
+              label="Character model"
+              @select="chooseModel"
+            />
           </div>
         </section>
 
@@ -367,12 +351,13 @@ import { readCvar, writeCvar } from '/@/services/engine-cvars';
 import { logDebug } from '/@/services/debug-log';
 import { setBridgeSuspended } from '/@/services/keyboard-bridge';
 import TSPerformance from '/@/components/TSPerformance.vue';
+import CharacterPicker from '/@/components/CharacterPicker.vue';
 import { applyBuyMenuMode, type BuyMenuMode } from '/@/services/buy-menu';
 import { installPerfSessionWriter, savePerfSession } from '/@/services/perf-collect.ts';
 import {
-  TS_MODELS,
   applyModel,
   applyName as applyEngineName,
+  canonicalModel,
   displayName,
   engineModel,
   refreshIdentity,
@@ -386,7 +371,6 @@ const sensitivity = ref<number | null>(null);
 const fov = ref<number | null>(null);
 const volume = ref<number | null>(null);
 
-const models = TS_MODELS;
 const nameInput = ref<HTMLInputElement | null>(null);
 
 /**
@@ -574,8 +558,11 @@ function applyName() {
 
 function chooseModel(m: string) {
   if (applyModel(m)) {
-    model.value = m;
-    logDebug(`[opts] model set to "${m}"`);
+    // The CANONICAL spelling, not the one that was clicked: the engine
+    // puts this string into `models/player/<name>/<name>.mdl`, so it has
+    // to be the spelling the asset tree uses.
+    model.value = canonicalModel(m) ?? m;
+    logDebug(`[opts] model set to "${model.value}"`);
   }
 }
 
@@ -1010,79 +997,30 @@ function quitToWebUi() {
     }
   }
 
-  /* The character picker. A wrapped row of small buttons, so all seven
-     models are visible without a dropdown that hides them. */
-  &__models {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
-  }
+  /*
+   * THE CHARACTER PICKER, IN THE GAME'S AMBER.
 
-  &__model {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.3rem;
-    padding: 0.22rem 0.5rem;
-    background: var(--opts-surface);
-    border: 1px solid var(--opts-edge);
-    border-radius: 10px;
-    color: var(--opts-ink-muted);
-    font-family: var(--ts-font-mono);
-    font-size: 0.68rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    cursor: pointer;
+   * The picker's own layout, tiles and portraits live in
+   * `CharacterPicker.vue`, which is shared with the pre-join identity
+   * modal. What this panel owns is the COLOUR: the picker reads its
+   * palette from these variables, and here they are the game's amber
+   * rather than the shell's phosphor green.
+   *
+   * The chosen character's tile is the amber plate with the ground
+   * colour as its label — the same idiom as `opts__switch-btn--on`.
+   */
+  &__picker {
+    --picker-surface: var(--opts-surface);
+    --picker-edge: var(--opts-edge);
+    --picker-tile: var(--opts-raise);
+    --picker-ink: var(--opts-ink-muted);
+    --picker-accent: var(--opts-amber);
+    --picker-on-surface: var(--opts-raise);
+    --picker-on-edge: var(--opts-amber);
+    --picker-on-ink: var(--opts-amber);
 
-    &:hover {
-      border-color: var(--opts-amber);
-      color: var(--opts-ink);
-    }
-
-    &:focus-visible {
-      outline: none;
-      border-color: var(--opts-amber);
-      box-shadow: 0 0 0 1px var(--opts-amber);
-    }
-
-    /* The chosen character: the game's amber for the border, the letter
-       and the name. The card's own fill stays put — in the mock the
-       selected card is the same dark tile with a lit edge. */
-    &--on {
-      border-color: var(--opts-amber);
-      color: var(--opts-amber);
-    }
-  }
-
-  // The character's own portrait, on transparent pixels.
-  //
-  // The game's portrait art has a flat grey backdrop, which is removed
-  // so the character sits on the panel rather than on a grey card.
-  // It is sized to the button, and `contain` keeps its aspect.
-  //
-  // `image-rendering` is `auto`, not `pixelated`: the portrait is
-  // 164x200 and the box is 72px, so the nearest-neighbour downscale
-  // threw away two thirds of it. The 3D render it replaced was square
-  // and scaled cleanly, which is why it was `pixelated` then.
-  &__model-img {
-    display: block;
-    width: 72px;
-    height: 72px;
-    object-fit: contain;
-    image-rendering: auto;
-    background: var(--opts-raise);
-    border-radius: 10px;
-
-    /* The old blacksteam theme puts a 2px grey-teal frame on EVERY img
-       in the app (`img { border: solid 2px #7b8484 }`). It is not part
-       of this palette, so the portrait takes the tile's edge instead —
-       or nothing at all, which is what the mock shows: a warm square
-       with the character in it. */
-    border: none;
-  }
-
-  &__model-name {
-    line-height: 1;
+    /* The roster is as wide as the panel. */
+    width: 100%;
   }
 
   &__btn {
