@@ -119,7 +119,15 @@ const selected = computed(() => canonicalModel(props.model) ?? '');
    * roster is one block the eye can take in at a glance.
    */
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.4rem;
+  /* The grid's spacing is the CALLER's, like the colours and the tile
+     size: the options overlay draws the roster in the design's own
+     8px gutter, and the identity modal keeps the 0.4rem it has. */
+  gap: var(--picker-gap, 0.4rem);
+  /* The rows keep their own height. A roster that is taller than its
+     content would otherwise stretch the rows and pull the last two
+     apart — the grid reads as one block only when every gutter is
+     the same. */
+  align-content: start;
 
   @media (max-width: 24rem) {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -130,12 +138,12 @@ const selected = computed(() => canonicalModel(props.model) ?? '');
     flex-direction: column;
     align-items: center;
     gap: 0.25rem;
-    padding: 0.25rem 0.2rem;
+    padding: var(--picker-tile-pad, 0.25rem 0.2rem);
     background: var(--picker-surface, rgba(0, 255, 65, 0.06));
     border: 1px solid var(--picker-edge, rgba(0, 255, 65, 0.28));
     color: var(--picker-ink, var(--ts-ink-muted));
-    font-family: var(--ts-font-mono);
-    font-size: 0.68rem;
+    font-family: var(--picker-font, var(--ts-font-mono));
+    font-size: var(--picker-name-size, 0.68rem);
     letter-spacing: 0.04em;
     text-transform: uppercase;
     cursor: pointer;
@@ -179,7 +187,19 @@ const selected = computed(() => canonicalModel(props.model) ?? '');
   &__img {
     display: block;
     width: 100%;
-    max-width: 76px;
+    /*
+     * The tile SIZE is the CALLER's.
+     *
+     * The options overlay draws its roster in the design's own 68px
+     * frames; the pre-join identity modal keeps the 76px it has
+     * always used. The portrait is the same 256x256 file in both
+     * places, so only the frame changes — and a caller's value always
+     * wins, because this is a fallback and not a declaration.
+     *
+     * (`--picker-tile` is the tile's BACKGROUND colour, which is a
+     * different thing; the size is `--picker-tile-size`.)
+     */
+    max-width: var(--picker-tile-size, 76px);
     aspect-ratio: 1 / 1;
     height: auto;
     object-fit: contain;
