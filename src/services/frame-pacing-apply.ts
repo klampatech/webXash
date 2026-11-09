@@ -579,6 +579,18 @@ let gameStartAtMs = 0;
  */
 let lastTargetEveryNth: number | null = null;
 let consecutiveSame = 0;
+/**
+ * THE ENGINE'S SUSTAINABLE RATE THAT THE GATE IN FORCE WAS CHOSEN FOR.
+ *
+ * It is the basis the deadband is measured against: a gate only moves
+ * when the sustainable rate has moved away from this by more than
+ * `COST_DEADBAND`, so a change of a percent or two cannot flip the
+ * gate between one frame in one and one frame in two.
+ *
+ * Zero means "not known yet" -- before the first decision there is no
+ * basis, and there is no band.
+ */
+let basisFps = 0;
 
 /**
  * How many recent samples to keep per callback.
@@ -1139,14 +1151,27 @@ export async function applyFrameCap(
     consecutiveSame,
     lateFraction,
     currentProvisional: core.provisional,
+    currentBasisFps: basisFps,
   });
 
   // THE GATE IS THE GATE. `everyNth` IS what the shim enforces, and
   // the reported state is derived from it, so the state cannot say
   // "not capping" while the engine is still being offered every
   // second frame.
+  const gateMoved = decision.everyNth !== everyNth;
   everyNth = decision.everyNth;
   const effective = everyNth > 1 && panelHz > 0 ? panelHz / everyNth : 0;
+
+  // THE BASIS FOLLOWS THE GATE.
+  //
+  // When the gate moves, the new basis is the sustainable rate it was
+  // moved for -- and only then. The basis is the rate the GATE was
+  // chosen for, not the rate of the last window: if it followed every
+  // confirmation, a slow drift of a per cent a window would always be
+  // inside the band and the gate would never follow it at all.
+  if (gateMoved) {
+    basisFps = sustainable;
+  }
 
   core = {
     capFps: effective,

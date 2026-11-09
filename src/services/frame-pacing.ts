@@ -325,6 +325,27 @@ export const LATE_FRACTION_LIMIT = 0.05;
  */
 export const NARROW_CONSECUTIVE_WINDOWS = 2;
 
+/**
+ * HOW FAR THE ENGINE'S SUSTAINABLE RATE HAS TO MOVE BEFORE A GATE
+ * MOVES.
+ *
+ * FIFTEEN PER CENT.
+ *
+ * Without it, a gate flips on a marginal change. The sustainable rate
+ * crosses the display's own rate at 850/120 = 7.083 ms of frame cost,
+ * and a 1.4% change in the measured cost moves the target from one
+ * frame in one to one frame in two. The widening is immediate and the
+ * narrowing needs two windows, so the gate then pumps between the two
+ * every half minute -- the player's frame rate doubling and halving
+ * for no reason at all.
+ *
+ * The band is on the engine's SUSTAINABLE RATE, not on the frame
+ * cost, because the sustainable rate is what the cap is chosen from:
+ * the same change in cost means a bigger change in the rate when the
+ * cost is small.
+ */
+export const COST_DEADBAND = 0.15;
+
 /** What the pacer is told about the window it is deciding on. */
 export interface FrameGateInput {
   /** The DISPLAY's refresh rate, measured while the page was idle. */
@@ -353,6 +374,16 @@ export interface FrameGateInput {
    * exactly as it was, provisional flag and all.
    */
   currentProvisional?: boolean;
+  /**
+   * The engine's sustainable rate that the gate in force was chosen
+   * for -- the rate the last decision was based on.
+   *
+   * It is what the deadband is measured against: a gate only moves
+   * when the sustainable rate has moved away from this by more than
+   * `COST_DEADBAND`. Zero means "not known", and then there is no
+   * band.
+   */
+  currentBasisFps?: number;
 }
 
 /** What the pacer decided, and why. */
@@ -409,11 +440,47 @@ export interface FrameTarget {
  */
 export function computeFrameTarget(panelHz: number, engineWorkMs: number): FrameTarget {
   const sustainable = sustainableFps(engineWorkMs);
+  const panelOk = isFinite(panelHz) && panelHz > 0;
+  const costOk = isFinite(engineWorkMs) && engineWorkMs > 0;
+
+  // A MEASUREMENT THAT CANNOT BE USED PRODUCES NO GATE.
+  //
+  // `chooseFrameCap` says "no cap" with a rate of 0, and turning that
+  // into a gate must not become "one frame in every tick of the
+  // display" -- that is one frame a second. And a NaN panel must not
+  // become a NaN gate: the shim holds the engine's callback until
+  // `tick % everyNth === 0`, and `tick % NaN` is never true, so the
+  // engine would never draw again.
+  if (!panelOk || !costOk || sustainable <= 0) {
+    return { everyNth: 1, fps: 0, sustainableFps: sustainable };
+  }
+
   const cap = chooseFrameCap(panelHz, sustainable);
-  const everyNth = Math.max(1, Math.round(panelHz / Math.max(1, cap.fps)));
+  if (!cap.fps || cap.fps <= 0) {
+    return { everyNth: 1, fps: 0, sustainableFps: sustainable };
+  }
+
+  // THE GATE IS A WHOLE NUMBER OF TICKS.
+  //
+  // The tick count is the one nearest the cap's rate, so the gate
+  // lands on the rate that was asked for -- on a 100 Hz panel the
+  // cap's rate may not be on the panel's grid, and rounding the
+  // OTHER way would throw the cap away entirely.
+  let everyNth = Math.max(1, Math.round(panelHz / cap.fps));
+
+  // AND THE ENGINE'S FRAME MUST FIT IN THE SLOT IT IS GIVEN.
+  //
+  // This is the promise that matters, and it is physical rather than
+  // a policy line: the engine draws one frame every N ticks, so the
+  // slot is N/panelHz long, and a frame that does not fit in its slot
+  // overruns it and judders. The margin in `sustainableFps` is about
+  // headroom; this is about the frame landing at all.
+  const slotTicks = Math.ceil((engineWorkMs * panelHz) / 1000);
+  if (slotTicks > everyNth) everyNth = slotTicks;
+
   return {
     everyNth,
-    fps: panelHz > 0 ? panelHz / everyNth : 0,
+    fps: panelHz / everyNth,
     sustainableFps: sustainable,
   };
 }
@@ -541,6 +608,47 @@ export function decideFrameGate(input: FrameGateInput): FrameGateDecision {
       reason:
         `${measured} -> ${targetText}; the settled reading confirms the gate`,
     };
+  }
+
+  // THE DEADBAND: A GATE DOES NOT MOVE FOR A MARGINAL CHANGE --------
+  //
+  // The gate in force was chosen for a particular sustainable rate.
+  // The engine's sustainable rate has to move away from that by more
+  // than the band before the gate follows it.
+  //
+  // Without this, the gate flips on a change of a percent or two: the
+  // sustainable rate crosses the display's own rate at 7.083 ms of
+  // frame cost on a 120 Hz panel, and the widening being immediate
+  // while the narrowing needs two windows, the frame rate pumps
+  // between one frame in one and one frame in two every half minute.
+  //
+  // A REAL change in the engine's cost -- a firefight, a different
+  // part of the map -- moves the sustainable rate far more than the
+  // band, and the gate follows it then.
+  //
+  // THE BAND ONLY EXISTS WHEN THE BASIS IS KNOWN. Before the first
+  // decision there is no basis, and the first decision is free to move
+  // the gate: otherwise the gate could never be set at all.
+  const basisFps = input.currentBasisFps ?? 0;
+  if (basisFps > 0) {
+    const moved = Math.abs(sustainable - basisFps) / basisFps;
+    if (moved <= COST_DEADBAND) {
+      const pct = moved * 100;
+      return {
+        everyNth: current,
+        capFps: currentFps,
+        changed: false,
+        provisional: false,
+        targetEveryNth,
+        targetFps,
+        reason:
+          `${measured} -> ${targetText}; the engine's sustainable rate has ` +
+          `moved ${pct.toFixed(1)}% from the ${basisFps.toFixed(0)} fps the gate ` +
+          `was chosen for, which is inside the ${(COST_DEADBAND * 100).toFixed(0)}% ` +
+          `band, so the gate in force (${describeGate(current, input.panelHz)}) ` +
+          `is left in place`,
+      };
+    }
   }
 
   if (targetEveryNth < current) {
