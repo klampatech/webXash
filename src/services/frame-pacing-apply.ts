@@ -248,8 +248,66 @@ export interface PacingState {
    * readout say "measured 32 seconds into your game".
    */
   gameStartAt: number;
+  /**
+   * The DISPLAY's rate as it was measured while the page was IDLE.
+   *
+   * THIS IS THE ONE NUMBER THAT CATCHES A THROTTLE.
+   *
+   * The live tick rate cannot tell a slow browser from a slow engine,
+   * because both stretch the interval between ticks. But the rate
+   * measured at load — before the engine existed — is the display's
+   * own rate. If the live rate has fallen BELOW that, something has
+   * taken refreshes away from the page since it loaded, and the
+   * readout can say so with a measurement on both sides.
+   *
+   * Chrome's Energy Saver is the usual culprit: it drops a 120 Hz
+   * panel to 60 Hz (or to 78 Hz on some machines) when the machine is
+   * unplugged, and the player's only symptom is a game that feels
+   * worse than the display can show.
+   */
+  idlePanelHz: number;
+  /**
+   * The distribution of the ENGINE's frame spacing.
+   *
+   * THE GAP BETWEEN THE FRAMES THE PLAYER SEES. The engine's own
+   * counter reports how many frames it drew; this says how far apart
+   * they were, which is the thing the eye reads as smoothness.
+   *
+   * A perfectly paced game on a 144 Hz display has a p50 of 13.9 ms
+   * and a p99 of 13.9 ms. The same game juddering has a p50 of 13.9 ms
+   * and a p99 of 41.7 ms, and the buckets show exactly which frames
+   * were late.
+   */
+  pacing: FrameSpacing;
   /** Why. */
   reason: string;
+}
+
+/**
+ * THE SHAPE OF THE ENGINE'S FRAME SPACING.
+ *
+ * The percentiles are the honest summary — a median with a long tail
+ * is a different thing from a median with a short one, and the mean
+ * cannot tell them apart — and the buckets are the picture: one
+ * dominant bucket means even pacing, several means uneven, and that
+ * is the single clearest line in a frame-timing report.
+ */
+export interface FrameSpacing {
+  /** The median frame spacing, in milliseconds. */
+  p50: number;
+  /** The 90th percentile. */
+  p90: number;
+  /** The 99th percentile. */
+  p99: number;
+  /** The worst spacing in the window. */
+  max: number;
+  /**
+   * The most common spacings, rounded to a tenth of a millisecond,
+   * with their counts. Sorted by count, biggest first.
+   */
+  buckets: Array<{ ms: number; count: number }>;
+  /** How many spacings the window saw. */
+  samples: number;
 }
 
 /**
@@ -272,8 +330,148 @@ interface PacingCore {
   measuredAt: number;
   settled: boolean;
   gameStartAt: number;
+  idlePanelHz: number;
+  pacing: FrameSpacing;
   reason: string;
 }
+
+/**
+ * ONE MEASUREMENT WINDOW, AS IT WAS RECORDED.
+ *
+ * The pacer takes a reading every ten seconds, and each one is a
+ * point on the timeline of the match: the engine's frame cost, what
+ * the game was drawing, what the browser was handing it, and how many
+ * of the engine's frames arrived late.
+ *
+ * WHICH IS THE TIMELINE THAT ANSWERS "WHY DID IT DROP THERE".
+ *
+ * A single reading says what the machine was doing at one moment. A
+ * timeline says where the drops were and what else was happening when
+ * they happened — the scene, the gate, the browser's rate — and it is
+ * the only thing that can separate "the game got expensive here" from
+ * "the browser stopped feeding it here".
+ */
+export interface PacingWindow {
+  /** When the window closed, in epoch milliseconds. */
+  at: number;
+  /** The engine's per-frame cost, in milliseconds. */
+  engineWorkMs: number;
+  /** The rate the GAME was drawing, in fps. */
+  engineFps: number;
+  /** The rate the BROWSER was delivering ticks at. */
+  browserHz: number;
+  /** The DISPLAY's rate. */
+  panelHz: number;
+  /** The gate in force: display ticks per engine frame. */
+  everyNth: number;
+  /** The fraction of the engine's frames that arrived late, 0..1. */
+  lateFraction: number;
+  /** Was the reading past the engine's warm-up? */
+  settled: boolean;
+  /** The median gap between the engine's frames, in milliseconds. */
+  frameP50Ms: number;
+  /** The 99th percentile of that gap, in milliseconds. */
+  frameP99Ms: number;
+  /**
+   * WAS THE GAME FULLSCREEN WHEN THIS WINDOW CLOSED?
+   *
+   * This is the one bit of the timeline that answers the question
+   * everybody asks: "why is fullscreen worse than windowed?"
+   *
+   * It is measured from the CANVAS'S OWN SIZE against the SCREEN'S,
+   * and not from `document.fullscreenElement`, because the browser's
+   * own fullscreen (F11) does not set that — and F11 is how most
+   * people actually play. The canvas covering the screen is the fact
+   * that matters either way.
+   */
+  fullscreen: boolean;
+}
+
+/**
+ * HOW MANY WINDOWS ARE KEPT.
+ *
+ * Nine hundred windows is half an hour at the pacer's ten-second
+ * cadence, and each one is a few dozen bytes — so the whole history
+ * is a few tens of kilobytes, which is nothing to keep and everything
+ * to have.
+ */
+const MAX_HISTORY = 900;
+
+/**
+ * THE TIMELINE.
+ *
+ * Appended to at the end of every measurement window, and read by the
+ * log exporter. It is a plain array on purpose: the timeline is
+ * small, the export is a file, and a ring buffer would make the
+ * export's order harder to read.
+ */
+const windowHistory: PacingWindow[] = [];
+
+/** The timeline of the match, oldest first. */
+export function getPacingHistory(): PacingWindow[] {
+  return windowHistory.map((w) => ({ ...w }));
+}
+
+/** Forget the timeline. */
+export function clearPacingHistory(): void {
+  windowHistory.length = 0;
+}
+
+/**
+ * IS THE GAME FILLING THE SCREEN?
+ *
+ * The canvas's own size against the screen's, with a little slack for
+ * the border a windowed browser draws.
+ *
+ * NOT `document.fullscreenElement`: that is only set by the Fullscreen
+ * API, and the browser's own fullscreen — F11, and the way most
+ * people actually play — leaves it null. The canvas covering the
+ * screen is the fact that matters either way, and it is also the
+ * fact that the frame cost differs by.
+ */
+function viewportFillsScreen(): boolean {
+  if (typeof document === 'undefined' || typeof screen === 'undefined') return false;
+  const canvas = document.querySelector('canvas');
+  if (!canvas) return false;
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return false;
+  return rect.width >= screen.width * 0.95 && rect.height >= screen.height * 0.95;
+}
+
+/**
+ * RECORD ONE WINDOW.
+ *
+ * Called at the end of every measurement, whatever the window said.
+ * A window that measured nothing is worth keeping too: "the engine
+ * stopped" is a finding, and a timeline with a gap in it is the
+ * evidence.
+ */
+function recordWindow(): void {
+  windowHistory.push({
+    at: core.measuredAt || Date.now(),
+    engineWorkMs: core.engineWorkMs,
+    engineFps: core.engineFps,
+    browserHz: core.browserHz,
+    panelHz: core.panelHz,
+    everyNth,
+    lateFraction: core.lateFraction,
+    settled: core.settled,
+    frameP50Ms: core.pacing.p50,
+    frameP99Ms: core.pacing.p99,
+    fullscreen: viewportFillsScreen(),
+  });
+  while (windowHistory.length > MAX_HISTORY) windowHistory.shift();
+}
+
+/** The shape of a window that has measured nothing. */
+const EMPTY_SPACING: FrameSpacing = {
+  p50: 0,
+  p90: 0,
+  p99: 0,
+  max: 0,
+  buckets: [],
+  samples: 0,
+};
 
 /** The pacer singleton's state. Read by the diagnostics. */
 let core: PacingCore = {
@@ -290,6 +488,8 @@ let core: PacingCore = {
   measuredAt: 0,
   settled: false,
   gameStartAt: 0,
+  idlePanelHz: 0,
+  pacing: EMPTY_SPACING,
   reason: 'not measured yet',
 };
 
@@ -663,6 +863,73 @@ function medianOf(values: number[]): number {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
+/**
+ * A percentile of a set of numbers.
+ *
+ * The NEAREST-RANK definition: the smallest value at or above which
+ * the given fraction of the samples lie. The interpolation variants
+ * invent a number that no frame actually had, and this report is
+ * about frames — the p99 has to be a frame somebody sat through.
+ */
+function percentileOf(values: number[], p: number): number {
+  if (!values.length) return 0;
+  const sorted = values.slice().sort((a, b) => a - b);
+  const rank = Math.ceil((p / 100) * sorted.length);
+  const index = Math.min(sorted.length - 1, Math.max(0, rank - 1));
+  return sorted[index];
+}
+
+/**
+ * THE SHAPE OF THE ENGINE'S FRAME SPACING.
+ *
+ * The gaps between the engine's frame starts — the interval between
+ * the frames the player actually sees, which is NOT the interval
+ * between the browser's ticks (with the gate in force the browser
+ * keeps ticking at the panel's rate while the engine draws every Nth
+ * tick, so those are different numbers by a factor of N).
+ *
+ * AND THE BUCKETS ARE THE PICTURE. The repo's own research says the
+ * bucket histogram is the clearest single line in a frame-timing
+ * report: one dominant bucket means the frames are evenly spaced,
+ * and several buckets mean the gaps are uneven, which is judder.
+ * The percentiles say how bad it is; the buckets say what it looks
+ * like.
+ */
+export function summarizeSpacing(starts: number[]): FrameSpacing {
+  if (!starts || starts.length < 2) {
+    return { ...EMPTY_SPACING };
+  }
+  const gaps: number[] = [];
+  for (let i = 1; i < starts.length; i++) {
+    const gap = starts[i] - starts[i - 1];
+    if (gap > 0) gaps.push(gap);
+  }
+  if (!gaps.length) return { ...EMPTY_SPACING };
+
+  // THE BUCKETS. Rounded to a tenth of a millisecond, because the
+  // frames land on the display's grid and the grid IS the point: two
+  // frames 13.9 ms apart are the same bucket however the fraction
+  // falls, and a bucket at 41.7 ms is a dropped frame.
+  const counts = new Map<number, number>();
+  for (const gap of gaps) {
+    const key = Math.round(gap * 10) / 10;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  const buckets = [...counts.entries()]
+    .map(([ms, count]) => ({ ms, count }))
+    .sort((a, b) => (b.count - a.count) || (a.ms - b.ms))
+    .slice(0, 10);
+
+  return {
+    p50: percentileOf(gaps, 50),
+    p90: percentileOf(gaps, 90),
+    p99: percentileOf(gaps, 99),
+    max: gaps[gaps.length - 1],
+    buckets,
+    samples: gaps.length,
+  };
+}
+
 /** The tick the shim runs on, deciding whether the engine runs. */
 function onTick(time: number): void {
   scheduled = false;
@@ -827,6 +1094,7 @@ export function readMeasurement(): {
   engineFps: number;
   lateFrames: number;
   measuredFrames: number;
+  pacing: FrameSpacing;
 } {
   // The browser's tick rate: the median interval between ticks.
   let browserHz = 0;
@@ -895,6 +1163,9 @@ export function readMeasurement(): {
     engineFps,
     lateFrames,
     measuredFrames: starts.length,
+    // THE SHAPE OF THE GAPS. The percentiles and the buckets, from the
+    // engine's own frame starts — the frames the player sees.
+    pacing: summarizeSpacing(starts),
   };
 }
 
@@ -956,6 +1227,55 @@ export async function applyFrameCap(
     warmupMs?: number;
   } = {},
 ): Promise<PacingState> {
+  // ONE MEASUREMENT AT A TIME.
+  //
+  // A measurement window RESETS the observation buffers, so two of
+  // them running at once would wipe each other's samples and both
+  // would report half a window as if it were a whole one.
+  //
+  // The loader's periodic loop is sequential by construction — it
+  // schedules the next measurement after the previous one comes back
+  // — but the readout's "Re-measure" button calls in from outside
+  // that loop, and a player pressing it while the periodic reading
+  // is open would open a second window over the first.
+  //
+  // So a second caller WAITS for the first rather than starting its
+  // own: the reading it gets is the one the first caller took, which
+  // is a fresh reading a moment later. A caller that wants its own
+  // window — the measurement harness — gets it, because the harness
+  // is the only caller that sets `force`.
+  if (capMeasureInFlight && !opts.force) {
+    try {
+      await capMeasureInFlight;
+    } catch (e) {
+      /* the measurement that was already running reports its own failure */
+    }
+    return getPacingState();
+  }
+
+  const run = applyFrameCapOnce(opts);
+  capMeasureInFlight = run;
+  try {
+    return await run;
+  } finally {
+    if (capMeasureInFlight === run) capMeasureInFlight = null;
+  }
+}
+
+/** The measurement in flight, so two callers share one window. */
+let capMeasureInFlight: Promise<PacingState> | null = null;
+
+/**
+ * The measurement itself.
+ */
+async function applyFrameCapOnce(
+  opts: {
+    observeMs?: number;
+    force?: boolean;
+    everyNth?: number;
+    warmupMs?: number;
+  } = {},
+): Promise<PacingState> {
   const observeMs = opts.observeMs ?? OBSERVE_MS;
   const warmupMs = opts.warmupMs ?? WARMUP_MS;
 
@@ -986,6 +1306,8 @@ export async function applyFrameCap(
       measuredAt: 0,
       settled: false,
       gameStartAt: gameStartAtMs,
+      idlePanelHz: idleDisplayHz,
+      pacing: EMPTY_SPACING,
       reason: 'the frame cap is switched OFF for this session (?nocap=1)',
     };
     return getPacingState();
@@ -1006,7 +1328,14 @@ export async function applyFrameCap(
 
   await new Promise((r) => setTimeout(r, observeMs));
 
-  const { browserHz, engineWorkMs, engineFps, lateFrames, measuredFrames } = readMeasurement();
+  const {
+    browserHz,
+    engineWorkMs,
+    engineFps,
+    lateFrames,
+    measuredFrames,
+    pacing,
+  } = readMeasurement();
   const lateFraction = measuredFrames > 0 ? lateFrames / measuredFrames : 0;
   const sustainable = sustainableFps(engineWorkMs);
 
@@ -1084,6 +1413,8 @@ export async function applyFrameCap(
       measuredAt,
       settled,
       gameStartAt: gameStartAtMs,
+      idlePanelHz: idleDisplayHz,
+      pacing: EMPTY_SPACING,
       reason:
         `the measurement window was empty ` +
         `(${intervals.length} ticks, ${stats.size} callbacks seen) -- ` +
@@ -1092,6 +1423,7 @@ export async function applyFrameCap(
           ? `the existing cap (1 frame in ${everyNth}) is left in place`
           : `not capping`),
     };
+    recordWindow();
     return getPacingState();
   }
 
@@ -1128,11 +1460,14 @@ export async function applyFrameCap(
       measuredAt,
       settled,
       gameStartAt: gameStartAtMs,
+      idlePanelHz: idleDisplayHz,
+      pacing: EMPTY_SPACING,
       reason:
         `forced to one frame in ${everyNth} for measurement ` +
         `(${forcedFps.toFixed(1)} fps, budget ` +
         `${frameIntervalMs(forcedFps).toFixed(2)} ms)`,
     };
+    recordWindow();
     return getPacingState();
   }
 
@@ -1199,6 +1534,8 @@ export async function applyFrameCap(
     measuredAt,
     settled,
     gameStartAt: gameStartAtMs,
+    idlePanelHz: idleDisplayHz,
+    pacing,
     reason:
       decision.reason +
       (everyNth > 1
@@ -1207,6 +1544,7 @@ export async function applyFrameCap(
           `${frameIntervalMs(effective).toFixed(2)} ms)`
         : '; not capping'),
   };
+  recordWindow();
   return getPacingState();
 }
 
