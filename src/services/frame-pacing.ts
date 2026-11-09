@@ -118,6 +118,22 @@ export function sustainableFps(workMs: number, safetyFactor = 0.85): number {
 export const COMMON_REFRESH_RATES = [24, 30, 48, 60, 72, 75, 90, 100, 120, 144, 165, 240, 360];
 
 /**
+ * HOW FAR A MEASURED DISPLAY RATE MAY DRIFT BELOW ITS NOMINAL RATE
+ * BEFORE THE CAP CHOOSER STOPS BELIEVING IT.
+ *
+ * HALF A PERCENT. A browser's frame timestamps land a fraction under
+ * the panel's real rate, and the cap chooser only offers rates at or
+ * under the display's rate -- so a 120 Hz panel measured at 119.976 Hz
+ * would be capped at 60 and flip between the two as the measurement
+ * jitters.
+ *
+ * The tolerance is on the DISPLAY's side of the comparison only. The
+ * engine's side is exact: the pacer must never ask for more frames
+ * than the engine can finish.
+ */
+export const DISPLAY_RATE_TOLERANCE = 0.005;
+
+/**
  * Pick the cap for a display.
  *
  * `displayHz` is the refresh rate the browser is actually delivering
@@ -152,7 +168,30 @@ export function chooseFrameCap(
 
   // Never ask for more than the display can show, or more than the
   // engine can do.
-  const ceiling = Math.min(displayHz, sustainable);
+  //
+  // THE DISPLAY'S SIDE GETS A TOLERANCE; THE ENGINE'S DOES NOT.
+  //
+  // A DISPLAY'S RATE IS NOMINAL, AND THE MEASUREMENT DRIFTS UNDER
+  // IT. A browser's rAF timestamps land a fraction below the panel's
+  // real rate: 119.976 Hz on a 120 Hz display, 59.94 on a 60 Hz one,
+  // 143.88 on a 144 Hz one. The candidate list only offers rates AT
+  // OR UNDER the display's rate, so a measured 119.976 EXCLUDES 120
+  // -- and the highest rate left that divides the display evenly is
+  // 60.
+  //
+  // That is not a rounding detail. It halves the frame rate on every
+  // machine, and because the measurement jitters either side of the
+  // nominal rate, the pacer flips between 60 and 120 every few
+  // seconds. Measured on Kyle's M3 Pro on 2026-11-08: the cap went
+  // from one frame in one to one frame in two with the engine's cost
+  // unchanged at 1.33 ms.
+  //
+  // The tolerance is half a percent: enough for the drift, far too
+  // small to let a 60 Hz display be asked for 120. The ENGINE's side
+  // stays exact -- the pacer must never ask for more frames than the
+  // engine can finish.
+  const displayCeiling = displayHz * (1 + DISPLAY_RATE_TOLERANCE);
+  const ceiling = Math.min(displayCeiling, sustainable);
 
   const candidates = COMMON_REFRESH_RATES.filter((hz) => hz <= ceiling);
 
