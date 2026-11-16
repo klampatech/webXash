@@ -13,6 +13,13 @@
 
     <!-- the stage: the grid, the glow, the emblem -->
     <div class="ts-landing__bg" aria-hidden="true">
+      <!--
+        The live camera: a permanent spectator in the game, rendering the
+        real world on a real server, painted behind the stage. It only
+        appears once a frame has arrived; the dial is the background when
+        it is not running.
+      -->
+      <LiveCamera />
       <div class="ts-landing__grid" />
       <div class="ts-landing__glow" />
       <!--
@@ -208,6 +215,7 @@ import TSServerList from '/@/components/TSServerList.vue';
 import TSFaq from '/@/components/TSFaq.vue';
 import TSLeaderboard from '/@/components/TSLeaderboard.vue';
 import TSPerformance from '/@/components/TSPerformance.vue';
+import LiveCamera from '/@/components/LiveCamera.vue';
 import PlayerIdentityModal from '/@/components/PlayerIdentityModal.vue';
 import { enterFullscreen } from '/@/services/fullscreen.ts';
 import {
