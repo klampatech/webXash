@@ -588,6 +588,43 @@ function refreshPerfReport(): void {
 }
 
 /**
+ * THE REPORT, WHILE THE OVERLAY IS OPEN.
+ *
+ * The report used to be built ONCE — at the moment the Performance
+ * page was selected — and refreshed only when the player pressed
+ * "Re-measure". So a player who opened ESC a minute into a match was
+ * looking at a report from BEFORE the engine had measured anything:
+ * no frame cost, no frame rate, and a verdict line saying the client
+ * was not set up for this game.
+ *
+ * The pacer measures every ten seconds, so the numbers are at most
+ * ten seconds old. The player is looking at them WHILE THE GAME IS
+ * RUNNING, which is the one moment a stale number is a lie — so the
+ * page keeps itself current while it is open.
+ *
+ * Found by the readout truth gate (tools/perf/verify-readout-truth.cjs
+ * in the parent repo), 2026-11-16.
+ */
+let perfRefreshTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Keep the report current while the overlay is open. */
+function startPerfRefresh(): void {
+  stopPerfRefresh();
+  refreshPerfReport();
+  perfRefreshTimer = setInterval(() => {
+    refreshPerfReport();
+  }, 2000);
+}
+
+/** Stop keeping it current. */
+function stopPerfRefresh(): void {
+  if (perfRefreshTimer !== null) {
+    clearInterval(perfRefreshTimer);
+    perfRefreshTimer = null;
+  }
+}
+
+/**
  * RE-MEASURE, AND THE REPORT AFTERWARDS.
  *
  * The Performance page's "Re-measure" button asks for this. It does
@@ -782,6 +819,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', onFullscreenChange);
   resizeObserver?.disconnect();
   resizeObserver = null;
+  stopPerfRefresh();
 });
 
 // ---------------------------------------------------------------------------
@@ -855,8 +893,12 @@ watch(open, async (isOpen) => {
   if (!isOpen) {
     // Hand the keyboard back to the game.
     setBridgeSuspended(false);
+    // And stop refreshing a panel nobody is looking at.
+    stopPerfRefresh();
     return;
   }
+  // THE READOUT KEEPS ITSELF CURRENT WHILE IT IS OPEN.
+  startPerfRefresh();
   // Take the keyboard away from the game: the engine's key listeners
   // are on `window`, so a focused DOM input does NOT stop the engine
   // from receiving the keys.

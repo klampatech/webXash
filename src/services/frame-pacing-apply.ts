@@ -924,7 +924,19 @@ export function summarizeSpacing(starts: number[]): FrameSpacing {
     p50: percentileOf(gaps, 50),
     p90: percentileOf(gaps, 90),
     p99: percentileOf(gaps, 99),
-    max: gaps[gaps.length - 1],
+    // THE WORST GAP IS THE LARGEST GAP.
+    //
+    // It used to be `gaps[gaps.length - 1]` — the LAST gap in the
+    // window, which is the last thing that happened and not the worst
+    // thing that happened. The gaps are in the order they occurred, so
+    // that number is whatever the final frame happened to cost, and on
+    // a well-paced game it is the SMALLEST number in the set: the
+    // readout printed "33.5 ms apart · worst 31.5 ms", which is a
+    // contradiction the reader cannot make sense of.
+    //
+    // Found by the readout truth gate (tools/perf/verify-readout-truth.cjs
+    // in the parent repo), 2026-11-16.
+    max: gaps.length ? Math.max(...gaps) : 0,
     buckets,
     samples: gaps.length,
   };

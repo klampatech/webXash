@@ -936,7 +936,10 @@ function buildChecklist(facts: PerfFacts, browser: PerfBrowser): PerfChecklistIt
         id: 'chrome-energy-saver',
         action: 'Turn Energy Saver off',
         where: 'chrome://settings/performance → Energy Saver → off',
-        why: 'Energy Saver reduces the DISPLAY refresh rate when the machine is unplugged. Your game is being handed half the refreshes it should be.',
+        why:
+          'Energy Saver reduces the DISPLAY refresh rate when the machine is unplugged. How ' +
+          'much it takes is not a fixed fraction — measured on a 120 Hz laptop it took 22 of ' +
+          'them — so the game is handed fewer refreshes than the display can give.',
       });
       items.push({
         id: 'chrome-keep-active',
@@ -1014,8 +1017,8 @@ function buildChecklist(facts: PerfFacts, browser: PerfBrowser): PerfChecklistIt
         action: 'Stop the browser from putting the game to sleep',
         where: 'chrome://settings/performance → Memory Saver → off',
         why:
-          'Memory Saver can evict a tab or stop giving it animation frames. A game that stutters for ' +
-          'no reason is usually this.',
+          'Memory Saver can evict a tab or stop giving it animation frames. A game that stutters ' +
+          'for no reason can be this — and the readout cannot see whether it is on.',
       });
     }
   }
@@ -1025,9 +1028,10 @@ function buildChecklist(facts: PerfFacts, browser: PerfBrowser): PerfChecklistIt
       id: 'judder-interruptions',
       action: 'Find what is interrupting the frame',
       where: 'Task Manager → sort by CPU, and watch for a download, an antivirus scan, or a second game',
-      why:
-        'Uneven frames are the machine being interrupted, not the game being slow. The game is ' +
-        'hitting its budget; something else is stealing the thread when the frames arrive late.',
+        why:
+          'The game is hitting its budget, but the frames are not landing evenly. That can be ' +
+          'the machine being interrupted — a download, a scan, another game — and the readout ' +
+          'cannot tell that apart from the engine missing its own deadline.',
     });
   }
 
@@ -1397,6 +1401,15 @@ export function buildPerfReport(facts: PerfFacts, now = Date.now()): PerfReport 
     // is the opposite of the truth. Only with no cap in force is the
     // engine the limit.
     const capped = facts.capFps > 0 && facts.everyNth > 1;
+    // A SOFTWARE RENDERER IS ITS OWN CAUSE.
+    //
+    // When the CPU is doing the drawing, the frame-cost row is
+    // measuring the engine's JavaScript work and NOTHING ELSE — the
+    // pixels are the expensive part, and they are not in that number.
+    // So "the engine's own limit" is the wrong culprit here: the limit
+    // is the software rasteriser, and saying otherwise puts the blame
+    // on a thing that is measurably inside its budget.
+    const software = isSoftwareRenderer(facts.renderer);
     findings.push({
       id: 'delivering',
       severity: 'info',
@@ -1409,11 +1422,17 @@ export function buildPerfReport(facts: PerfFacts, now = Date.now()): PerfReport 
             `on your ${rate.toFixed(0)} Hz display.`
           : `That is the cap's doing, not the engine's: the game is paced to land evenly ` +
             `on your ${rate.toFixed(0)} Hz display.`
-        : fromSession
-          ? "That was the engine's own limit, not the display's — the game was asking for " +
-            'more frames than it could finish.'
-          : "That is the engine's own limit, not the display's — the game is asking for " +
-            'more frames than it can finish.',
+        : software
+          ? fromSession
+            ? 'That was the software renderer, not the display: every pixel was drawn by ' +
+              'the CPU, so the game could not finish the frames your display asked for.'
+            : 'That is the software renderer, not the display: every pixel is drawn by ' +
+              'the CPU, so the game cannot finish the frames your display asks for.'
+          : fromSession
+            ? "That was the engine's own limit, not the display's — the game was asking for " +
+              'more frames than it could finish.'
+            : "That is the engine's own limit, not the display's — the game is asking for " +
+              'more frames than it could finish.',
     });
   }
 
