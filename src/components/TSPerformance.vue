@@ -383,6 +383,34 @@ const sourceLabel = computed(() => {
 });
 
 /**
+ * THE GPU'S NAME, out of the renderer string.
+ *
+ * The renderer string is the browser's own report of what it is
+ * drawing on, and it is long:
+ *
+ *   "ANGLE (Apple, ANGLE Metal Renderer: Apple M3 Pro, Unspecified Version)"
+ *   "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 Direct3D11 vs_5_0 ps_5_0, D3D11)"
+ *
+ * The number the player wants is the chip's name, so that is what is
+ * pulled out of it — and when nothing matches, the string is trimmed
+ * rather than dropped, because "Hardware accelerated" with no evidence
+ * is a claim the reader has to take on faith.
+ */
+function shortRenderer(name: string): string {
+  const s = String(name || '').trim();
+  if (!s) return '';
+  const metal = s.match(/ANGLE Metal Renderer:\s*([^,)]+)/i);
+  if (metal) return metal[1].trim();
+  const d3d = s.match(/Direct3D11 vs_5_0 ps_5_0,\s*([^,)]+)/i);
+  if (d3d) return d3d[1].trim();
+  const vulkan = s.match(/Vulkan[^,]*(?:\([^)]*\))?[^,]*,?\s*([^,()]+(?:\([^)]*\))?)/i);
+  if (vulkan && vulkan[1] && vulkan[1].trim().length > 3) return vulkan[1].trim();
+  const trailing = s.match(/\(([^()]*)\)\s*$/);
+  if (trailing && trailing[1].trim().length > 3) return trailing[1].trim();
+  return s.length > 56 ? `${s.slice(0, 55)}…` : s;
+}
+
+/**
  * The measured numbers, as rows.
  *
  * The panel rate and the delivered rate are BOTH shown, because they
@@ -488,7 +516,22 @@ const numberRows = computed(() => {
     (f) => f.id === 'renderer-ok' || f.id === 'software-renderer',
   );
   if (renderer && renderer.id === 'renderer-ok') {
-    rows.push({ label: 'Graphics', value: 'Hardware accelerated' });
+    // THE ROW CARRIES THE EVIDENCE.
+    //
+    // "Hardware accelerated" is a claim about a string the browser
+    // reported, and a claim the reader cannot check is a claim they
+    // have to take on faith. So the GPU's name goes IN the row: the
+    // claim and the thing it is about, on the same line.
+    //
+    // The string is the finding's own detail — the same string the
+    // finding shows when it is opened — so the row and the finding
+    // cannot disagree.
+    const named = String(renderer.detail || '').replace(/^Renderer:\s*/i, '').trim();
+    const gpu = shortRenderer(named);
+    rows.push({
+      label: 'Graphics',
+      value: gpu ? `Hardware accelerated — ${gpu}` : 'Hardware accelerated',
+    });
   }
 
   return rows;
