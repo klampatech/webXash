@@ -334,6 +334,48 @@ export function frameIntervalMs(fps: number): number {
  * threshold, evenly spaced frames with gaps would report zero slow
  * frames while the pacing was visibly broken.
  */
+/**
+ * THE DISPLAY'S REAL RATE, IN ONE PLACE.
+ *
+ * WHY THIS IS A FUNCTION AND NOT AN EXPRESSION
+ * -------------------------------------------
+ * The pacer needs the display's refresh rate in three places: to choose
+ * the gate, to measure whether the engine's frames arrived on time, and
+ * to report the cap in force. They were reading it three different
+ * ways, and two of them were wrong.
+ *
+ * The gate was chosen with the IDLE measurement -- the display's real
+ * rate, sampled while the page was doing nothing. The late-frame
+ * budget and the reported cap were reading `Math.max(browserHz,
+ * idleDisplayHz)`, which picks the BROWSER's tick rate whenever it is
+ * the larger of the two. That is the wrong one:
+ *
+ *   - The browser's tick rate is the display's period PLUS the engine's
+ *     work, so it moves with the load. Under load the browser misses
+ *     vsyncs and the live rate reads LOW; when the engine is cheap the
+ *     browser can tick faster than the display can show, and the live
+ *     rate reads HIGH. On the M3 Pro it read 126.3 Hz against a
+ *     display that runs at 120.
+ *   - The idle measurement is the display's real rate. It does not move.
+ *
+ * So the budget for "did this frame land on time" was computed against
+ * a rate the browser invented, while the gate was chosen against the
+ * display's real one. On a 120 Hz display with a three-tick gate that
+ * is a 25.01 ms slot measured against a 23.76 ms budget -- five per
+ * cent of the slot, decided by which number was larger -- and the
+ * readout reported a cap of 42.1 fps for a gate that was really 39.99.
+ *
+ * ONE RATE, USED EVERYWHERE. The idle measurement wins; the browser's
+ * tick rate is the fallback for a page where the idle measurement
+ * never happened.
+ */
+export function panelRate(idleDisplayHz: number, browserHz: number): number {
+  const idle = isFinite(idleDisplayHz) ? idleDisplayHz : 0;
+  if (idle > 0) return idle;
+  const live = isFinite(browserHz) ? browserHz : 0;
+  return live > 0 ? live : 0;
+}
+
 export function isLate(intervalMs: number, budgetMs: number): boolean {
   if (!isFinite(intervalMs) || !isFinite(budgetMs) || budgetMs <= 0) return false;
   return intervalMs > budgetMs * 1.5;

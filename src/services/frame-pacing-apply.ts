@@ -105,6 +105,7 @@ import {
   decideFrameGate,
   frameIntervalMs,
   isLate,
+  panelRate,
   sustainableFps,
 } from './frame-pacing.ts';
 
@@ -1245,7 +1246,14 @@ export function readMeasurement(): {
   // frames are NOT late. The old metric counted the BROWSER's tick
   // gaps, which with a cap engaged read a quarter of the ticks as
   // "late" even when the game was perfectly paced.
-  const panelHz = Math.max(browserHz, idleDisplayHz);
+  // THE DISPLAY'S REAL RATE -- the same rate the gate was chosen with.
+  //
+  // It used to be `Math.max(browserHz, idleDisplayHz)`, which picked the
+  // browser's tick rate whenever that was the larger of the two, and
+  // the browser's tick rate moves with the load. The budget for "did
+  // this frame land on time" was therefore computed against a rate the
+  // browser invented rather than the one the slot was carved out of.
+  const panelHz = panelRate(idleDisplayHz, browserHz);
   const gateFps = panelHz > 0 ? panelHz / Math.max(1, everyNth) : 0;
   const budget = frameIntervalMs(gateFps);
   let lateFrames = 0;
@@ -1391,7 +1399,10 @@ async function applyFrameCapOnce(
     core = {
       capFps: 0,
       browserHz: 0,
-      panelHz: idleDisplayHz,
+      // THE SAME RATE the budget and the report use. The idle
+      // measurement is the display's real rate; the browser's tick rate
+      // is the fallback for a page where it never happened.
+      panelHz: panelRate(idleDisplayHz, browserHz),
       engineFps: 0,
       engineWorkMs: 0,
       sustainableFps: 0,
@@ -1443,7 +1454,12 @@ async function applyFrameCapOnce(
   // misses vsyncs and the live rate reads LOW. The idle measurement
   // is the display's real rate. The cap has to be a divisor of THAT,
   // or the frames it lets through do not land on the display's grid.
-  const panelHz = Math.max(browserHz, idleDisplayHz);
+  // The comment above says what this number has to be -- the display's
+  // real rate -- and the expression it sat on took the MAXIMUM of the
+  // two estimates, which is the browser's tick rate whenever that is
+  // the larger. The two are not interchangeable: the browser's tick
+  // rate moves with the load and the display's does not.
+  const panelHz = panelRate(idleDisplayHz, browserHz);
 
   // WHEN THE WINDOW CLOSED, in epoch milliseconds.
   const measuredAt = Date.now();
