@@ -297,15 +297,50 @@ export function resolveRenderResolution(
   }
 
   // 'auto'
-  if (dw * dh <= AUTO_MAX_PIXELS) {
+  //
+  // THE BUDGET IS IN DEVICE PIXELS, NOT CSS PIXELS.
+  //
+  // The engine's mode is in CSS pixels and the device pixel ratio is
+  // applied on top, so the canvas's backing store is the CSS size times
+  // the ratio -- in BOTH dimensions. A 2x display therefore renders FOUR
+  // times the pixels this budget allows, and the policy has been letting
+  // it through. The player's session showed 6.7 megapixels against a
+  // budget of 2.07.
+  //
+  // AND IT WAS NOT FREE.
+  //
+  // The note above this constant said a device-pixel budget "buys
+  // NOTHING", on the evidence that the engine holds 60 FPS at 4K on
+  // integrated graphics and that 640x360 changes NOTHING. Both of those
+  // were measured on a STILL scene. With sixteen bots frozen in place,
+  // 14x the pixels moved the engine's cost by 0.00 ms -- so the
+  // conclusion was true and useless.
+  //
+  // On the scene the player is actually in -- sixteen bots fighting in a
+  // small arena -- the same 14x cost 1.61x at the heavy viewpoint: the
+  // same six viewpoints, the same fixture verified 6/6, went from
+  // 15.63 ms to 25.15 ms, from 60 FPS to 32, with 60% of the frames
+  // late. On the player's own machine that is the difference between a
+  // smooth frame and a 41.94 ms one.
+  //
+  // So the choice is the one it always was: sharpness against frame
+  // time. The difference is that the frame time is now measured on the
+  // scene that matters -- and `display` is still there for the sharpness.
+  const dpr = display.devicePixelRatio > 0 ? display.devicePixelRatio : 1;
+  const budget = AUTO_MAX_PIXELS / (dpr * dpr);
+  if (dw * dh <= budget) {
     // It fits. Render at the display's own size.
     return clampToEngine({ width: dw, height: dh });
   }
 
   // It does not fit. Scale to the budget, keeping the display's aspect.
+  //
+  // The HEIGHT IS DERIVED FROM THE WIDTH, not computed on its own, so
+  // the shape of the picture is the display's shape: snapping both axes
+  // independently cost 0.75% of the aspect at the smaller sizes.
   const aspect = dw / dh;
-  const width = snap8(Math.sqrt(AUTO_MAX_PIXELS * aspect));
-  const height = snap8(Math.sqrt(AUTO_MAX_PIXELS / aspect));
+  const width = snap8(Math.sqrt(budget * aspect));
+  const height = Math.round(width / aspect);
   return clampToEngine({ width, height });
 }
 
