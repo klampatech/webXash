@@ -41,6 +41,7 @@ import {
   type PerfFacts,
   type PerfReport,
   type PerfSessionSnapshot,
+  type PacingWindowFacts,
 } from './perf-check.ts';
 
 /**
@@ -143,6 +144,14 @@ export function collectLivePerfFacts(): PerfFacts {
     costMeasuredAt: pacing.measuredAt || 0,
     costSettled: pacing.settled === true,
     gameStartAt: pacing.gameStartAt || 0,
+    // THE WARM-UP ANCHOR AND THE MAP.
+    //
+    // The engine's warm-up restarts every time the server rotates the
+    // map, so the readout needs to know WHICH map the reading was
+    // taken on and when that map was loaded.
+    costAnchorAt: pacing.costAnchorAt || 0,
+    mapName: pacing.mapName || '',
+    mapChangedAt: pacing.mapChangedAt || 0,
     // THE DISPLAY'S RATE AS IT WAS MEASURED AT LOAD.
     //
     // This is the reference the throttle test compares the live rate
@@ -212,6 +221,10 @@ export function readPerfSession(): PerfSessionSnapshot | null {
       gameStartAt: num(parsed.gameStartAt),
       idlePanelHz: num(parsed.idlePanelHz),
       pacing: readSpacing(parsed.pacing, num),
+      costAnchorAt: num(parsed.costAnchorAt),
+      mapName: typeof parsed.mapName === 'string' ? parsed.mapName : '',
+      mapChangedAt: num(parsed.mapChangedAt),
+      timeline: readTimeline(parsed.timeline, num),
     };
   } catch {
     return null;
@@ -248,6 +261,44 @@ function readSpacing(
     buckets,
     samples: num(r.samples),
   };
+}
+
+/**
+ * THE TIMELINE, IF THE SNAPSHOT CARRIES A USABLE ONE.
+ *
+ * A window is a dozen numbers; a corrupt one is DROPPED rather than
+ * repaired, because a timeline with a hole in it is still a timeline
+ * and a timeline with a lie in it is not. The map name is the one
+ * field worth keeping even when the rest of the window is thin -- it
+ * is the column that says which map the cost belongs to.
+ */
+function readTimeline(
+  raw: unknown,
+  num: (v: unknown) => number,
+): PacingWindowFacts[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: PacingWindowFacts[] = [];
+  for (const w of raw) {
+    if (!w || typeof w !== 'object') continue;
+    const r = w as Partial<PacingWindowFacts>;
+    const at = num(r.at);
+    if (!(at > 0)) continue;
+    out.push({
+      at,
+      mapName: typeof r.mapName === 'string' ? r.mapName : '',
+      engineWorkMs: num(r.engineWorkMs),
+      engineFps: num(r.engineFps),
+      browserHz: num(r.browserHz),
+      panelHz: num(r.panelHz),
+      everyNth: num(r.everyNth) || 1,
+      lateFraction: num(r.lateFraction),
+      settled: r.settled === true,
+      frameP50Ms: num(r.frameP50Ms),
+      frameP99Ms: num(r.frameP99Ms),
+      fullscreen: r.fullscreen === true,
+    });
+  }
+  return out.length ? out : null;
 }
 
 /**
@@ -314,12 +365,35 @@ export function savePerfSession(): boolean {
     // would lose the throttle test and the judder measurement.
     idlePanelHz: facts.idlePanelHz ?? 0,
     pacing: facts.pacing ?? null,
+    // THE WARM-UP ANCHOR AND THE MAP, so a restored report can say
+    // WHICH map it is describing and whether the reading was taken
+    // before the engine had settled on it.
+    costAnchorAt: facts.costAnchorAt ?? 0,
+    mapName: facts.mapName ?? '',
+    mapChangedAt: facts.mapChangedAt ?? 0,
+    // AND THE TIMELINE, because the export button lives on the landing
+    // page and the timeline is module state that the page load at the
+    // end of a match destroys.
+    timeline: getPacingHistory(),
   };
   try {
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(snapshot));
     return true;
   } catch {
-    return false;
+    // A LONG MATCH CAN OUTGROW THE QUOTA. The timeline is the biggest
+    // part of the snapshot and the part that can be shortened without
+    // losing the claim: the oldest windows are the ones nobody is
+    // going to ask about.
+    const shorter: PerfSessionSnapshot = {
+      ...snapshot,
+      timeline: (snapshot.timeline ?? []).slice(-120),
+    };
+    try {
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(shorter));
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 
@@ -523,10 +597,68 @@ function summarizeMode(windows: PacingWindow[]): ModeSummary {
 /** The version of the export format. */
 export const PERF_LOG_VERSION = 1;
 
-/** Build the log. */
+/**
+ * THE PACER'S STATE, AS THE SESSION SAW IT.
+ *
+ * The export's `pacing` block is the pacer's state at the moment of
+ * the export. On the landing page the pacer has no state at all -- the
+ * module was reloaded -- so the session's numbers are used instead. A
+ * state built from the snapshot is the same state, minus the fields
+ * the snapshot does not carry.
+ */
+function sessionPacingState(session: PerfSessionSnapshot | null): PacingState {
+  const everyNth = Math.max(1, Math.round(session?.everyNth || 1));
+  const measuredFrames = session?.measuredFrames ?? 0;
+  return {
+    capFps: session?.capFps ?? 0,
+    browserHz: session?.browserHz ?? 0,
+    panelHz: session?.panelHz ?? 0,
+    engineFps: session?.engineFps ?? 0,
+    engineWorkMs: session?.engineWorkMs ?? 0,
+    sustainableFps: session?.sustainableFps ?? 0,
+    active: everyNth > 1,
+    everyNth,
+    provisional: false,
+    lateFrames: session?.lateFrames ?? 0,
+    measuredFrames,
+    lateFraction:
+      measuredFrames > 0 ? (session?.lateFrames ?? 0) / measuredFrames : 0,
+    measuredAt: session?.measuredAt ?? 0,
+    settled: session?.costSettled === true,
+    gameStartAt: session?.gameStartAt ?? 0,
+    costAnchorAt: session?.costAnchorAt ?? 0,
+    mapName: session?.mapName ?? '',
+    mapChangedAt: session?.mapChangedAt ?? 0,
+    idlePanelHz: session?.idlePanelHz ?? 0,
+    pacing: session?.pacing
+      ? { ...session.pacing, buckets: session.pacing.buckets ?? [] }
+      : { p50: 0, p90: 0, p99: 0, max: 0, buckets: [], samples: 0 },
+    reason: 'the last match in this tab',
+  };
+}
+
+/**
+ * BUILD THE LOG.
+ *
+ * THE EXPORT BUTTON LIVES ON THE LANDING PAGE, AND THE LANDING PAGE
+ * HAS NO ENGINE.
+ *
+ * So the log is built from the LIVE page state when the game is
+ * running, and from the SESSION when it is not -- the snapshot that
+ * survives the page load at the end of a match. Building it from the
+ * live state alone is what made the export empty: on the landing page
+ * the live state is a 300x150 placeholder canvas with no engine behind
+ * it, so every number in the file was zero and the timeline was empty.
+ * The file Kyle sent to prove it was not subtle.
+ */
 export function buildPerfLog(): PerfLogExport {
-  const facts = collectLivePerfFacts();
-  const timeline = getPacingHistory();
+  const live = collectLivePerfFacts();
+  const session = readPerfSession();
+  const gameRunning = live.engineWorkMs > 0;
+  const facts = gameRunning ? live : resolvePerfFacts(live, session);
+  const timeline = gameRunning
+    ? getPacingHistory()
+    : ((session?.timeline ?? []) as PacingWindow[]);
   return {
     version: PERF_LOG_VERSION,
     exportedAt: Date.now(),
@@ -535,7 +667,7 @@ export function buildPerfLog(): PerfLogExport {
     dpr: facts.dpr,
     backingWidth: facts.backingWidth,
     backingHeight: facts.backingHeight,
-    pacing: getPacingState(),
+    pacing: gameRunning ? getPacingState() : sessionPacingState(session),
     timeline,
     byMode: {
       fullscreen: summarizeMode(timeline.filter((w) => w.fullscreen)),
