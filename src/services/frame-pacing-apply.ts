@@ -1399,10 +1399,11 @@ async function applyFrameCapOnce(
     core = {
       capFps: 0,
       browserHz: 0,
-      // THE SAME RATE the budget and the report use. The idle
-      // measurement is the display's real rate; the browser's tick rate
-      // is the fallback for a page where it never happened.
-      panelHz: panelRate(idleDisplayHz, browserHz),
+      // THE SAME RATE the budget and the report use -- and here it is
+      // the idle measurement alone, because this is the "nothing has
+      // been measured yet" path: there is no browser tick rate to fall
+      // back to, and inventing one would be a guess.
+      panelHz: idleDisplayHz,
       engineFps: 0,
       engineWorkMs: 0,
       sustainableFps: 0,
