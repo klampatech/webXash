@@ -115,7 +115,59 @@ export function sustainableFps(workMs: number, safetyFactor = 0.85): number {
  * 2s and 3s, which is judder in a different place. Capping it to 48
  * (144/3) holds every frame for exactly 3 refreshes: even.
  */
-export const COMMON_REFRESH_RATES = [24, 30, 48, 60, 72, 75, 90, 100, 120, 144, 165, 240, 360];
+/**
+ * EVERY RATE THAT DIVIDES A COMMON DISPLAY EVENLY.
+ *
+ * The strict-division rule only offers a rate that divides the display's
+ * rate a whole number of times, because a frame held for two and a half
+ * refreshes is judder. So the list has to contain every divisor that
+ * matters, or the chooser skips a step it should have taken.
+ *
+ * IT WAS MISSING SEVERAL.
+ *
+ * A 120 Hz panel's even rates are 20, 24, 30, 40, 60 and 120. The list
+ * had 24, 30, 60 and 120 -- so when the engine's cost made 60
+ * unsustainable, the chooser fell to 30 and skipped 40 entirely, even
+ * though 40 divides 120 by three and a 40 fps cap holds a frame for
+ * exactly 25 ms.
+ *
+ * And it is not a rounding detail. The pacer's own worked example says:
+ *
+ *     the boot reading      15.94 ms a frame
+ *     sustainableFps(15.94) = 53
+ *     chooseFrameCap(120, 53) = 30 fps
+ *
+ * That is the reading from Kyle's own M3 Pro with sixteen bots on
+ * ts_lobbyduel -- 16.14 ms, measured, with the camera verified. The
+ * engine can hold 40 fps there (a 25 ms frame holds 16.14 ms of work
+ * plus the browser's own per-frame overhead), and the panel showed 30.
+ *
+ * The same gap, for the same reason, on the other panels: 36 for 144 Hz
+ * (four refreshes), 45 for 90 Hz (two), 25 for 75 Hz (three), 80 for
+ * 240 Hz (three), 20 for 120 Hz (six).
+ *
+ * NOT 55, for 165 Hz. That panel's divisors are awkward, and 55 is a
+ * third of the rate it can otherwise hold -- the rate is worth more
+ * there than the even spacing, and the policy's floor says so.
+ */
+/**
+ * HOW MUCH RATE THE PACER WILL GIVE UP FOR EVEN FRAME SPACING.
+ *
+ * The even-division rule is a preference. This is the limit of it: an
+ * even rate is preferred while it is at least this fraction of the best
+ * rate the engine can sustain.
+ *
+ * Half. A 120 Hz panel holding 40 fps (three refreshes -- 83% of the
+ * best rate on offer) keeps the even rate, and so does a 144 Hz panel
+ * holding 72 (72%). A 100 Hz panel whose only even rates are 20, 25
+ * and 50 keeps its 90 instead of falling to 25, because 25 is 28% of
+ * 90 and a slideshow is not smoothness.
+ */
+export const EVEN_RATE_FLOOR = 0.5;
+
+export const COMMON_REFRESH_RATES = [
+  20, 24, 25, 30, 36, 40, 45, 48, 60, 72, 75, 80, 90, 100, 120, 144, 165, 240, 360,
+];
 
 /**
  * HOW FAR A MEASURED DISPLAY RATE MAY DRIFT BELOW ITS NOMINAL RATE
@@ -215,8 +267,29 @@ export function chooseFrameCap(
     return Math.abs(ratio - Math.round(ratio)) < 0.02;
   };
 
+  //
+  // BUT NOT AT ANY PRICE.
+  //
+  // The even-division rule is a preference, not a command. A display
+  // whose divisors are awkward -- 100 Hz divides evenly by 20, 25 and
+  // 50 -- has a very thin even pool, and if the engine can sustain 90
+  // fps then insisting on an even rate means dropping to 25. That is
+  // not smoothness, that is a slideshow.
+  //
+  // So the even rate has to be worth having: it is preferred only
+  // while it is within EVEN_RATE_FLOOR of the best rate on offer. Below
+  // that, the rate wins and the frames land unevenly, which is the
+  // lesser evil next to a fifth of the frame rate.
+  //
+  // The floor is what makes the richer rate table safe. With it, a 120
+  // Hz panel holding 40 fps (three refreshes, 83% of the best rate on
+  // offer) keeps the even rate, and a 100 Hz panel holding 90 fps
+  // keeps 90 instead of falling to 25.
   const even = candidates.filter(divides);
-  const pool = strict && even.length ? even : candidates;
+  const best = candidates[candidates.length - 1];
+  const evenBest = even.length ? even[even.length - 1] : 0;
+  const evenIsWorthIt = evenBest > 0 && evenBest >= best * EVEN_RATE_FLOOR;
+  const pool = strict && evenIsWorthIt ? even : candidates;
   const chosen = pool[pool.length - 1];
 
   const reason =
@@ -261,6 +334,48 @@ export function frameIntervalMs(fps: number): number {
  * threshold, evenly spaced frames with gaps would report zero slow
  * frames while the pacing was visibly broken.
  */
+/**
+ * THE DISPLAY'S REAL RATE, IN ONE PLACE.
+ *
+ * WHY THIS IS A FUNCTION AND NOT AN EXPRESSION
+ * -------------------------------------------
+ * The pacer needs the display's refresh rate in three places: to choose
+ * the gate, to measure whether the engine's frames arrived on time, and
+ * to report the cap in force. They were reading it three different
+ * ways, and two of them were wrong.
+ *
+ * The gate was chosen with the IDLE measurement -- the display's real
+ * rate, sampled while the page was doing nothing. The late-frame
+ * budget and the reported cap were reading `Math.max(browserHz,
+ * idleDisplayHz)`, which picks the BROWSER's tick rate whenever it is
+ * the larger of the two. That is the wrong one:
+ *
+ *   - The browser's tick rate is the display's period PLUS the engine's
+ *     work, so it moves with the load. Under load the browser misses
+ *     vsyncs and the live rate reads LOW; when the engine is cheap the
+ *     browser can tick faster than the display can show, and the live
+ *     rate reads HIGH. On the M3 Pro it read 126.3 Hz against a
+ *     display that runs at 120.
+ *   - The idle measurement is the display's real rate. It does not move.
+ *
+ * So the budget for "did this frame land on time" was computed against
+ * a rate the browser invented, while the gate was chosen against the
+ * display's real one. On a 120 Hz display with a three-tick gate that
+ * is a 25.01 ms slot measured against a 23.76 ms budget -- five per
+ * cent of the slot, decided by which number was larger -- and the
+ * readout reported a cap of 42.1 fps for a gate that was really 39.99.
+ *
+ * ONE RATE, USED EVERYWHERE. The idle measurement wins; the browser's
+ * tick rate is the fallback for a page where the idle measurement
+ * never happened.
+ */
+export function panelRate(idleDisplayHz: number, browserHz: number): number {
+  const idle = isFinite(idleDisplayHz) ? idleDisplayHz : 0;
+  if (idle > 0) return idle;
+  const live = isFinite(browserHz) ? browserHz : 0;
+  return live > 0 ? live : 0;
+}
+
 export function isLate(intervalMs: number, budgetMs: number): boolean {
   if (!isFinite(intervalMs) || !isFinite(budgetMs) || budgetMs <= 0) return false;
   return intervalMs > budgetMs * 1.5;

@@ -176,6 +176,20 @@ export interface PerfFacts {
    */
   costSettled?: boolean;
   /**
+   * WHAT THE "SETTLED" VERDICT WAS MEASURED AGAINST, in epoch
+   * milliseconds.
+   *
+   * The warm-up anchor: the LATER of the engine's first frame and the
+   * last map load. The report measures a reading's age from this,
+   * because a reading taken seconds after a map change is that map's
+   * warm-up however long the match has been running.
+   */
+  costAnchorAt?: number;
+  /** The map the engine was on when the numbers were taken. */
+  mapName?: string;
+  /** When the engine last loaded a map, in epoch milliseconds. */
+  mapChangedAt?: number;
+  /**
    * When the engine's FIRST FRAME was, in epoch milliseconds.
    *
    * The cost measurement's age is measured from here.
@@ -228,6 +242,41 @@ export interface FrameSpacingFacts {
   buckets: Array<{ ms: number; count: number }>;
   /** How many gaps the window saw. */
   samples: number;
+}
+
+/**
+ * ONE MEASUREMENT WINDOW, AS THE LOG CARRIES IT.
+ *
+ * The shape lives here rather than in the pacer because this file is
+ * the POLICY: it has no imports, and the parent's unit suite
+ * exercises it directly. The pacer's own window type is structurally
+ * the same thing.
+ */
+export interface PacingWindowFacts {
+  /** When the window closed, in epoch milliseconds. */
+  at: number;
+  /** The engine's per-frame cost, in milliseconds. */
+  engineWorkMs: number;
+  /** The rate the GAME was drawing, in fps. */
+  engineFps: number;
+  /** The rate the BROWSER was delivering ticks at. */
+  browserHz: number;
+  /** The DISPLAY's rate. */
+  panelHz: number;
+  /** The gate in force: display ticks per engine frame. */
+  everyNth: number;
+  /** The fraction of the engine's frames that arrived late, 0..1. */
+  lateFraction: number;
+  /** Was the reading past the engine's warm-up? */
+  settled: boolean;
+  /** The median gap between the engine's frames, in milliseconds. */
+  frameP50Ms: number;
+  /** The 99th percentile of that gap, in milliseconds. */
+  frameP99Ms: number;
+  /** Was the game filling the screen? */
+  fullscreen: boolean;
+  /** The map the engine was on when this window closed. */
+  mapName: string;
 }
 
 /**
@@ -287,6 +336,30 @@ export interface PerfSessionSnapshot {
    * the engine's own counter cannot report.
    */
   pacing: FrameSpacingFacts | null;
+  /**
+   * WHAT THE "SETTLED" VERDICT WAS MEASURED AGAINST.
+   *
+   * The later of the engine's first frame and the last map load.
+   */
+  costAnchorAt?: number;
+  /** The map the engine was on when the match ended. */
+  mapName?: string;
+  /** When the engine last loaded a map, in epoch milliseconds. */
+  mapChangedAt?: number;
+  /**
+   * THE MATCH'S TIMELINE, one entry per measurement window.
+   *
+   * THIS IS WHAT THE LANDING PAGE'S "Export log" WAS MISSING.
+   *
+   * The export built its log from the LIVE page state, and the live
+   * page state on the landing page is a 300x150 placeholder canvas
+   * with no engine behind it: the export was empty by construction,
+   * on the one page where a player would press the button. The
+   * timeline is module state, and the match ends with a page load
+   * that destroys it -- so it has to survive the way the snapshot
+   * does, in `sessionStorage`.
+   */
+  timeline?: PacingWindowFacts[] | null;
 }
 
 /** How bad a finding is. */
@@ -817,6 +890,12 @@ export function resolvePerfFacts(
     everyNth: session.everyNth,
     lateFrames: session.lateFrames,
     measuredFrames: session.measuredFrames,
+    // THE ANCHOR AND THE MAP, so a restored report can say WHICH map
+    // it is describing and whether the reading was taken before the
+    // engine had settled on it.
+    costAnchorAt: session.costAnchorAt,
+    mapName: session.mapName,
+    mapChangedAt: session.mapChangedAt,
     backingWidth: session.backingWidth,
     backingHeight: session.backingHeight,
     // THE DISPLAY'S RATE: the session's, because that is the rate the
@@ -1537,28 +1616,54 @@ export function buildPerfReport(facts: PerfFacts, now = Date.now()): PerfReport 
   // says when the numbers were taken, and says so plainly when they
   // were taken before the engine had settled.
   if (facts.engineWorkMs > 0 && facts.costMeasuredAt && facts.costMeasuredAt > 0 && facts.gameStartAt && facts.gameStartAt > 0) {
-    const ageSeconds = Math.max(
-      0,
-      Math.round((facts.costMeasuredAt - facts.gameStartAt) / 1000),
-    );
+    // THE ANCHOR IS THE LATER OF THE MATCH AND THE LAST MAP LOAD.
+    //
+    // The engine's warm-up does not end with the first seconds of a
+    // match -- it RESTARTS every time the server rotates the map, and
+    // a map load costs the engine everything a match start does: the
+    // BSP, the textures, the shaders, the PVS. So a reading's age is
+    // measured from the last of the two, and a reading taken seconds
+    // after a rotation is that MAP's warm-up, however long the match
+    // has been running.
+    //
+    // And the panel used to say "describes the engine at steady state
+    // and not its warm-up" about a 42 ms frame taken three seconds
+    // after a map load, because the only anchor it had was the
+    // match.
+    const anchorAt = Math.max(facts.gameStartAt, facts.costAnchorAt || 0);
+    const afterMap = (facts.mapChangedAt || 0) > facts.gameStartAt;
+    const mapName = facts.mapName || '';
+    const ageSeconds = Math.max(0, Math.round((facts.costMeasuredAt - anchorAt) / 1000));
     const settled = facts.costSettled === true;
+    const mapTitle = afterMap && mapName;
     findings.push({
       id: 'cost-age',
       severity: 'info',
       title: settled
-        ? fromSession
-          ? `The numbers were measured ${ageSeconds} seconds into your last game`
-          : `The numbers were measured ${ageSeconds} seconds into your game`
-        : fromSession
-          ? 'The numbers were measured in the first seconds after your last game started, ' +
+        ? mapTitle
+          ? `The numbers were measured ${ageSeconds} seconds after the map changed to ${mapName}`
+          : fromSession
+            ? `The numbers were measured ${ageSeconds} seconds into your last game`
+            : `The numbers were measured ${ageSeconds} seconds into your game`
+        : mapTitle
+          ? `The numbers were measured in the first seconds after the map changed to ${mapName}, ` +
             'before the engine had warmed up'
-          : 'The numbers were measured in the first seconds after the game started, ' +
-            'before the engine had warmed up',
+          : fromSession
+            ? 'The numbers were measured in the first seconds after your last game started, ' +
+              'before the engine had warmed up'
+            : 'The numbers were measured in the first seconds after the game started, ' +
+              'before the engine had warmed up',
       detail: settled
-        ? `The engine's frame cost was measured ${ageSeconds} seconds after its first frame, ` +
-          'so it describes the engine at steady state and not its warm-up.'
-        : "The engine's frame cost was measured while it was still compiling shaders and " +
-          'streaming the map, so it describes the warm-up rather than the machine.',
+        ? mapTitle
+          ? `The engine's frame cost was measured ${ageSeconds} seconds after it loaded ${mapName}, ` +
+            'so it describes the engine at steady state on that map and not its warm-up.'
+          : `The engine's frame cost was measured ${ageSeconds} seconds after its first frame, ` +
+            'so it describes the engine at steady state and not its warm-up.'
+        : mapTitle
+          ? `The engine's frame cost was measured while it was still compiling shaders and ` +
+            `streaming ${mapName}, so it describes the warm-up rather than the machine.`
+          : "The engine's frame cost was measured while it was still compiling shaders and " +
+            'streaming the map, so it describes the warm-up rather than the machine.',
     });
   }
 

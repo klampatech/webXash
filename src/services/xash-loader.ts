@@ -25,6 +25,7 @@ import { engineMaxTextureSize, prepareEngineContext } from '/@/services/webgl-co
 import { ensurePanelRateMeasured } from '/@/services/perf-collect.ts';
 import {
   applyFrameCap,
+  noteMapChange,
   forceFrameCap,
   getPacingState,
   installFramePacingShim,
@@ -196,6 +197,23 @@ window.addEventListener('xash:stdout', (e) => {
     // Give the remaining .cfg execs a beat to land first.
     window.setTimeout(flushNoiseSummary, 3000);
   }
+});
+//
+// AND THE MAP LINE.
+//
+// The engine announces every map it loads -- `Loading map
+// "ts_lobbyduel"` -- and the pacer needs that moment. A map change
+// makes the engine do at the start of a map everything it did at the
+// start of a match: load the BSP, upload the textures, compile the
+// shaders, rebuild the PVS. Without this line the pacer anchors its
+// warm-up on the match, and calls a reading taken three seconds after
+// a rotation "steady state".
+window.addEventListener('xash:stdout', (e) => {
+  const d = (e as CustomEvent).detail as { line?: string };
+  const line = d?.line;
+  if (!line) return;
+  const m = line.match(/Loading map "([^"]+)"/);
+  if (m && m[1]) noteMapChange(m[1]);
 });
 // CS/MP/opfor/bshift games aren't built — but the engine still tries
 // to fetch these via locateFile at startup. Point them all at hl.dll

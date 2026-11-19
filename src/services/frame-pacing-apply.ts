@@ -105,6 +105,7 @@ import {
   decideFrameGate,
   frameIntervalMs,
   isLate,
+  panelRate,
   sustainableFps,
 } from './frame-pacing.ts';
 
@@ -141,6 +142,54 @@ export const WARMUP_MS = 15000;
  * and not about ten seconds ago.
  */
 const OBSERVE_MS = 2000;
+
+/**
+ * THE MAP THE ENGINE IS ON, AND WHEN IT LAST CHANGED.
+ *
+ * THE WARM-UP WAS ANCHORED ON THE MATCH, AND THAT WAS WRONG.
+ *
+ * The server rotates its map every three minutes, and a map change
+ * makes the engine do at the start of a map everything it did at the
+ * start of a match: load the BSP, upload the textures, compile the
+ * shaders, rebuild the PVS. A reading taken in the seconds after one
+ * is a picture of that, not of the machine.
+ *
+ * But the pacer anchored its warm-up on the engine's FIRST FRAME, so
+ * after the first rotation every later window was labelled "settled" --
+ * and the readout told the player the number "describes the engine at
+ * steady state and not its warm-up". A 42 ms frame taken 513 seconds
+ * into a match, seconds after a map load, is the opposite of steady
+ * state, and the panel said it was settled.
+ *
+ * So the anchor is now the LATER of the two: the engine's first frame,
+ * or the last map load.
+ */
+let mapChangedAtMs = 0;
+let currentMapName = '';
+
+/**
+ * NOTE THAT THE ENGINE LOADED A MAP.
+ *
+ * The engine announces it on stdout: `Loading map "ts_lobbyduel"`. The
+ * loader hears that line and calls this. The timestamp is epoch
+ * milliseconds, the same clock the measurement windows use.
+ *
+ * AND THE COUNTER OF SETTLED WINDOWS RESETS WITH IT: the history of
+ * "the last two windows asked for the same gate" means nothing across
+ * a map change, because the engine on the other side of it is a
+ * different engine.
+ */
+export function noteMapChange(name: string, at: number = Date.now()): void {
+  currentMapName = name;
+  mapChangedAtMs = at;
+  lastTargetEveryNth = null;
+  consecutiveSame = 0;
+}
+
+/** What the pacer knows about the map. */
+export function getMapState(): { name: string; changedAt: number } {
+  return { name: currentMapName, changedAt: mapChangedAtMs };
+}
 
 /** What the pacer decided, for the log and the diagnostics. */
 export interface PacingState {
@@ -249,6 +298,30 @@ export interface PacingState {
    */
   gameStartAt: number;
   /**
+   * The map the engine was on when this window closed.
+   *
+   * THE TIMELINE'S MISSING COLUMN. A match rotates every three
+   * minutes, so a frame cost with no map attached cannot be attributed
+   * to anything -- and "which map" is the first question anybody asks
+   * about a frame cost.
+   */
+  mapName: string;
+  /**
+   * When the engine LAST LOADED A MAP, in epoch milliseconds.
+   *
+   * A map change makes the engine load the BSP, upload the textures,
+   * compile the shaders and rebuild the PVS all over again, so the
+   * seconds after one are the engine's warm-up for that map.
+   */
+  mapChangedAt: number;
+  /**
+   * WHAT THE "SETTLED" VERDICT WAS MEASURED AGAINST.
+   *
+   * The warm-up anchor: the LATER of the engine's first frame and the
+   * last map load. A window is settled when it is past this.
+   */
+  costAnchorAt: number;
+  /**
    * The DISPLAY's rate as it was measured while the page was IDLE.
    *
    * THIS IS THE ONE NUMBER THAT CATCHES A THROTTLE.
@@ -330,6 +403,7 @@ interface PacingCore {
   measuredAt: number;
   settled: boolean;
   gameStartAt: number;
+  costAnchorAt: number;
   idlePanelHz: number;
   pacing: FrameSpacing;
   reason: string;
@@ -354,6 +428,13 @@ interface PacingCore {
 export interface PacingWindow {
   /** When the window closed, in epoch milliseconds. */
   at: number;
+  /**
+   * The map the engine was on when this window closed.
+   *
+   * The timeline's missing column: a match rotates every three
+   * minutes, so a cost without a map attached cannot be attributed.
+   */
+  mapName: string;
   /** The engine's per-frame cost, in milliseconds. */
   engineWorkMs: number;
   /** The rate the GAME was drawing, in fps. */
@@ -458,6 +539,7 @@ function recordWindow(): void {
     settled: core.settled,
     frameP50Ms: core.pacing.p50,
     frameP99Ms: core.pacing.p99,
+    mapName: currentMapName,
     fullscreen: viewportFillsScreen(),
   });
   while (windowHistory.length > MAX_HISTORY) windowHistory.shift();
@@ -488,6 +570,7 @@ let core: PacingCore = {
   measuredAt: 0,
   settled: false,
   gameStartAt: 0,
+  costAnchorAt: 0,
   idlePanelHz: 0,
   pacing: EMPTY_SPACING,
   reason: 'not measured yet',
@@ -521,6 +604,8 @@ export function getPacingState(): PacingState {
     ...core,
     everyNth,
     active: everyNth > 1,
+    mapName: currentMapName,
+    mapChangedAt: mapChangedAtMs,
   };
 }
 
@@ -1161,7 +1246,14 @@ export function readMeasurement(): {
   // frames are NOT late. The old metric counted the BROWSER's tick
   // gaps, which with a cap engaged read a quarter of the ticks as
   // "late" even when the game was perfectly paced.
-  const panelHz = Math.max(browserHz, idleDisplayHz);
+  // THE DISPLAY'S REAL RATE -- the same rate the gate was chosen with.
+  //
+  // It used to be `Math.max(browserHz, idleDisplayHz)`, which picked the
+  // browser's tick rate whenever that was the larger of the two, and
+  // the browser's tick rate moves with the load. The budget for "did
+  // this frame land on time" was therefore computed against a rate the
+  // browser invented rather than the one the slot was carved out of.
+  const panelHz = panelRate(idleDisplayHz, browserHz);
   const gateFps = panelHz > 0 ? panelHz / Math.max(1, everyNth) : 0;
   const budget = frameIntervalMs(gateFps);
   let lateFrames = 0;
@@ -1307,6 +1399,10 @@ async function applyFrameCapOnce(
     core = {
       capFps: 0,
       browserHz: 0,
+      // THE SAME RATE the budget and the report use -- and here it is
+      // the idle measurement alone, because this is the "nothing has
+      // been measured yet" path: there is no browser tick rate to fall
+      // back to, and inventing one would be a guess.
       panelHz: idleDisplayHz,
       engineFps: 0,
       engineWorkMs: 0,
@@ -1318,6 +1414,7 @@ async function applyFrameCapOnce(
       measuredAt: 0,
       settled: false,
       gameStartAt: gameStartAtMs,
+      costAnchorAt: Math.max(gameStartAtMs, mapChangedAtMs),
       idlePanelHz: idleDisplayHz,
       pacing: EMPTY_SPACING,
       reason: 'the frame cap is switched OFF for this session (?nocap=1)',
@@ -1358,7 +1455,12 @@ async function applyFrameCapOnce(
   // misses vsyncs and the live rate reads LOW. The idle measurement
   // is the display's real rate. The cap has to be a divisor of THAT,
   // or the frames it lets through do not land on the display's grid.
-  const panelHz = Math.max(browserHz, idleDisplayHz);
+  // The comment above says what this number has to be -- the display's
+  // real rate -- and the expression it sat on took the MAXIMUM of the
+  // two estimates, which is the browser's tick rate whenever that is
+  // the larger. The two are not interchangeable: the browser's tick
+  // rate moves with the load and the display's does not.
+  const panelHz = panelRate(idleDisplayHz, browserHz);
 
   // WHEN THE WINDOW CLOSED, in epoch milliseconds.
   const measuredAt = Date.now();
@@ -1398,8 +1500,15 @@ async function applyFrameCapOnce(
   // The engine's cost falls over the first seconds of a match -- it
   // is compiling shaders and streaming the map -- and a reading taken
   // during that is a picture of the warm-up, not of the machine.
-  const ageMs = gameStartAtMs > 0 ? Math.max(0, measuredAt - gameStartAtMs) : 0;
-  const settled = gameStartAtMs > 0 && ageMs >= warmupMs;
+  // AND A MAP CHANGE RESTARTS THAT CLOCK. The server rotates its map
+  // every three minutes, and the new map costs the engine everything
+  // the first map did: the BSP, the textures, the shaders, the PVS. So
+  // the anchor is the LATER of the engine's first frame and the last
+  // map load -- and a window taken seconds after a map load is a
+  // warm-up window, whatever the match's age says.
+  const settleAnchor = Math.max(gameStartAtMs, mapChangedAtMs);
+  const ageMs = settleAnchor > 0 ? Math.max(0, measuredAt - settleAnchor) : 0;
+  const settled = settleAnchor > 0 && ageMs >= warmupMs;
 
   // If the window was empty, say so plainly. "0 fps against a 0 Hz
   // display" reads like a fact about the display; it is actually a
@@ -1425,6 +1534,7 @@ async function applyFrameCapOnce(
       measuredAt,
       settled,
       gameStartAt: gameStartAtMs,
+      costAnchorAt: settleAnchor,
       idlePanelHz: idleDisplayHz,
       pacing: EMPTY_SPACING,
       reason:
@@ -1472,6 +1582,7 @@ async function applyFrameCapOnce(
       measuredAt,
       settled,
       gameStartAt: gameStartAtMs,
+      costAnchorAt: settleAnchor,
       idlePanelHz: idleDisplayHz,
       pacing: EMPTY_SPACING,
       reason:
@@ -1546,6 +1657,7 @@ async function applyFrameCapOnce(
     measuredAt,
     settled,
     gameStartAt: gameStartAtMs,
+    costAnchorAt: settleAnchor,
     idlePanelHz: idleDisplayHz,
     pacing,
     reason:
