@@ -100,7 +100,18 @@ export interface FrameCap {
  * are trying to remove. One frame of slack per second is not enough;
  * a sixth of the budget is.
  */
-export function sustainableFps(workMs: number, safetyFactor = 0.85): number {
+/**
+ * THE SHARE OF A FRAME THE ENGINE IS ALLOWED TO USE.
+ *
+ * The same number bounds the cap and the slot. The cap asks "how many
+ * frames could the engine finish if it left room for everything else?"
+ * -- that is `workMs / 0.85`. The slot has to leave the SAME room, or
+ * the two disagree and the gate hands out a rate the cap would never
+ * have chosen.
+ */
+export const ENGINE_HEADROOM = 0.85;
+
+export function sustainableFps(workMs: number, safetyFactor = ENGINE_HEADROOM): number {
   if (!isFinite(workMs) || workMs <= 0) return 0;
   return Math.floor(1000 / (workMs / safetyFactor));
 }
@@ -611,7 +622,20 @@ export function computeFrameTarget(panelHz: number, engineWorkMs: number): Frame
   // long, and a frame that does not fit in its slot overruns it and
   // judders. This is the promise that matters, and it is physical
   // rather than a policy line.
-  const slotEveryNth = Math.max(1, Math.ceil((engineWorkMs * panelHz) / 1000));
+  //
+  // AND IT MUST LEAVE THE HEADROOM `sustainableFps` ASSUMED.
+  //
+  // The cap asks for a rate the engine can finish with 15% of every
+  // frame left over for everything else -- the game's own clock, the
+  // browser's timers, the compositor. The slot has to leave that same
+  // 15% or the gate hands out a rate the cap would never have chosen,
+  // and the engine ends up using 95% of the main thread. Measured on
+  // Kyle's M3 Pro, 2026-11-19: the engine cost 12.9 ms a frame, the
+  // browser was offering 74 ticks a second, and the slot was 13.5 ms
+  // -- the frame FIT, and the main thread was 95% busy anyway. The
+  // game's 16 ms logic clock had no room left, so it ran late and
+  // then caught up in a clump.
+  const slotEveryNth = Math.max(1, Math.ceil((engineWorkMs * panelHz) / (1000 * ENGINE_HEADROOM)));
 
   // THE CAP'S CHOICE AND THE SLOT ARE SEPARATE, because they are
   // separate things: the cap is a policy (how many frames the engine

@@ -67,6 +67,8 @@ export class TSPump {
   private tickCount = 0;
   private lastError: string | null = null;
   private live = false;
+  /** When the last tick started -- the grid the next one lands on. */
+  private lastTickAt = 0;
   /** Spawn attempts are opt-in — they trap without a connected client. */
   private spawnEnabled: boolean;
 
@@ -88,21 +90,27 @@ export class TSPump {
     this.startedAt = performance.now();
     this.tickCount = 0;
     this.lastError = null;
+    this.lastTickAt = performance.now();
 
-    this.timer = window.setInterval(() => {
-      // Throttle: if the previous tick threw, don't spam. A trap in
-      // WASM is usually fatal to the module, so back off to 1Hz and
-      // surface the error rather than hammering it.
-      if (this.lastError) return;
-      try {
-        this.xash?.Cmd_ExecuteString('ts_pump_think');
-        this.tickCount++;
-        if (this.tickCount === 1) this.live = true;
-      } catch (e) {
-        this.lastError = e instanceof Error ? e.message : String(e);
-        console.error('[ts-pump] tick failed, backing off:', this.lastError);
-      }
-    }, TICK_MS);
+    // A SELF-CORRECTING TIMER, NOT AN INTERVAL.
+    //
+    // `setInterval` is the wrong shape for a game clock. When the main
+    // thread is busy the browser queues the intervals it missed and
+    // then hands them back in a clump, and the game advances by
+    // several ticks at once. Measured on Kyle's M3 Pro, 2026-11-19:
+    // the clock stalled for 41-70 ms and then fired ticks 3.2 ms and
+    // 4.4 ms apart -- the "little freezes that feel like ping lag as
+    // things catch up".
+    //
+    // `setTimeout` has none of that: one callback is pending at a
+    // time, so the browser cannot build a backlog, and the delay is
+    // measured from the tick's OWN start, so the clock never carries
+    // debt. A stall costs the game the time that passed -- it runs a
+    // little slow for a moment -- instead of lurching forward to
+    // catch up. That is the trade a game clock should make: a frame
+    // that is late is a frame that is late, not a second of catching up.
+    this.lastTickAt = performance.now();
+    this.scheduleTick();
 
     // Place the local camera onto an info_player_deathmatch once the
     // map is loaded. Without this, the engine's default observer
@@ -118,6 +126,43 @@ export class TSPump {
         try { this.xash?.Cmd_ExecuteString('ts_place_camera'); } catch {}
       }, delay);
     }
+  }
+
+  /**
+   * Schedule the next tick.
+   *
+   * The delay is measured from the last tick's START, so the clock
+   * keeps its 16 ms grid without ever accumulating debt: a tick that
+   * ran long simply makes the next one due sooner, and a tick that was
+   * late does not make the one after it late too.
+   */
+  private scheduleTick(): void {
+    if (this.timer !== null) return;
+    const since = performance.now() - this.lastTickAt;
+    this.timer = window.setTimeout(() => this.tick(), Math.max(0, TICK_MS - since));
+  }
+
+  /** One tick of the game's own clock. */
+  private tick(): void {
+    this.timer = null;
+    // Throttle: if the previous tick threw, don't spam. A trap in
+    // WASM is usually fatal to the module, so back off to 1Hz and
+    // surface the error rather than hammering it.
+    if (this.lastError) {
+      this.timer = window.setTimeout(() => this.tick(), 1000);
+      return;
+    }
+    const started = performance.now();
+    try {
+      this.xash?.Cmd_ExecuteString('ts_pump_think');
+      this.tickCount++;
+      if (this.tickCount === 1) this.live = true;
+    } catch (e) {
+      this.lastError = e instanceof Error ? e.message : String(e);
+      console.error('[ts-pump] tick failed, backing off:', this.lastError);
+    }
+    this.lastTickAt = started;
+    this.scheduleTick();
   }
 
   private scheduleSpawnRetries(): void {
@@ -137,7 +182,7 @@ export class TSPump {
   /** Stop the pump. Called on game restart / teardown. */
   stop(): void {
     if (this.timer !== null) {
-      window.clearInterval(this.timer);
+      window.clearTimeout(this.timer);
       this.timer = null;
     }
     for (const t of this.spawnTimers) window.clearTimeout(t);
