@@ -382,9 +382,40 @@ export function frameIntervalMs(fps: number): number {
  */
 export function panelRate(idleDisplayHz: number, browserHz: number): number {
   const idle = isFinite(idleDisplayHz) ? idleDisplayHz : 0;
-  if (idle > 0) return idle;
   const live = isFinite(browserHz) ? browserHz : 0;
-  return live > 0 ? live : 0;
+  // The live measurement is not known yet: the display's rate is all
+  // there is.
+  if (live <= 0) return idle;
+  // The idle measurement is missing: the live rate is all there is.
+  if (idle <= 0) return live;
+  // BOTH ARE KNOWN, AND THEY DISAGREE.
+  //
+  // The gate counts TICKS -- the browser's -- so the rate the slot is
+  // carved out of has to be the rate the PAGE is actually being given.
+  //
+  // The browser cannot tick faster than the engine's frame allows: a
+  // 15.94 ms frame on a 120 Hz panel means the browser offers 62.7
+  // ticks a second, not 120. That is not the display being slow -- it
+  // is the display's period PLUS the engine's work -- and a slot
+  // computed against the display's rate alone is a slot the frames do
+  // not fit in. The two rates, for that machine:
+  //
+  //     the display's rate   119.976 Hz   a two-tick slot is 16.67 ms
+  //     the browser's rate    62.7  Hz     a two-tick slot is 31.9  ms
+  //
+  // and the difference is what the player gets: 31.4 fps either way,
+  // but at 95.6% of the main thread with the first and 50% with the
+  // second.
+  //
+  // THE HIGH CASE IS CLAMPED BY THE DISPLAY. When the engine is
+  // cheap the browser can tick faster than the panel can show (126.3
+  // Hz measured against a 119.976 Hz panel), and the display's rate
+  // is the ceiling: the player cannot see more frames than the panel
+  // has refreshes.
+  //
+  // So: the LOWER of the two. The display is the ceiling; the browser
+  // is the reality.
+  return Math.min(idle, live);
 }
 
 export function isLate(intervalMs: number, budgetMs: number): boolean {
