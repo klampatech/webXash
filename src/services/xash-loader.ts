@@ -1913,17 +1913,21 @@ class XashLoader {
   // The pacer has just measured the engine's frame cost. This is the
   // measurement the render budget is built on:
   //
-  //     pixels_target = pixels_now * (target_frame_ms / measured_frame_ms)
+  //     pixels_target = pixels_now *
+  //                    (target_frame_ms - cpu_ms) / (delivered_frame_ms - cpu_ms)
   //
   // where `target_frame_ms` is the slot at the rate the client is
-  // aiming for, with the pacer's own headroom, and `measured_frame_ms`
-  // is what the engine's frame actually cost.
+  // aiming for, with the pacer's own headroom, `cpu_ms` is what the
+  // engine's own callback cost, and `delivered_frame_ms` is what the
+  // player is actually given.
   //
-  // It only ever moves the resolution DOWN, it only moves when the
-  // machine is measurably over budget, it moves by a bounded step, and
-  // it moves only after two measurements in a row have said so -- so a
-  // fight does not see the resolution pumping. See
-  // services/video-settings.ts for the policy.
+  // It moves the resolution DOWN only when the frame is waiting on the
+  // pixels, it moves by a bounded step, and it moves only after two
+  // measurements in a row have said so -- so a fight does not see the
+  // resolution pumping. It moves it back UP when the frame is
+  // comfortably inside the budget, so one heavy fight does not cost
+  // the whole session its sharpness. See services/video-settings.ts
+  // for the policy.
   //
   // A PLAYER'S EXPLICIT CHOICE IS NEVER TOUCHED: the budget only
   // applies to 'auto'.
@@ -1933,6 +1937,10 @@ class XashLoader {
       panelHz: number;
       idlePanelHz: number;
       settled: boolean;
+      /** The rate the GAME is drawing at -- what the player is given. */
+      engineFps: number;
+      /** How many display ticks one engine frame takes. 1 = every tick. */
+      everyNth: number;
     },
     applyVideo: (force: boolean) => boolean,
   ): void {
@@ -1962,6 +1970,12 @@ class XashLoader {
         targetFps: autoTargetFps(state.idlePanelHz),
         currentDevicePixels,
         settled: state.settled,
+        // WHAT THE PLAYER IS GIVEN, and the gate that may be holding it
+        // back. The budget can only spend pixels on a frame that is
+        // waiting on them, and it cannot tell without these two: the
+        // engine's own callback cost is not the frame the player sees.
+        engineFps: state.engineFps,
+        everyNth: state.everyNth,
       },
       display,
     );
