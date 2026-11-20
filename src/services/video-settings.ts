@@ -357,6 +357,49 @@ export const AUTO_BUDGET_MAX_STEP = 0.75;
 export const AUTO_BUDGET_COOLDOWN_MS = 20000;
 
 /**
+ * HOW MUCH THE BUDGET MAY GROW IN ONE MOVE.
+ *
+ * THE MIRROR OF `AUTO_BUDGET_MAX_STEP`, and the same number: the budget
+ * moves by a quarter of its size in either direction, so a step down
+ * and a step up cost the same amount of churn.
+ *
+ * WHY THERE IS AN UPWARD STEP AT ALL
+ * ---------------------------------
+ * The budget used to only ever move DOWN, on the reasoning that "the
+ * engine's cost is scene-dependent and the pixels are cheap to keep".
+ * Measured on Kyle's M3 Pro on 2026-11-20, that reasoning has a hole
+ * in it: the pixels are cheap to keep only if keeping them costs
+ * nothing, and on a machine whose frame is GPU-bound they cost a great
+ * deal. So one heavy fight used to cost the whole session its
+ * sharpness, for a frame rate the pixels were not paying for anyway.
+ *
+ * The pixels come back when the frame is comfortably inside the budget
+ * again -- see `AUTO_BUDGET_GROW_WINDOWS`.
+ */
+export const AUTO_BUDGET_GROW_STEP = 1 / AUTO_BUDGET_MAX_STEP;
+
+/**
+ * HOW MANY CONSECUTIVE INSIDE-BUDGET MEASUREMENTS ARE NEEDED BEFORE THE
+ * PIXELS COME BACK.
+ *
+ * TWO, for the same reason the shrink needs two: one cheap window -- a
+ * lull in the fight, a map change, a quiet corner -- must not raise the
+ * resolution into the next spike. The evidence has to agree with
+ * itself.
+ */
+export const AUTO_BUDGET_GROW_WINDOWS = 2;
+
+/**
+ * HOW FAR INSIDE ITS BUDGET THE FRAME HAS TO BE BEFORE THE PIXELS COME
+ * BACK.
+ *
+ * FIVE PER CENT -- the same band as the shrink, and for the same
+ * reason: the measurement has about 1.4% of noise, and a budget that
+ * grew on a reading that merely grazed the threshold would pump.
+ */
+export const AUTO_BUDGET_GROW_HYSTERESIS = 0.05;
+
+/**
  * A measurement of the machine, as the client's own telemetry reports
  * it.
  */
@@ -398,6 +441,42 @@ export interface AutoBudgetMeasurement {
    * concept is not blocked by one.
    */
   settled?: boolean;
+  /**
+   * The rate the GAME is drawing at, in frames per second.
+   *
+   * This is the DELIVERED frame time -- what the player is actually
+   * given -- and it is not the same as the engine's CPU cost. Measured
+   * on Kyle's M3 Pro on 2026-11-20, over 415 sampled seconds of a real
+   * fight:
+   *
+   *     the engine's cost   the delivered rate
+   *     0-5 ms              105 fps
+   *     10-14.2 ms           77 fps
+   *     14.2-20 ms           37 fps
+   *     30+ ms               23 fps
+   *
+   * The cost tracks the rate closely, but NOT exactly, and the
+   * difference is the whole point of this field: a frame can be slow
+   * while the engine's own work is nearly free (the GPU is waiting),
+   * and the pixels are the only thing that can pay for that.
+   *
+   * Without it the policy cannot tell "the engine is too slow" from
+   * "the pixels are too many", and it would cut the resolution for a
+   * frame rate the pixels were never paying for.
+   */
+  engineFps?: number;
+  /**
+   * How many display ticks the pacer's gate draws one engine frame in.
+   * 1 = every tick.
+   *
+   * THE GATE OWNS THE FRAME RATE WHEN IT IS ENGAGED. With a gate of 2,
+   * the engine's frames arrive every second tick whether the machine
+   * could do better or not, so the rate the player sees is the pacer's
+   * decision and not the pixels'. Cutting pixels cannot change it, and
+   * the delivered frame time says nothing about the GPU while the gate
+   * is dropping ticks.
+   */
+  everyNth?: number;
 }
 
 /**
@@ -418,6 +497,13 @@ export interface AutoBudgetState {
   floorDevicePixels: number;
   /** How many over-budget measurements have arrived in a row. */
   overWindows: number;
+  /**
+   * How many inside-budget measurements have arrived in a row.
+   *
+   * The counter for the OTHER direction: the pixels come back after
+   * this many comfortable readings in a row, and not before.
+   */
+  underWindows: number;
   /** When the budget last moved, in epoch milliseconds. 0 = never. */
   lastMovedAt: number;
 }
@@ -744,6 +830,7 @@ export function createAutoBudgetState(display: DisplayInfo): AutoBudgetState {
     ceilingDevicePixels: ceiling,
     floorDevicePixels: autoFloorDevicePixels(dw, dh, dpr),
     overWindows: 0,
+    underWindows: 0,
     lastMovedAt: 0,
   };
 }
@@ -756,21 +843,34 @@ export function createAutoBudgetState(display: DisplayInfo): AutoBudgetState {
  *   1. A MEASUREMENT THAT CANNOT BE USED changes nothing. The budget
  *      in force stays, and the reason says the measurement was not
  *      usable -- a readout that guesses is worse than no readout.
- *   2. A MACHINE THAT IS INSIDE ITS BUDGET IS LEFT ALONE. The budget
- *      only ever moves DOWN: a fight that ends does not give the
- *      pixels back, because the engine's cost is scene-dependent and
- *      the pixels are cheap to keep.
+ *   2. A MACHINE THAT IS INSIDE ITS BUDGET IS LEFT ALONE -- and if it
+ *      has said so for two readings in a row, the pixels it gave up
+ *      COME BACK, one bounded step at a time, up to the display's own
+ *      resolution.
  *   3. A MACHINE THAT IS MEASURABLY OVER BUDGET has to say so TWICE
  *      in a row before the budget moves, and then only by a BOUNDED
  *      STEP, and only when the budget is not in its COOLDOWN.
+ *   4. **THE PIXELS ARE ONLY SPENT ON A FRAME THAT IS WAITING ON
+ *      THEM.** If the engine's own work is over the target, the frame
+ *      is not waiting on the pixels, and cutting them costs sharpness
+ *      and buys no frames. If the pacer's gate is dropping ticks, the
+ *      frame rate is the pacer's decision and not the pixels'.
  *
  * The formula, in one line:
  *
- *     pixels_target = pixels_now * (target_frame_ms / measured_frame_ms)
+ *     pixels_target = pixels_now *
+ *                    (target_frame_ms - cpu_ms) / (delivered_frame_ms - cpu_ms)
  *
  * where `target_frame_ms` is the slot at the target rate with the
- * pacer's own headroom, and `measured_frame_ms` is what the engine's
- * frame actually cost.
+ * pacer's own headroom, `cpu_ms` is what the engine's own callback
+ * cost, and `delivered_frame_ms` is what the player is actually given.
+ *
+ * THE PIXELS PAY FOR THE GPU'S SHARE ALONE, and that is the whole
+ * difference from the formula this replaced. The old one assumed the
+ * frame cost IS the pixel count; measured on Kyle's M3 Pro on
+ * 2026-11-20, the cost tracks the SCENE (1.50 MP costing 20.16 ms a
+ * frame while 2.00 MP cost 3.15 ms in the same session), and the
+ * pixels are only ever part of the frame.
  */
 export function decideAutoBudget(
   state: AutoBudgetState,
@@ -835,38 +935,121 @@ export function decideAutoBudget(
     `against a ${targetMs.toFixed(2)} ms target ` +
     `(${targetFps.toFixed(0)} fps at ${ENGINE_HEADROOM} headroom)`;
 
-  // --- RULE 2: inside the budget is left alone --------------------------
+  // --- WHAT THE PLAYER IS ACTUALLY GIVEN -------------------------------
   //
-  // The HYSTERESIS band is what makes "inside" and "over" different
-  // words: the frame cost is measured with about 1.4% of noise, so a
-  // reading that straddles the threshold must not move the budget.
-  if (measuredMs <= targetMs * (1 + AUTO_BUDGET_HYSTERESIS)) {
-    const next: AutoBudgetState = { ...state, overWindows: 0 };
+  // THE DELIVERED FRAME TIME. The engine's cost is its own CPU work;
+  // the player is given the whole frame, and the difference between
+  // the two is what the GPU and the compositor took.
+  //
+  // Measured on Kyle's M3 Pro, 2026-11-20, in the middle of a fight:
+  //
+  //     the engine costs 2.80 ms   the player is given 24.5 ms
+  //
+  // Nothing in the engine was slow there. The frame was slow because
+  // the pixels were too many, and the only thing that can pay for that
+  // is fewer pixels.
+  const engineFps = measurement.engineFps ?? 0;
+  const deliveredMs =
+    isFinite(engineFps) && engineFps > 0 ? 1000 / engineFps : measuredMs;
+  const gpuMs = Math.max(0, deliveredMs - measuredMs);
+  const delivered =
+    `the player is given ${deliveredMs.toFixed(2)} ms a frame ` +
+    `(${engineFps > 0 ? engineFps.toFixed(1) : '?'} fps)`;
+
+  // THE GATE OWNS THE RATE WHILE IT IS DROPPING TICKS.
+  const everyNth = measurement.everyNth ?? 1;
+  const gateDrops = everyNth > 1;
+
+  // --- THE PIXELS CAN ONLY PAY FOR THE GPU'S SHARE ----------------------
+  //
+  // Measured on the same machine, the same session, 415 sampled
+  // seconds:
+  //
+  //     the canvas   the engine's cost   the delivered rate
+  //     1.50 MP      20.16 ms            35.2 fps
+  //     2.00 MP       3.15 ms            53.0 fps
+  //
+  // The cost follows the SCENE, not the pixel count. So when the
+  // engine's own work is over the target, the pixels are not what is
+  // making the frame slow, and cutting them buys sharpness lost for
+  // no frames gained.
+  if (measuredMs > targetMs * (1 + AUTO_BUDGET_HYSTERESIS)) {
+    const next: AutoBudgetState = { ...state, overWindows: 0, underWindows: 0 };
     return {
       state: next,
       devicePixels: next.devicePixels,
       changed: false,
-      overBudget: false,
+      overBudget: true,
       measuredMs,
       targetMs,
       reason:
-        `${measured}; the machine is inside its budget, ` +
-        `so the resolution is left alone`,
+        `${measured}, and ${delivered}; the engine's own work is over the ` +
+        `target, so the frame is not waiting on the pixels -- cutting them ` +
+        `would cost sharpness and buy no frames, so the resolution is left ` +
+        `alone`,
     };
   }
 
-  // --- OVER BUDGET ------------------------------------------------------
+  // While the gate is dropping ticks, the frame rate is the PACER'S
+  // decision and not the pixels': the engine's frames arrive every
+  // Nth tick whatever the machine could do, so the delivered frame
+  // time says nothing about the GPU and the pixels cannot change the
+  // rate.
+  if (gateDrops) {
+    const next: AutoBudgetState = { ...state, overWindows: 0, underWindows: 0 };
+    return {
+      state: next,
+      devicePixels: next.devicePixels,
+      changed: false,
+      overBudget: deliveredMs > targetMs * (1 + AUTO_BUDGET_HYSTERESIS),
+      measuredMs,
+      targetMs,
+      reason:
+        `${measured}, and ${delivered}; the pacer's gate is drawing one frame ` +
+        `in ${everyNth} ticks, so the frame rate is the pacer's decision and ` +
+        `not the pixels' -- the resolution is left alone`,
+    };
+  }
+
+  // --- INSIDE THE BUDGET: LEFT ALONE, AND THE PIXELS COME BACK ---------
   //
-  // THE FORMULA. The frame cost scales with the pixel count, so the
-  // pixels that fit the target frame time are the pixels now, scaled
-  // by the ratio of the target frame time to the measured one.
+  // The HYSTERESIS band is what makes "inside" and "over" different
+  // words: the frame cost is measured with about 1.4% of noise, so a
+  // reading that straddles the threshold must not move the budget.
+  if (deliveredMs <= targetMs * (1 + AUTO_BUDGET_HYSTERESIS)) {
+    const underWindows = state.underWindows + 1;
+    const next: AutoBudgetState = { ...state, overWindows: 0, underWindows };
+    return growAutoBudget(state, next, measuredMs, targetMs, deliveredMs, now, measured, delivered);
+  }
+
+  // --- OVER BUDGET, AND THE PIXELS ARE WHAT IS SLOW --------------------
+  //
+  // THE FORMULA, IN ITS NEW FORM.
+  //
+  // The old one scaled the whole frame by the ratio of the target to
+  // the measured cost:
+  //
+  //     pixels_target = pixels_now * (target_frame_ms / measured_frame_ms)
+  //
+  // which assumed the frame cost IS the pixel count. The measurement
+  // says the cost is mostly FIXED (the scene's own work), and that the
+  // pixels are only part of it. So the pixels are asked to pay for the
+  // GPU's share alone:
+  //
+  //     pixels_target = pixels_now *
+  //                    (target_frame_ms - cpu_ms) / (delivered_ms - cpu_ms)
+  //
+  // The CPU's work is in both: it is the part of the frame the pixels
+  // cannot shorten, and it is the part of the target the pixels get to
+  // keep.
   const currentPixels = measurement.currentDevicePixels ?? 0;
   const pixelsNow = currentPixels > 0 ? currentPixels : state.devicePixels;
-  const rawTarget = pixelsNow * (targetMs / measuredMs);
+  const cpuBudgetMs = Math.max(0.5, targetMs - measuredMs);
+  const rawTarget = gpuMs > 0 ? pixelsNow * (cpuBudgetMs / gpuMs) : 0;
 
   // THE CEILING AND THE FLOOR, and the rule that the budget never
-  // goes UP: a machine that is over budget gets a SMALLER budget, and
-  // nothing else.
+  // goes UP while the machine is over budget: a machine that is over
+  // budget gets a SMALLER budget, and nothing else.
   let target = Math.min(rawTarget, state.devicePixels, state.ceilingDevicePixels);
   target = Math.max(target, state.floorDevicePixels);
 
@@ -878,7 +1061,7 @@ export function decideAutoBudget(
   const overWindows = state.overWindows + 1;
 
   if (nextTarget >= state.devicePixels) {
-    const next: AutoBudgetState = { ...state, overWindows };
+    const next: AutoBudgetState = { ...state, overWindows, underWindows: 0 };
     return {
       state: next,
       devicePixels: next.devicePixels,
@@ -887,14 +1070,14 @@ export function decideAutoBudget(
       measuredMs,
       targetMs,
       reason:
-        `${measured}; the budget is already at the engine's floor, ` +
-        `so there is nothing left to give up`,
+        `${measured}, and ${delivered}; the budget is already at the engine's ` +
+        `floor, so there is nothing left to give up`,
     };
   }
 
   // --- RULE 3: two windows in a row --------------------------------------
   if (overWindows < AUTO_BUDGET_WINDOWS) {
-    const next: AutoBudgetState = { ...state, overWindows };
+    const next: AutoBudgetState = { ...state, overWindows, underWindows: 0 };
     return {
       state: next,
       devicePixels: next.devicePixels,
@@ -903,7 +1086,7 @@ export function decideAutoBudget(
       measuredMs,
       targetMs,
       reason:
-        `${measured}; only ${overWindows} measurement` +
+        `${measured}, and ${delivered}; only ${overWindows} measurement` +
         `${overWindows === 1 ? '' : 's'} in a row have said so, ` +
         `so the budget in force is left in place`,
     };
@@ -917,7 +1100,7 @@ export function decideAutoBudget(
   // enough for the effect of the move to show up in the next reading.
   const sinceMove = state.lastMovedAt > 0 ? now - state.lastMovedAt : Infinity;
   if (sinceMove < AUTO_BUDGET_COOLDOWN_MS) {
-    const next: AutoBudgetState = { ...state, overWindows };
+    const next: AutoBudgetState = { ...state, overWindows, underWindows: 0 };
     return {
       state: next,
       devicePixels: next.devicePixels,
@@ -926,7 +1109,7 @@ export function decideAutoBudget(
       measuredMs,
       targetMs,
       reason:
-        `${measured}; the budget moved ${(sinceMove / 1000).toFixed(0)} s ` +
+        `${measured}, and ${delivered}; the budget moved ${(sinceMove / 1000).toFixed(0)} s ` +
         `ago and is in its ${AUTO_BUDGET_COOLDOWN_MS / 1000} s cooldown, ` +
         `so it stands still`,
     };
@@ -937,6 +1120,7 @@ export function decideAutoBudget(
     ceilingDevicePixels: state.ceilingDevicePixels,
     floorDevicePixels: state.floorDevicePixels,
     overWindows: 0,
+    underWindows: 0,
     lastMovedAt: now,
   };
   const drop = (1 - nextTarget / state.devicePixels) * 100;
@@ -948,8 +1132,115 @@ export function decideAutoBudget(
     measuredMs,
     targetMs,
     reason:
-      `${measured}; the machine is measurably over budget, so the render ` +
-      `budget falls by ${drop.toFixed(0)}% to ${nextTarget} device pixels`,
+      `${measured}, and ${delivered}; the machine is measurably over budget ` +
+      `and the frame is waiting on the pixels, so the render budget falls by ` +
+      `${drop.toFixed(0)}% to ${nextTarget} device pixels`,
+  };
+}
+
+/**
+ * THE PIXELS COME BACK.
+ *
+ * The other direction, and the one the policy did not have until
+ * 2026-11-20. The budget used to only ever move down, on the reasoning
+ * that the pixels are cheap to keep -- but they are only cheap to keep
+ * on a machine whose frame is not waiting on them, and the policy now
+ * knows the difference.
+ *
+ * THE RULES:
+ *
+ *   - the frame has to be COMFORTABLY inside the budget, not merely
+ *     inside it (`AUTO_BUDGET_GROW_HYSTERESIS`), and it has to have
+ *     said so for `AUTO_BUDGET_GROW_WINDOWS` readings in a row;
+ *   - the budget stands still through the same cooldown as a cut, so
+ *     the effect of the last move has shown up in the next reading;
+ *   - the growth is bounded by the same quarter-step as the cut, and
+ *     the CEILING is the ceiling: the budget comes back to the
+ *     display's own resolution and no further.
+ */
+function growAutoBudget(
+  state: AutoBudgetState,
+  next: AutoBudgetState,
+  measuredMs: number,
+  targetMs: number,
+  deliveredMs: number,
+  now: number,
+  measured: string,
+  delivered: string,
+): AutoBudgetDecision {
+  const atCeiling = state.devicePixels >= state.ceilingDevicePixels - 1;
+  const comfortable = deliveredMs <= targetMs * (1 - AUTO_BUDGET_GROW_HYSTERESIS);
+
+  if (!comfortable || atCeiling || next.underWindows < AUTO_BUDGET_GROW_WINDOWS) {
+    return {
+      state: next,
+      devicePixels: next.devicePixels,
+      changed: false,
+      overBudget: false,
+      measuredMs,
+      targetMs,
+      reason:
+        atCeiling
+          ? `${measured}, and ${delivered}; the budget is already at the ` +
+            `display's own resolution, so there is nothing to give back`
+          : `${measured}, and ${delivered}; the frame is inside its budget, ` +
+            `so the resolution is left alone`,
+    };
+  }
+
+  const sinceMove = state.lastMovedAt > 0 ? now - state.lastMovedAt : Infinity;
+  if (sinceMove < AUTO_BUDGET_COOLDOWN_MS) {
+    return {
+      state: next,
+      devicePixels: next.devicePixels,
+      changed: false,
+      overBudget: false,
+      measuredMs,
+      targetMs,
+      reason:
+        `${measured}, and ${delivered}; the budget moved ${(sinceMove / 1000).toFixed(0)} s ` +
+        `ago and is in its ${AUTO_BUDGET_COOLDOWN_MS / 1000} s cooldown, ` +
+        `so it stands still`,
+    };
+  }
+
+  const grown = Math.min(
+    state.ceilingDevicePixels,
+    Math.max(state.floorDevicePixels, state.devicePixels * AUTO_BUDGET_GROW_STEP),
+  );
+  if (grown <= state.devicePixels) {
+    return {
+      state: next,
+      devicePixels: next.devicePixels,
+      changed: false,
+      overBudget: false,
+      measuredMs,
+      targetMs,
+      reason:
+        `${measured}, and ${delivered}; the frame is inside its budget, ` +
+        `so the resolution is left alone`,
+    };
+  }
+
+  const grownState: AutoBudgetState = {
+    ...state,
+    devicePixels: grown,
+    overWindows: 0,
+    underWindows: 0,
+    lastMovedAt: now,
+  };
+  const gain = (grown / state.devicePixels - 1) * 100;
+  return {
+    state: grownState,
+    devicePixels: grown,
+    changed: true,
+    overBudget: false,
+    measuredMs,
+    targetMs,
+    reason:
+      `${measured}, and ${delivered}; the machine is comfortably inside its ` +
+      `budget and the frame is not waiting on the pixels, so the render ` +
+      `budget rises by ${gain.toFixed(0)}% to ${grown} device pixels`,
   };
 }
 
