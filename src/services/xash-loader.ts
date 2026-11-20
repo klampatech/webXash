@@ -13,12 +13,18 @@ import { armBrowserChordGate, disarmBrowserChordGate } from '/@/services/browser
 import {
   applyRenderResolution,
   armRenderResolution,
+  autoBudgetResolution,
+  autoTargetFps,
+  currentRenderResolution,
   detectDisplay,
   devicePixelRatio,
+  getAutoBudget,
   renderResolutionArgs,
+  resetAutoBudget,
   resolveRenderResolution,
   setMaxDeviceDimension,
   setRenderResolutionTarget,
+  updateAutoBudget,
   type RenderResolution,
 } from '/@/services/video-settings.ts';
 import { engineMaxTextureSize, prepareEngineContext } from '/@/services/webgl-context.ts';
@@ -1539,9 +1545,23 @@ class XashLoader {
    */
   private _resolveRenderResolution(): RenderResolution {
     const store = useXashStore();
+    const choice = store.renderResolution;
+    const display = detectDisplay();
+
+    // A CHOICE THAT IS NOT 'AUTO' IS THE PLAYER'S, and the measurement
+    // never touches it. The budget is forgotten rather than kept, so a
+    // session that starts again starts from the fixed policy.
+    if (choice !== 'auto') {
+      resetAutoBudget();
+    }
+
+    // A measured budget, when there is one: it may only make the
+    // resolution SMALLER than the fixed policy's own answer.
+    const budget = choice === 'auto' ? getAutoBudget() : null;
     const resolution = resolveRenderResolution(
-      store.renderResolution,
-      detectDisplay(),
+      choice,
+      display,
+      budget ? { devicePixels: budget.devicePixels } : null,
     );
     setRenderResolutionTarget(resolution);
     return resolution;
@@ -1876,6 +1896,7 @@ class XashLoader {
           const s = await applyFrameCap();
           logDebug(`[frame-pacing] ${s.reason}`);
           console.log('[frame-pacing]', s.reason);
+          this._updateMeasuredRenderBudget(s, applyVideo);
         } catch (e) {
           console.warn('[frame-pacing] the measurement failed:', e);
         }
@@ -1885,6 +1906,85 @@ class XashLoader {
       };
       void measure();
     }, FIRST_MEASURE_MS);
+  }
+
+  // THE MEASURED RENDER BUDGET.
+  //
+  // The pacer has just measured the engine's frame cost. This is the
+  // measurement the render budget is built on:
+  //
+  //     pixels_target = pixels_now * (target_frame_ms / measured_frame_ms)
+  //
+  // where `target_frame_ms` is the slot at the rate the client is
+  // aiming for, with the pacer's own headroom, and `measured_frame_ms`
+  // is what the engine's frame actually cost.
+  //
+  // It only ever moves the resolution DOWN, it only moves when the
+  // machine is measurably over budget, it moves by a bounded step, and
+  // it moves only after two measurements in a row have said so -- so a
+  // fight does not see the resolution pumping. See
+  // services/video-settings.ts for the policy.
+  //
+  // A PLAYER'S EXPLICIT CHOICE IS NEVER TOUCHED: the budget only
+  // applies to 'auto'.
+  private _updateMeasuredRenderBudget(
+    state: {
+      engineWorkMs: number;
+      panelHz: number;
+      idlePanelHz: number;
+      settled: boolean;
+    },
+    applyVideo: (force: boolean) => boolean,
+  ): void {
+    const store = useXashStore();
+    if (store.renderResolution !== 'auto') {
+      // The player asked for something specific. The measurement does
+      // not get a vote.
+      resetAutoBudget();
+      return;
+    }
+
+    const display = detectDisplay();
+    const dpr = devicePixelRatio();
+    const mode = currentRenderResolution();
+    const currentDevicePixels = mode
+      ? mode.width * mode.height * dpr * dpr
+      : 0;
+
+    // THE TARGET RATE. The DISPLAY's own rate when it is known -- the
+    // idle measurement -- and the client's standing 60 fps otherwise.
+    // The browser's live tick rate is NOT used: it is the display's
+    // period PLUS the engine's work, so it moves with the load, and a
+    // target that moves with the load is a target that chases itself.
+    const decision = updateAutoBudget(
+      {
+        engineWorkMs: state.engineWorkMs,
+        targetFps: autoTargetFps(state.idlePanelHz),
+        currentDevicePixels,
+        settled: state.settled,
+      },
+      display,
+    );
+
+    if (!decision.changed) {
+      logDebug(`[video] ${decision.reason}`);
+      return;
+    }
+
+    // THE BUDGET MOVED. The resolution is re-applied at once: the
+    // engine resyncs to the window on every resize, and a budget that
+    // is not applied is a budget that does nothing.
+    const resolution = autoBudgetResolution(
+      { devicePixels: decision.devicePixels },
+      display,
+    );
+    setRenderResolutionTarget(resolution);
+    applyVideo(false);
+    const message =
+      `[video] ${decision.reason}; the render resolution -> ` +
+      `${resolution.width}x${resolution.height} CSS`;
+    logDebug(message);
+    console.log(message);
   }
 
   public static removeReloadListener() {
