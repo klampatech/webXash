@@ -56,8 +56,28 @@ import {
  *
  * The probe canvas is released immediately; it is never attached to
  * the document.
+ *
+ * AND IT RUNS ONCE PER SESSION. EVER.
+ * -----------------------------------
+ * Measured, 2026-11-20: `clientRenderer()` was creating a WebGL
+ * context on EVERY call, because `engineRendererInfo()` returns
+ * nothing once the engine's context is gone — and a context that is
+ * gone is exactly when the readout is asked the most questions. Chrome
+ * keeps about sixteen live WebGL contexts and evicts the OLDEST when
+ * the seventeenth arrives, so a client that creates one per call
+ * evicts the ENGINE's context out from under the game. Measured on
+ * Kyle's M3 Pro: forty calls to `window.__xashPacing()` produced 186
+ * "Too many active WebGL contexts. Oldest context will be lost"
+ * warnings, and the page went white with the engine still running.
+ *
+ * The GPU does not change mid-session, so the answer is worth keeping.
+ * A probe that FAILED (no context to be had) is not cached: a failed
+ * probe creates no context, so retrying it is free.
  */
+let probedRenderer: { name: string; vendor: string } | null = null;
+
 function probeRenderer(): { name: string; vendor: string } {
+  if (probedRenderer) return probedRenderer;
   if (typeof document === 'undefined') return { name: '', vendor: '' };
   try {
     const canvas = document.createElement('canvas');
@@ -73,7 +93,8 @@ function probeRenderer(): { name: string; vendor: string } {
     // Release the probe's context so the browser can reclaim it.
     const lose = gl.getExtension('WEBGL_lose_context');
     if (lose) lose.loseContext();
-    return { name, vendor };
+    probedRenderer = { name, vendor };
+    return probedRenderer;
   } catch {
     return { name: '', vendor: '' };
   }
