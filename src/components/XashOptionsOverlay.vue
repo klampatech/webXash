@@ -249,6 +249,45 @@
             </div>
 
             <!--
+              THE RESOLUTION.
+
+              The player's own choice. 'auto' is the display's own
+              resolution; the rest are fixed modes for a player who
+              wants fewer pixels.
+
+              There is no performance measurement underneath this any
+              more. It was removed on 2026-11-20, after the player's own
+              play test: it moved the resolution during a fight, the
+              picture went soft, and the HUD came back BIGGER, because
+              the engine draws the HUD in viewport units and a smaller
+              backing store means the browser upscales more.
+            -->
+            <div class="opts__card opts__card--split">
+              <div class="opts__card-head">
+                <p class="opts__label">Resolution</p>
+                <span class="opts__row-label">{{ resolutionLabel }}</span>
+              </div>
+              <div
+                class="opts__switch opts__switch--wrap"
+                role="radiogroup"
+                aria-label="Render resolution"
+              >
+                <button
+                  v-for="choice in resolutionChoices"
+                  :key="choice"
+                  class="opts__switch-btn"
+                  :class="{ 'is-on': resolution === choice }"
+                  type="button"
+                  role="radio"
+                  :aria-checked="resolution === choice"
+                  @click="setResolution(choice)"
+                >
+                  {{ choice === 'auto' ? 'Native' : choice.replace('x', '×') }}
+                </button>
+              </div>
+            </div>
+
+            <!--
               THE DRAW COST.
 
               The levers the player has on the cost of a frame. They
@@ -362,6 +401,13 @@ import {
   liveReport,
   remeasureEngineCost,
 } from '/@/services/perf-collect.ts';
+import {
+  RESOLUTION_CHOICES,
+  describeResolutionChoice,
+  detectDisplay,
+  type ResolutionChoice,
+} from '/@/services/video-settings.ts';
+import XashLoader from '/@/services/xash-loader.ts';
 import {
   OPTION_SLIDERS,
   clampToSlider,
@@ -705,6 +751,38 @@ watch(
  */
 const store = useXashStore();
 const { tsConfig } = storeToRefs(store);
+/**
+ * THE RESOLUTION.
+ *
+ * The player picks it, and the choice is the only one there is: there
+ * is no performance measurement underneath it any more (2026-11-20 --
+ * the measured budget moved the resolution during a fight, the picture
+ * went soft, and the HUD came back BIGGER, because the engine draws
+ * the HUD in viewport units and a smaller backing store means the
+ * browser upscales more).
+ *
+ * 'auto' is the display's own resolution. The rest are the fixed modes
+ * for a player who wants fewer pixels.
+ */
+const resolutionChoices = RESOLUTION_CHOICES;
+const resolution = computed<ResolutionChoice>(() => store.renderResolution);
+const resolutionLabel = computed(() =>
+  describeResolutionChoice(resolution.value, detectDisplay()),
+);
+
+/**
+ * Change the resolution NOW, not at the next session.
+ *
+ * The engine re-syncs to the window on every resize, so the choice has
+ * to be re-applied after each one -- which is what the loader parks the
+ * target for.
+ */
+function setResolution(choice: ResolutionChoice): void {
+  if (resolution.value === choice) return;
+  XashLoader.applyResolutionChoice(choice);
+  logDebug(`[opts] resolution -> ${choice}`);
+}
+
 const buyMenuModes: BuyMenuMode[] = ['classic', 'modern'];
 const buyMenu = computed<BuyMenuMode>(() =>
   tsConfig.value?.buyMenu === 'classic' ? 'classic' : 'modern',
@@ -1662,6 +1740,13 @@ function quitToWebUi() {
     border-radius: 8px;
     overflow: hidden;
     flex: none;
+
+    /* The resolution has six choices; they wrap rather than run off
+       the side of the card. */
+    &--wrap {
+      flex-wrap: wrap;
+      max-width: 100%;
+    }
   }
 
   &__switch-btn {

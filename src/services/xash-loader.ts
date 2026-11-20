@@ -13,19 +13,14 @@ import { armBrowserChordGate, disarmBrowserChordGate } from '/@/services/browser
 import {
   applyRenderResolution,
   armRenderResolution,
-  autoBudgetResolution,
-  autoTargetFps,
-  currentRenderResolution,
   detectDisplay,
   devicePixelRatio,
-  getAutoBudget,
   renderResolutionArgs,
-  resetAutoBudget,
   resolveRenderResolution,
   setMaxDeviceDimension,
   setRenderResolutionTarget,
-  updateAutoBudget,
   type RenderResolution,
+  type ResolutionChoice,
 } from '/@/services/video-settings.ts';
 import { engineMaxTextureSize, prepareEngineContext } from '/@/services/webgl-context.ts';
 import { ensurePanelRateMeasured } from '/@/services/perf-collect.ts';
@@ -676,7 +671,35 @@ class XashLoader {
   }
 
   /**
-   * Run an engine console command (no-op if not booted).
+   * THE PLAYER'S RESOLUTION, CHANGED MID-SESSION.
+   *
+   * The store keeps the choice, so the next session starts where the
+   * player left it; the engine is told now, so the player sees it now;
+   * and the target is parked, so the resize watchdog re-applies it after
+   * the engine's own resizes -- the engine re-syncs to the window on
+   * every one of them, and a resolution that is not re-applied is a
+   * resolution that does not last.
+   *
+   * There is no measurement underneath this any more. The measured
+   * budget was removed on 2026-11-20, after the player's own play test:
+   * it moved the resolution during a fight, the picture went soft, and
+   * the HUD came back BIGGER, because the engine draws the HUD in
+   * viewport units and a smaller backing store means the browser
+   * upscales more. See services/video-settings.ts.
+   */
+  public static applyResolutionChoice(choice: ResolutionChoice): void {
+    const store = useXashStore();
+    store.renderResolution = choice;
+    const resolution = resolveRenderResolution(choice, detectDisplay());
+    setRenderResolutionTarget(resolution);
+    applyRenderResolution(
+      (cmd) => XashLoader.exec(cmd),
+      (message) => console.log(message),
+    );
+  }
+
+  /**
+   * Run a console command in the engine.
    *
    * Returns true when the engine took it. The engine's command system
    * does not exist until its first frame, and a command sent before
@@ -1548,21 +1571,12 @@ class XashLoader {
     const choice = store.renderResolution;
     const display = detectDisplay();
 
-    // A CHOICE THAT IS NOT 'AUTO' IS THE PLAYER'S, and the measurement
-    // never touches it. The budget is forgotten rather than kept, so a
-    // session that starts again starts from the fixed policy.
-    if (choice !== 'auto') {
-      resetAutoBudget();
-    }
-
-    // A measured budget, when there is one: it may only make the
-    // resolution SMALLER than the fixed policy's own answer.
-    const budget = choice === 'auto' ? getAutoBudget() : null;
-    const resolution = resolveRenderResolution(
-      choice,
-      display,
-      budget ? { devicePixels: budget.devicePixels } : null,
-    );
+    // The resolution is the player's choice, full stop. There is no
+    // measurement underneath it: the measured budget was removed on
+    // 2026-11-20, after the player's own play test (the resolution
+    // switched during a fight, the picture went soft and the HUD came
+    // back BIGGER). See services/video-settings.ts.
+    const resolution = resolveRenderResolution(choice, display);
     setRenderResolutionTarget(resolution);
     return resolution;
   }
@@ -1896,7 +1910,6 @@ class XashLoader {
           const s = await applyFrameCap();
           logDebug(`[frame-pacing] ${s.reason}`);
           console.log('[frame-pacing]', s.reason);
-          this._updateMeasuredRenderBudget(s, applyVideo);
         } catch (e) {
           console.warn('[frame-pacing] the measurement failed:', e);
         }
@@ -1908,98 +1921,6 @@ class XashLoader {
     }, FIRST_MEASURE_MS);
   }
 
-  // THE MEASURED RENDER BUDGET.
-  //
-  // The pacer has just measured the engine's frame cost. This is the
-  // measurement the render budget is built on:
-  //
-  //     pixels_target = pixels_now *
-  //                    (target_frame_ms - cpu_ms) / (delivered_frame_ms - cpu_ms)
-  //
-  // where `target_frame_ms` is the slot at the rate the client is
-  // aiming for, with the pacer's own headroom, `cpu_ms` is what the
-  // engine's own callback cost, and `delivered_frame_ms` is what the
-  // player is actually given.
-  //
-  // It moves the resolution DOWN only when the frame is waiting on the
-  // pixels, it moves by a bounded step, and it moves only after two
-  // measurements in a row have said so -- so a fight does not see the
-  // resolution pumping. It moves it back UP when the frame is
-  // comfortably inside the budget, so one heavy fight does not cost
-  // the whole session its sharpness. See services/video-settings.ts
-  // for the policy.
-  //
-  // A PLAYER'S EXPLICIT CHOICE IS NEVER TOUCHED: the budget only
-  // applies to 'auto'.
-  private _updateMeasuredRenderBudget(
-    state: {
-      engineWorkMs: number;
-      panelHz: number;
-      idlePanelHz: number;
-      settled: boolean;
-      /** The rate the GAME is drawing at -- what the player is given. */
-      engineFps: number;
-      /** How many display ticks one engine frame takes. 1 = every tick. */
-      everyNth: number;
-    },
-    applyVideo: (force: boolean) => boolean,
-  ): void {
-    const store = useXashStore();
-    if (store.renderResolution !== 'auto') {
-      // The player asked for something specific. The measurement does
-      // not get a vote.
-      resetAutoBudget();
-      return;
-    }
-
-    const display = detectDisplay();
-    const dpr = devicePixelRatio();
-    const mode = currentRenderResolution();
-    const currentDevicePixels = mode
-      ? mode.width * mode.height * dpr * dpr
-      : 0;
-
-    // THE TARGET RATE. The DISPLAY's own rate when it is known -- the
-    // idle measurement -- and the client's standing 60 fps otherwise.
-    // The browser's live tick rate is NOT used: it is the display's
-    // period PLUS the engine's work, so it moves with the load, and a
-    // target that moves with the load is a target that chases itself.
-    const decision = updateAutoBudget(
-      {
-        engineWorkMs: state.engineWorkMs,
-        targetFps: autoTargetFps(state.idlePanelHz),
-        currentDevicePixels,
-        settled: state.settled,
-        // WHAT THE PLAYER IS GIVEN, and the gate that may be holding it
-        // back. The budget can only spend pixels on a frame that is
-        // waiting on them, and it cannot tell without these two: the
-        // engine's own callback cost is not the frame the player sees.
-        engineFps: state.engineFps,
-        everyNth: state.everyNth,
-      },
-      display,
-    );
-
-    if (!decision.changed) {
-      logDebug(`[video] ${decision.reason}`);
-      return;
-    }
-
-    // THE BUDGET MOVED. The resolution is re-applied at once: the
-    // engine resyncs to the window on every resize, and a budget that
-    // is not applied is a budget that does nothing.
-    const resolution = autoBudgetResolution(
-      { devicePixels: decision.devicePixels },
-      display,
-    );
-    setRenderResolutionTarget(resolution);
-    applyVideo(false);
-    const message =
-      `[video] ${decision.reason}; the render resolution -> ` +
-      `${resolution.width}x${resolution.height} CSS`;
-    logDebug(message);
-    console.log(message);
-  }
 
   public static removeReloadListener() {
     window.removeEventListener('beforeunload', onBeforeUnload);
@@ -2018,6 +1939,11 @@ class XashLoader {
   // live-state bridge without importing the class.
   public exec(cmd: string) {
     XashLoader.exec(cmd);
+  }
+
+  /** The instance's door to the class's static, like `exec`. */
+  public applyResolutionChoice(choice: ResolutionChoice): void {
+    XashLoader.applyResolutionChoice(choice);
   }
   public isEngineUp(): boolean {
     return XashLoader.isEngineUp();
