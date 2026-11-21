@@ -47,8 +47,64 @@
  * readout: it teaches the player to ignore it.
  */
 
+/**
+ * THE GEOMETRY, IN FULL.
+ *
+ * WHY THE EXPORT NEEDS ALL OF IT
+ * ------------------------------
+ * The resolution policy has FOUR numbers in it, and they are not the
+ * same number:
+ *
+ *   the DISPLAY   what `window.screen` says   -- what 'auto' means
+ *   the BOX       the canvas's CSS size        -- what the browser shows
+ *   the MODE      what the engine was told     -- what it renders
+ *   the BACKING   the canvas's drawing buffer  -- what it costs
+ *
+ * A file that records only the BACKING cannot explain the other three.
+ * On 2026-11-21 a play test on Kyle's gaming rig produced a canvas of
+ * 1274x1303 device pixels -- ALMOST SQUARE -- and the export could not
+ * say why, because it did not record the display the canvas came from.
+ * The mode is the BOX's shape by construction (see `fitRenderResolution`
+ * in services/video-settings.ts), so a nearly-square box means a
+ * nearly-square window, and the export needs the display's size to say
+ * whether that is the display's own shape or the client's.
+ *
+ * So the export records all four, plus the player's choice: "is 'auto'
+ * really native?" is a question the file has to be able to answer by
+ * itself.
+ */
+export interface PerfDisplayGeometry {
+  /** `window.screen.width` — what 'auto' resolves to, in CSS pixels. */
+  displayWidth: number;
+  /** `window.screen.height`. */
+  displayHeight: number;
+  /** `window.innerWidth` — the window's inner width, in CSS pixels. */
+  windowInnerWidth: number;
+  /** `window.innerHeight`. */
+  windowInnerHeight: number;
+  /** The canvas's CSS box — the cap the mode is fitted into. */
+  canvasBoxWidth: number;
+  /** The canvas's CSS box height. */
+  canvasBoxHeight: number;
+  /** The mode the engine was told to render at, in CSS pixels. */
+  modeWidth: number;
+  /** The mode's height. */
+  modeHeight: number;
+  /** The player's choice: 'auto', or a fixed mode like '640x360'. */
+  resolutionChoice: string;
+}
+
 /** The facts a report is built from. Every one is measured. */
 export interface PerfFacts {
+  /**
+   * THE GEOMETRY: the display, the window, the canvas's box, the mode
+   * the engine was given, and the player's choice.
+   *
+   * Optional, because the facts are built in a dozen places (the tests
+   * among them) and a report about frame costs does not need geometry.
+   * When it is missing, the export says so rather than guessing.
+   */
+  display?: PerfDisplayGeometry;
   /**
    * The WebGL renderer string, as the browser reports it.
    *
@@ -312,6 +368,14 @@ export interface PerfSessionSnapshot {
   backingWidth: number;
   /** The game's real render height, in device pixels. */
   backingHeight: number;
+  /**
+   * THE GEOMETRY, so the export can explain the render size.
+   *
+   * The display, the window, the canvas's box, the mode the engine was
+   * given, and the player's choice. Without it a file that says "1274
+   * × 1303" cannot say whether that is the display's own shape.
+   */
+  display?: PerfDisplayGeometry;
   /** The GPU the client was running on. */
   renderer: string;
   /** When it was measured, in epoch milliseconds. */
@@ -898,6 +962,10 @@ export function resolvePerfFacts(
     mapChangedAt: session.mapChangedAt,
     backingWidth: session.backingWidth,
     backingHeight: session.backingHeight,
+    // THE GEOMETRY: the session's, because the live page is the LANDING
+    // page — its canvas is a 300×150 placeholder and its window is the
+    // browser's, not the game's. The session's geometry is the game's.
+    display: session.display ?? live.display,
     // THE DISPLAY'S RATE: the session's, because that is the rate the
     // frame cost above was measured against — so the budget is the
     // budget that applies to it.
