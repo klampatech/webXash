@@ -17,6 +17,7 @@ import {
   devicePixelRatio,
   renderResolutionArgs,
   resolveRenderResolution,
+  setCurrentResolutionChoice,
   setMaxDeviceDimension,
   setRenderResolutionTarget,
   type RenderResolution,
@@ -691,6 +692,7 @@ class XashLoader {
     const store = useXashStore();
     store.renderResolution = choice;
     const resolution = resolveRenderResolution(choice, detectDisplay());
+    setCurrentResolutionChoice(choice);
     setRenderResolutionTarget(resolution);
     applyRenderResolution(
       (cmd) => XashLoader.exec(cmd),
@@ -1577,6 +1579,10 @@ class XashLoader {
     // switched during a fight, the picture went soft and the HUD came
     // back BIGGER). See services/video-settings.ts.
     const resolution = resolveRenderResolution(choice, display);
+    // Remembered where the export can read it: the export has to be able
+    // to say WHICH mode the player asked for, and 'auto' and '640x360'
+    // are the same picture on the wrong display.
+    setCurrentResolutionChoice(choice);
     setRenderResolutionTarget(resolution);
     return resolution;
   }

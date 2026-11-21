@@ -238,6 +238,27 @@ export function detectDisplay(): DisplayInfo {
 }
 
 
+/**
+ * THE PLAYER'S CURRENT CHOICE, remembered.
+ *
+ * The store keeps it, but the store is a Vue store and the services are
+ * not components — so the choice is mirrored here, where the export can
+ * read it without importing the store (the export's own module has to
+ * stay importable from a plain Node test, which has no Vue in it).
+ *
+ * It is a mirror, not the source of truth: the store decides, and this
+ * remembers what it decided.
+ */
+let currentChoice: ResolutionChoice = 'auto';
+
+export function setCurrentResolutionChoice(choice: ResolutionChoice): void {
+  currentChoice = choice;
+}
+
+export function getCurrentResolutionChoice(): ResolutionChoice {
+  return currentChoice;
+}
+
 /** Clamp to the engine's floor. */
 function clampToEngine(res: RenderResolution): RenderResolution {
   return {
