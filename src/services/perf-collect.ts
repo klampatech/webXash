@@ -34,10 +34,17 @@ import {
 } from './frame-pacing-apply.ts';
 import { engineRendererInfo } from './webgl-context.ts';
 import {
+  currentRenderResolution,
+  detectDisplay,
+  displayedRenderResolution,
+  getCurrentResolutionChoice,
+} from './video-settings.ts';
+import {
   buildPerfReport,
   resolvePerfFacts,
   type FrameSpacingFacts,
   type PerfBrowser,
+  type PerfDisplayGeometry,
   type PerfFacts,
   type PerfReport,
   type PerfSessionSnapshot,
@@ -116,6 +123,48 @@ function canvasBacking(): { width: number; height: number } {
 }
 
 /**
+ * THE GEOMETRY, IN FULL.
+ *
+ * WHY THIS IS COLLECTED AT ALL
+ * ---------------------------
+ * On 2026-11-21 a play test on Kyle's gaming rig produced a canvas of
+ * 1274x1303 device pixels -- ALMOST SQUARE -- and the export could not
+ * say why: it recorded the canvas and nothing about the display the
+ * canvas came from. The mode is the BOX's shape by construction (see
+ * `fitRenderResolution`), so a nearly-square box means a nearly-square
+ * window, and only the display's own size says whether that is the
+ * player's setup or the client's.
+ *
+ * Four numbers, and they are not the same number:
+ *
+ *   the DISPLAY   what `window.screen` says   -- what 'auto' means
+ *   the BOX       the canvas's CSS size        -- what the browser shows
+ *   the MODE      what the engine was told     -- what it renders
+ *   the BACKING   the canvas's drawing buffer  -- what it costs
+ *
+ * Plus the player's choice, because 'auto' and '640x360' are the same
+ * picture on the wrong display, and a file that cannot tell them apart
+ * cannot answer "is 'auto' really native?".
+ */
+function collectDisplayGeometry(): PerfDisplayGeometry {
+  const display = detectDisplay();
+  const box = displayedRenderResolution();
+  const mode = currentRenderResolution();
+  const win = typeof window !== 'undefined' ? window : null;
+  return {
+    displayWidth: display.width,
+    displayHeight: display.height,
+    windowInnerWidth: win?.innerWidth || 0,
+    windowInnerHeight: win?.innerHeight || 0,
+    canvasBoxWidth: box?.width || 0,
+    canvasBoxHeight: box?.height || 0,
+    modeWidth: mode?.width || 0,
+    modeHeight: mode?.height || 0,
+    resolutionChoice: getCurrentResolutionChoice(),
+  };
+}
+
+/**
  * The facts, gathered.
  *
  * THREE RATES, THREE DIFFERENT THINGS.
@@ -186,6 +235,9 @@ export function collectLivePerfFacts(): PerfFacts {
     dpr,
     backingWidth: backing.width,
     backingHeight: backing.height,
+    // THE GEOMETRY, so the export can explain the render size instead
+    // of only reporting it.
+    display: collectDisplayGeometry(),
   };
 }
 
@@ -199,6 +251,35 @@ export function collectLivePerfFacts(): PerfFacts {
  * ui", which is the same tab.
  */
 const SESSION_KEY = 'xash.perf.session.v1';
+/**
+ * READ THE GEOMETRY BACK, or nothing at all.
+ *
+ * All or nothing: a geometry with three of its four numbers is a
+ * geometry that would explain the render size wrongly, and a wrong
+ * explanation in an export is worse than a missing one.
+ */
+function readGeometry(value: unknown): PerfDisplayGeometry | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  const num = (v: unknown): number =>
+    typeof v === 'number' && isFinite(v) ? v : 0;
+  const displayWidth = num(raw.displayWidth);
+  const displayHeight = num(raw.displayHeight);
+  // A display with no size is not a display.
+  if (!(displayWidth > 0) || !(displayHeight > 0)) return undefined;
+  return {
+    displayWidth,
+    displayHeight,
+    windowInnerWidth: num(raw.windowInnerWidth),
+    windowInnerHeight: num(raw.windowInnerHeight),
+    canvasBoxWidth: num(raw.canvasBoxWidth),
+    canvasBoxHeight: num(raw.canvasBoxHeight),
+    modeWidth: num(raw.modeWidth),
+    modeHeight: num(raw.modeHeight),
+    resolutionChoice:
+      typeof raw.resolutionChoice === 'string' ? raw.resolutionChoice : '',
+  };
+}
 
 /**
  * THE LAST MATCH, IF THIS TAB HAS ONE.
@@ -235,6 +316,10 @@ export function readPerfSession(): PerfSessionSnapshot | null {
       measuredFrames: num(parsed.measuredFrames),
       backingWidth: num(parsed.backingWidth),
       backingHeight: num(parsed.backingHeight),
+      // THE GEOMETRY, carried through. It is a nested object, so it is
+      // validated rather than coerced: a half-valid geometry is worse
+      // than none, because it would explain the render size wrongly.
+      display: readGeometry(parsed.display),
       renderer: typeof parsed.renderer === 'string' ? parsed.renderer : '',
       measuredAt: num(parsed.measuredAt),
       costMeasuredAt: num(parsed.costMeasuredAt),
@@ -369,6 +454,7 @@ export function savePerfSession(): boolean {
     measuredFrames: facts.measuredFrames,
     backingWidth: facts.backingWidth,
     backingHeight: facts.backingHeight,
+    display: facts.display,
     renderer: facts.renderer,
     // WHEN THE GAME ENDED. The provenance — "your last game, 12
     // minutes ago" — is measured from here, and it is NOT the same
@@ -548,6 +634,14 @@ export interface PerfLogExport {
   /** The game's render size, in device pixels. */
   backingWidth: number;
   backingHeight: number;
+  /**
+   * THE GEOMETRY: the display, the window, the canvas's box, the mode
+   * the engine was given, and the player's choice.
+   *
+   * Null when the page could not measure it. It is never guessed: a
+   * number that is not measured is not a number.
+   */
+  display: PerfDisplayGeometry | null;
   /** The pacer's state at the moment of the export. */
   pacing: PacingState;
   /** The timeline of the match, oldest first. */
@@ -688,6 +782,7 @@ export function buildPerfLog(): PerfLogExport {
     dpr: facts.dpr,
     backingWidth: facts.backingWidth,
     backingHeight: facts.backingHeight,
+    display: facts.display ?? null,
     pacing: gameRunning ? getPacingState() : sessionPacingState(session),
     timeline,
     byMode: {
